@@ -1,0 +1,29 @@
+
+通貨アイテムに関する出力
+PhysicsHitbox update: Item CurrencyItem, isColliding: false, isStationary: false, velocity: [0,0], position.y: 796
+
+Groundに関する出力
+Ground onLoad: position.y = 846, size.y = 20
+
+UnderGroundに関する出力
+UnderGround onLoad: position.y = 866, size.y = 1024
+
+game.initialGameCanvasSize.yに関する出力
+MyGame: Initial game canvas size set: [1719,846]
+AbstractOutdoorScene initializeScene start. game.initialGameCanvasSize.y: 846
+
+
+
+
+AbstractOutdoorScene: Initializing Ground with groundHeight: 20.0
+AbstractOutdoorScene: Initializing UnderGround with groundHeight: 1024
+Ground onLoad: Initializing with groundHeight (from constructor): 20, current position.y = 846, size.y = 20
+UnderGround onLoad: Initializing with groundHeight (from constructor): 1024, current position.y = 0, size.y = 1024
+PhysicsHitbox update: Item CurrencyItem, isColliding: false, isStationary: false, velocity: [0,0], position.y: 796
+PhysicsHitbox update: Item CurrencyItem, isColliding: false, isStationary: false, velocity: [0,1.6338669061660767], position.y: 796.02734375
+PhysicsHitbox update: Item CurrencyItem, isColliding: false, isStationary: false, velocity: [0,3.255254030227661], position.y: 796.0814819335938
+PhysicsHitbox update: Item CurrencyItem, isColliding: false, isStationary: false, velocity: [0,9.734766006469727], position.y: 796.65234375
+PhysicsHitbox update: Item CurrencyItem, isColliding: false, isStationary: false, velocity: [0,11.342705726623535], position.y: 796.8409423828125
+PhysicsHitbox update: Item CurrencyItem, isColliding: false, isStationary: false, velocity: [0,12.957630157470703], position.y: 797.0576782226562
+....(続く)
+

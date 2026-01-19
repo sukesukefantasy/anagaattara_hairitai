@@ -1,0 +1,11 @@
+
+--- Android ビルド＆インストール ---
+
+flutter build apk --release
+flutter install
+
+--- pubspec.yaml の更新 ---
+
+flutter pub get
+
+

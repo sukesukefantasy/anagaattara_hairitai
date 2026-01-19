@@ -1,0 +1,48 @@
+name: anagaattara_hairitai
+description: "A new Flutter project."
+publish_to: "none"
+version: 0.1.0
+
+environment:
+  sdk: ^3.7.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flame: ^1.30.0
+  flame_audio: ^2.1.1
+  forge2d: ^0.14.0
+  flutter_soloud: ^3.2.2
+  path_provider: ^2.1.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  logging: ^1.1.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
+    - assets/audio/
+    - assets/audio/bgms/
+    - assets/audio/footsteps/
+    - assets/audio/cars/
+    - assets/audio/buildings/
+    - assets/audio/hits/
+
+  fonts:
+    - family: TRS-Million-Rg
+      fonts:
+        - asset: assets/fonts/TRS-Million-Rg.otf
+    - family: TRS-Million-Twinkle
+      fonts:
+        - asset: assets/fonts/TRS-Million-Twinkle.otf
+    - family: Nosutaru-dotMPlusH-10-Regular
+      fonts:
+        - asset: assets/fonts/Nosutaru-dotMPlusH-10-Regular.ttf
+
+  shaders:
+    - assets/shaders/lighting.frag
+    - assets/shaders/brightness_boost.frag
