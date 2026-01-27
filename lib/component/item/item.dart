@@ -9,6 +9,8 @@ import '../common/physics/physics_behavior.dart';
 import 'package:anagaattara_hairitai/component/common/hitboxes/physics_hitbox.dart';
 import 'item_effect_resolver/powerup_item_effect_resolver.dart';
 import 'item_effect_resolver/custom_item_effect_resolver.dart';
+import 'item_effect_resolver/tool_item_effect_resolver.dart';
+import 'item_effect_resolver/placeable_item_effect_resolver.dart';
 import '../../deb/debug_paint.dart'; // DebugPaintMixinをインポート
 
 /// アイテムの種類を定義する列挙型
@@ -27,7 +29,15 @@ enum ItemType {
   custom, // カスタムアイテム
 }
 
-enum BagWindowActionType { consume, carry, equip, unequip, dismantle, view, custom }
+enum BagWindowActionType {
+  consume,
+  carry,
+  equip,
+  unequip,
+  dispose,
+  view,
+  custom,
+}
 
 /// アイテムの基底クラス
 abstract class Item extends SpriteComponent
@@ -39,6 +49,7 @@ abstract class Item extends SpriteComponent
   final int value;
   final String spritePath;
   bool isCollected = false;
+
   @override
   late PhysicsBehavior physicsBehavior; // late に変更
 
@@ -283,7 +294,10 @@ class PowerUpItem extends Item {
 
 /// 道具アイテム
 class ToolItem extends Item {
+  final Function(Player)? toolEffect;
+
   ToolItem({
+    this.toolEffect,
     required super.name,
     required super.description,
     required super.value,
@@ -300,12 +314,17 @@ class ToolItem extends Item {
   }
 
   @override
-  void onUse(Player player) {}
+  void onUse(Player player) {
+    // 道具効果を実行
+    toolEffect?.call(player);
+  }
 }
 
 /// 配置アイテム
 class PlaceableItem extends Item {
+  final Function(Player)? placeableEffect;
   PlaceableItem({
+    required this.placeableEffect,
     required super.name,
     required super.description,
     required super.value,
@@ -341,7 +360,7 @@ class CustomItem extends Item {
 
   CustomItem({
     required this.customEffect,
-    this.customActionType = BagWindowActionType.consume,
+    required this.customActionType,
     required super.name,
     required super.description,
     required super.value,
@@ -419,14 +438,16 @@ class ItemFactory {
       'type': ItemType.tool,
       'description': 'この星を構成している何か',
       'spritePath': 'stick.png',
-      'value': 10,
+      'value': 1,
+      'toolEffect': 'swing',
       'size': [25.0, 25.0],
     },
     '石': {
-      'type': ItemType.placeable,
+      'type': ItemType.tool,
       'description': 'この星を構成している何か',
       'spritePath': 'stone.png',
       'value': 10,
+      'toolEffect': 'throw',
       'size': [25.0, 25.0],
     },
     '採掘の気力': {
@@ -435,188 +456,18 @@ class ItemFactory {
       'actionType': BagWindowActionType.consume,
       'spritePath': 'shovel.png',
       'value': 120,
-      'effect': 'updateMiningPoints5',
+      'customEffect': 'updateMiningPoints5',
+      'size': [25.0, 25.0],
+    },
+    'はしご': {
+      'type': ItemType.tool,
+      'description': 'はしごは高いところに登るのに便利です。信用できない人が近くにいるときは注意してください。',
+      'spritePath': 'ladder.png',
+      'value': 10,
+      'toolEffect': 'throw',
       'size': [25.0, 25.0],
     },
   };
-
-  /// 通貨を生成
-  static CurrencyItem createCurrency(Vector2 position, {int value = 10}) {
-    final itemData = _itemDefinitions['通貨']!;
-    final name = itemData['name'] as String;
-    final description = itemData['description'] as String;
-    final spritePath = itemData['spritePath'] as String;
-    final currencyValue = itemData['value'] as int;
-    final size = Vector2(
-      (itemData['size'] as List<dynamic>)[0].toDouble(),
-      (itemData['size'] as List<dynamic>)[1].toDouble(),
-    );
-
-    return CurrencyItem(
-      position: position,
-      currencyValue: value, // 引数で渡されたvalueを使用
-      name: name,
-      description: description,
-      value: currencyValue, // _itemDefinitionsから取得したvalueを使用
-      spritePath: spritePath,
-      size: size,
-    );
-  }
-
-  /// 宝石を生成
-  static GemItem createGem(Vector2 position, {int value = 50}) {
-    final itemData = _itemDefinitions['宝石']!;
-    final name = itemData['name'] as String;
-    final description = itemData['description'] as String;
-    final spritePath = itemData['spritePath'] as String;
-    final gemValue = itemData['value'] as int;
-    final size = Vector2(
-      (itemData['size'] as List<dynamic>)[0].toDouble(),
-      (itemData['size'] as List<dynamic>)[1].toDouble(),
-    );
-
-    return GemItem(
-      position: position,
-      name: name,
-      description: description,
-      value: gemValue,
-      spritePath: spritePath,
-      size: size,
-    );
-  }
-
-  /// 回復アイテムを生成
-  static HealthItem createHealthItem(
-    Vector2 position, {
-    double healAmount = 100.0,
-  }) {
-    final itemData = _itemDefinitions['栄養剤']!;
-    final name = itemData['name'] as String;
-    final description = itemData['description'] as String;
-    final spritePath = itemData['spritePath'] as String;
-    final value = itemData['value'] as int;
-    final size = Vector2(
-      (itemData['size'] as List<dynamic>)[0].toDouble(),
-      (itemData['size'] as List<dynamic>)[1].toDouble(),
-    );
-
-    return HealthItem(
-      position: position,
-      healAmount: healAmount,
-      name: name,
-      description: description,
-      value: value,
-      spritePath: spritePath,
-      size: size,
-    );
-  }
-
-  /// パワーアップアイテムを生成
-  static PowerUpItem createPowerUpItem(
-    Vector2 position, {
-    required Function(Player) powerUpEffect,
-  }) {
-    final itemData = _itemDefinitions['レッド・ブリ']!;
-    final name = itemData['name'] as String;
-    final description = itemData['description'] as String;
-    final spritePath = itemData['spritePath'] as String;
-    final value = itemData['value'] as int;
-    final size = Vector2(
-      (itemData['size'] as List<dynamic>)[0].toDouble(),
-      (itemData['size'] as List<dynamic>)[1].toDouble(),
-    );
-
-    return PowerUpItem(
-      position: position,
-      powerUpEffect: powerUpEffect,
-      name: name,
-      description: description,
-      value: value,
-      spritePath: spritePath,
-      size: size,
-    );
-  }
-
-  /// 道具アイテムを生成
-  static ToolItem createToolItem({
-    required Vector2 position,
-    required String name,
-    required String description,
-    required int value,
-    required String spritePath,
-    required Vector2 size,
-  }) {
-    return ToolItem(
-      position: position,
-      name: name,
-      description: description,
-      value: value,
-      spritePath: spritePath,
-      size: size,
-    );
-  }
-
-  /// 配置アイテムを生成
-  static PlaceableItem createPlaceableItem({
-    required Vector2 position,
-    required String name,
-    required String description,
-    required int value,
-    required String spritePath,
-    required Vector2 size,
-  }) {
-    return PlaceableItem(
-      position: position,
-      name: name,
-      description: description,
-      value: value,
-      spritePath: spritePath,
-      size: size,
-    );
-  }
-
-  /// カスタムアイテムを生成
-  static CustomItem createCustomItem({
-    required Vector2 position,
-    required Function(Player) effect,
-    required String spritePath,
-    required String name,
-    required String description,
-    required int value,
-    Vector2? size,
-  }) {
-    return CustomItem(
-      position: position,
-      customEffect: effect,
-      spritePath: spritePath,
-      name: name,
-      description: description,
-      value: value,
-      size: size,
-    );
-  }
-
-  /// ランダムなアイテムを生成 (test)
-  /* static Item createRandomItem(Vector2 position) {
-    switch (_random.nextInt(4)) {
-      case 0:
-        return createCurrency(position, value: 10 + _random.nextInt(20));
-      case 1:
-        return createGem(position, value: 30 + _random.nextInt(40));
-      case 2:
-        return createHealthItem(
-          position,
-          healAmount: 50.0 + _random.nextDouble() * 100.0,
-        );
-      case 3:
-        return createPowerUpItem(
-          position,
-          stressReduction: 10.0 + _random.nextDouble() * 20.0,
-        );
-      default:
-        return createCurrency(position);
-    }
-  } */
 
   /// 名前からアイテムを生成
   static Item? createItemByName(String name, Vector2 position) {
@@ -688,7 +539,10 @@ class ItemFactory {
           size: size,
         );
       case ItemType.tool:
+        final effectName = itemData['toolEffect'] as String?;
+        final resolvedToolEffect = ToolEffectResolver.resolve(effectName);
         return ToolItem(
+          toolEffect: resolvedToolEffect,
           position: position,
           name: name,
           description: description,
@@ -697,7 +551,10 @@ class ItemFactory {
           size: size,
         );
       case ItemType.placeable:
+        final effectName = itemData['placeableEffect'] as String?;
+        final resolvedPlaceableEffect = PlaceableEffectResolver.resolve(effectName);
         return PlaceableItem(
+          placeableEffect: resolvedPlaceableEffect,
           position: position,
           name: name,
           description: description,
@@ -706,10 +563,11 @@ class ItemFactory {
           size: size,
         );
       case ItemType.custom:
-        final effectName = itemData['effect'] as String?;
+        final effectName = itemData['customEffect'] as String?;
         final resolvedEffect = CustomItemEffectResolver.resolve(effectName);
         final customActionType =
-            (itemData['actionType'] as BagWindowActionType?) ?? BagWindowActionType.consume;
+            (itemData['actionType'] as BagWindowActionType?) ??
+            BagWindowActionType.consume;
         return CustomItem(
           position: position,
           customEffect: resolvedEffect!,

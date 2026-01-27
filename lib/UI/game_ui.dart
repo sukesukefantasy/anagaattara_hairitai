@@ -57,6 +57,14 @@ class GameUI extends StatefulWidget {
   static final ValueNotifier<ActionButtonState> _storeButtonStateNotifier =
       ValueNotifier<ActionButtonState>(ActionButtonState.disabled);
 
+  // for equipped item
+  static final ValueNotifier<ActionButtonState>
+  _equippedItemUseButtonStateNotifier = ValueNotifier<ActionButtonState>(
+    ActionButtonState.disabled,
+  );
+  static final ValueNotifier<String?> _equippedItemNameNotifier =
+      ValueNotifier<String?>(null);
+
   // Direction button setters
   static void setUpButtonState(DirectionButtonState state) =>
       _upButtonStateNotifier.value = state;
@@ -144,6 +152,9 @@ class _GameUIState extends State<GameUI> {
 
   @override
   void dispose() {
+    if (_isPlayerInitialized) {
+      widget.game.itemBag.removeListener(_onItemBagChanged);
+    }
     GameUI.interactActionNotifier.dispose();
     GameUI._showJumpButtonNotifier.dispose();
     GameUI._upButtonStateNotifier.dispose();
@@ -160,6 +171,8 @@ class _GameUIState extends State<GameUI> {
     GameUI._interactButtonIconNotifier.dispose();
     GameUI._placeButtonStateNotifier.dispose();
     GameUI._storeButtonStateNotifier.dispose();
+    GameUI._equippedItemUseButtonStateNotifier.dispose();
+    GameUI._equippedItemNameNotifier.dispose();
     super.dispose();
   }
 
@@ -170,6 +183,22 @@ class _GameUIState extends State<GameUI> {
     }
     if (mounted) {
       setState(() => _isPlayerInitialized = true);
+      // ItemBagの変更を監視
+      widget.game.itemBag.addListener(_onItemBagChanged);
+      _onItemBagChanged(); // 初期化時にも実行
+    }
+  }
+
+  void _onItemBagChanged() {
+    if (!mounted) return;
+    final equippedItemName = widget.game.itemBag.equippedItemName;
+    GameUI._equippedItemNameNotifier.value = equippedItemName;
+    if (equippedItemName != null) {
+      GameUI._equippedItemUseButtonStateNotifier.value =
+          ActionButtonState.normal;
+    } else {
+      GameUI._equippedItemUseButtonStateNotifier.value =
+          ActionButtonState.disabled;
     }
   }
 
@@ -307,6 +336,40 @@ class _GameUIState extends State<GameUI> {
             return Row(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // Equipped Item Use Button
+                ValueListenableBuilder<String?>(
+                  valueListenable: GameUI._equippedItemNameNotifier,
+                  builder: (context, itemName, child) {
+                    if (itemName == null) return const SizedBox.shrink();
+                    final item = widget.game.itemBag.items[itemName];
+                    if (item == null) return const SizedBox.shrink();
+                    return AnimatedBuilder(
+                      animation: widget.game.itemBag,
+                      builder: (context, child) {
+                        final count = widget.game.itemBag.getItemCount(itemName);
+                        return Row(
+                          children: [
+                            ActionButton(
+                              imagePath: item.spritePath,
+                              badgeCount: count,
+                              onPressed: () {
+                                item.onUse(widget.game.player);
+                                if (item.type != ItemType.tool) {
+                                  widget.game.itemBag.removeItem(itemName);
+                                }
+                              },
+                              stateNotifier:
+                                  GameUI._equippedItemUseButtonStateNotifier,
+                              buttonSize: widget.screenSize.width * 0.07,
+                              iconSize: widget.screenSize.width * 0.05,
+                            ),
+                            SizedBox(width: widget.screenSize.width * 0.03),
+                          ],
+                        );
+                      },
+                    );
+                  },
+                ),
                 // Dig Button
                 ActionButton(
                   icon: Icons.keyboard_double_arrow_down_sharp,
@@ -983,6 +1046,8 @@ enum ActionButtonState { normal, pressed, disabled, notice }
 
 class ActionButton extends StatefulWidget {
   final IconData? icon;
+  final String? imagePath; // 画像パスを追加
+  final int? badgeCount; // バッジのカウントを追加
   final VoidCallback? onPressed;
   final Function(bool)? onTogglePressed; // タップダウン/アップで状態を切り替えるボタン用
   final ValueNotifier<ActionButtonState> stateNotifier;
@@ -994,6 +1059,8 @@ class ActionButton extends StatefulWidget {
   const ActionButton({
     super.key,
     this.icon,
+    this.imagePath,
+    this.badgeCount,
     this.onPressed,
     this.onTogglePressed,
     required this.stateNotifier,
@@ -1143,6 +1210,21 @@ class _ActionButtonState extends State<ActionButton>
                         widget.icon,
                       ), // iconNotifierがnullの場合はデフォルトのiconを使用
                   builder: (context, iconData, child) {
+                    if (widget.imagePath != null) {
+                      return Image.asset(
+                        'assets/images/${widget.imagePath}',
+                        width: widget.iconSize,
+                        height: widget.iconSize,
+                        fit: BoxFit.contain,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Icon(
+                            Icons.broken_image,
+                            size: widget.iconSize,
+                            color: Colors.white.withOpacity(opacity),
+                          );
+                        },
+                      );
+                    }
                     return Icon(
                       iconData,
                       size: widget.iconSize, // 可変サイズ
@@ -1152,6 +1234,33 @@ class _ActionButtonState extends State<ActionButton>
                 ),
               ),
               if (noticeBorder != null) noticeBorder,
+              if (widget.badgeCount != null && widget.badgeCount! > 0)
+                Positioned(
+                  right: 0,
+                  top: 0,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: const BoxDecoration(
+                      color: Colors.red,
+                      shape: BoxShape.circle,
+                    ),
+                    constraints: BoxConstraints(
+                      minWidth: widget.buttonSize * 0.3,
+                      minHeight: widget.buttonSize * 0.3,
+                    ),
+                    child: Center(
+                      child: Text(
+                        '${widget.badgeCount}',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: widget.buttonSize * 0.2,
+                          fontWeight: FontWeight.bold,
+                          fontFamily: 'TRS-Million-Rg',
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
             ],
           ),
         );

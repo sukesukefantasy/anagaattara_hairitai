@@ -3,6 +3,7 @@ import '../window_manager.dart';
 import '../../component/item/item_bag.dart';
 import '../../component/item/item.dart';
 import '../../main.dart';
+import '../dialogs/confirmation_dialog.dart';
 
 class ItemBagWindow extends StatelessWidget {
   final WindowManager windowManager;
@@ -108,20 +109,45 @@ class ItemBagWindow extends StatelessWidget {
                                   onTap: () {
                                     _showItemDetailDialog(context, item);
                                   },
-                                  child: Image.asset(
-                                    'assets/images/${item.spritePath}', // item.spritePath を使用
-                                    width: windowManager.screenWidth * 0.1,
-                                    height:
-                                        windowManager.screenHeight *
-                                        0.1, // 画面幅の10%
-                                    fit: BoxFit.contain,
-                                    errorBuilder: (context, error, stackTrace) {
-                                      return const Icon(
-                                        Icons.broken_image,
-                                        size: 50,
-                                        color: Colors.grey,
-                                      );
-                                    },
+                                  child: Stack(
+                                    children: [
+                                      Image.asset(
+                                        'assets/images/${item.spritePath}', // item.spritePath を使用
+                                        width: windowManager.screenWidth * 0.1,
+                                        height:
+                                            windowManager.screenHeight *
+                                            0.1, // 画面幅の10%
+                                        fit: BoxFit.contain,
+                                        errorBuilder: (context, error, stackTrace) {
+                                          return const Icon(
+                                            Icons.broken_image,
+                                            size: 50,
+                                            color: Colors.grey,
+                                          );
+                                        },
+                                      ),
+                                      if (itemBag.equippedItemName == item.name)
+                                        Positioned(
+                                          right: 0,
+                                          bottom: 0,
+                                          child: Container(
+                                            padding: const EdgeInsets.all(2),
+                                            decoration: BoxDecoration(
+                                              color: Colors.black54,
+                                              borderRadius: BorderRadius.circular(4),
+                                            ),
+                                            child: Text(
+                                              'E',
+                                              style: TextStyle(
+                                                color: Colors.white,
+                                                fontSize: windowManager.screenWidth * 0.02,
+                                                fontWeight: FontWeight.bold,
+                                                fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                    ],
                                   ),
                                 ),
                                 // アイテム名、数量、説明
@@ -421,6 +447,11 @@ class ItemBagWindow extends StatelessWidget {
 
   // アイテムタイプに基づいて主要なアクションタイプを決定するヘルパーメソッド
   BagWindowActionType _getActionType(Item item) {
+    // 装備中のアイテムであれば解除を優先
+    if (itemBag.equippedItemName == item.name) {
+      return BagWindowActionType.unequip;
+    }
+
     switch (item.type) {
       case ItemType.currency:
       case ItemType.health:
@@ -432,7 +463,7 @@ class ItemBagWindow extends StatelessWidget {
       case ItemType.tool:
         return BagWindowActionType.equip; // Toolは装備
       case ItemType.placeable:
-        return BagWindowActionType.dismantle; // Placeableはばらすがメインアクション
+        return BagWindowActionType.dispose; // Placeableは廃棄するがメインアクション
       case ItemType.custom:
         return (item as CustomItem).customActionType; // customActionType を参照
     }
@@ -457,16 +488,27 @@ class ItemBagWindow extends StatelessWidget {
         break;
       case BagWindowActionType.equip:
         if (item is ToolItem) {
-          game.player.equipTool(item);
+          game.player.equipItem(item.name);
         }
         break;
       case BagWindowActionType.unequip:
         if (item is ToolItem) {
-          game.player.unequipTool(item);
+          game.player.unequipItem(item.name);
         }
         break;
-      case BagWindowActionType.dismantle:
-        game.player.dismantlePlaceableItem(item);
+      case BagWindowActionType.dispose:
+        showDialog(
+          context: dialogContext,
+          builder: (BuildContext context) {
+            return ConfirmationDialog(
+              title: 'アイテムの廃棄',
+              message: '${item.name} を 「全て」 廃棄しますか？',
+              onConfirm: () {
+                game.player.disposePlaceableItem(item);
+              },
+            );
+          },
+        );
         break;
       case BagWindowActionType.view:
         game.player.viewGem(item);
@@ -499,8 +541,8 @@ class ItemBagWindow extends StatelessWidget {
       case BagWindowActionType.unequip:
         buttonText = '解除';
         break;
-      case BagWindowActionType.dismantle:
-        buttonText = 'ばらす';
+      case BagWindowActionType.dispose:
+        buttonText = '廃棄する';
         break;
       case BagWindowActionType.view:
         buttonText = '眺める';
@@ -559,10 +601,10 @@ class ItemBagWindow extends StatelessWidget {
           _handleItemAction(context, item, 1, BagWindowActionType.unequip);
         };
         break;
-      case BagWindowActionType.dismantle:
+      case BagWindowActionType.dispose:
         backgroundColor = Colors.red;
         onPressed = () {
-          _handleItemAction(context, item, 1, BagWindowActionType.dismantle);
+          _handleItemAction(context, item, 1, BagWindowActionType.dispose);
         };
         break;
       case BagWindowActionType.view:

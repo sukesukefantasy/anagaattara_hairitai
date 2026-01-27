@@ -47,6 +47,11 @@ class PhysicsBehavior implements HasPhysicsHitbox {
     }
   }
 
+  // 物理挙動の有効/無効を切り替えるメソッド
+  void setEnabled(bool newEnabled) {
+    isEnabled = newEnabled;
+  }
+
   // 速度を設定するメソッド
   void setVelocity(Vector2 newVelocity) {
     velocity = newVelocity;
@@ -60,10 +65,6 @@ class PhysicsBehavior implements HasPhysicsHitbox {
   // 重力を設定するメソッド
   void setGravity(double newGravity) {
     gravity = newGravity;
-  }
-
-  void setEnabled(bool newEnabled) {
-    isEnabled = newEnabled;
   }
 
   // ヒットボックスを設定するメソッド

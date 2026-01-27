@@ -116,9 +116,12 @@ class Player extends SpriteAnimationComponent
 
   final Set<PositionComponent> _solidCollisions = {};
   final Set<EnemyBase> _collidingEnemies = {};
+  final Set<Item> _activeLadders = {}; // 接触中のはしごを保持
 
   // インタラクション関連のプロパティを追加
   bool canInteract = false;
+
+  bool get isOnLadder => _activeLadders.isNotEmpty; // はしごに登っているかどうか
 
   // 運搬中の配置可能アイテム
   Item? carriedItem;
@@ -416,7 +419,7 @@ class Player extends SpriteAnimationComponent
       if (inUnderGroundFlag == false) {
         unbeatable = true;
         game.cameraController.adjustCameraForDigging();
-        GameUI.setUpButtonState(DirectionButtonState.normal);
+        _updateUpButtonState();
       }
       // エコーフィルターのアクティブ化/非アクティブ化
       if (audioManager.soloud.isInitialized &&
@@ -433,7 +436,7 @@ class Player extends SpriteAnimationComponent
         toggleDigging(false);
         unbeatable = false;
         game.cameraController.setOutdoorSceneCamera();
-        GameUI.setUpButtonState(DirectionButtonState.disabled);
+        _updateUpButtonState();
       }
       // エコーフィルターのアクティブ化/非アクティブ化
       if (audioManager.soloud.isInitialized &&
@@ -455,7 +458,8 @@ class Player extends SpriteAnimationComponent
           game.sceneManager.currentScene as AbstractOutdoorScene; // 明示的にキャスト
       if (currentScene.underGround != null) {
         // underGroundがnullでないことを確認
-        inUnderGround = position.y >= currentScene.underGround.position.y;
+        // 足元が少しでも地下に入ったら inUnderGround とする
+        inUnderGround = (position.y + 20) >= currentScene.underGround.position.y;
       } else {
         inUnderGround = false; // underGroundが未初期化の場合、地下にいないと見なす
       }
@@ -565,7 +569,7 @@ class Player extends SpriteAnimationComponent
       if (isDigging) {
         // 掘削中は重力は通常無視され、垂直速度は直接制御される
         if (isMovingDown) {
-          velocity.y = speed * 0.5; // 下に掘る
+          velocity.y = speed * 0.25; // 下に掘る
         } else if (isMovingUp) {
           if (position.y >
               game.initialGameCanvasSize.y +
@@ -575,12 +579,43 @@ class Player extends SpriteAnimationComponent
                       .groundComponent!
                       .groundHeight) {
             // 地面より上に掘りすぎないようにする
-            velocity.y = -speed * 0.5; // 上に掘る
+            velocity.y = -speed * 0.25; // 上に掘る
           }
         } else {
           velocity.y = 0; // 掘削中に上下に移動していない場合、垂直速度はゼロ
         }
         isOnGround = false; // 積極的に掘削中は、通常の物理的な「地面にいる」状態ではない
+      } else if (isOnLadder) {
+        // はしご移動
+        if (isMovingUp) {
+          velocity.y = -speed;
+        } else if (isMovingDown) {
+          velocity.y = speed;
+        } else {
+          velocity.y = 0;
+        }
+
+        // はしご中でも足元に固形物（地面など）があれば停止する
+        if (velocity.y >= 0) {
+          final Rect playerFootRect = Rect.fromLTWH(
+            absolutePosition.x - size.x * 0.05,
+            absolutePosition.y + size.y / 2,
+            size.x * 0.1,
+            2,
+          );
+
+          for (final collision in _solidCollisions) {
+            if (collision.toRect().overlaps(playerFootRect)) {
+              if (velocity.y > 0) velocity.y = 0;
+              isOnGround = true;
+              break;
+            }
+          }
+        }
+
+        if (velocity.y < 0) {
+          isOnGround = false;
+        }
       } else {
         // 掘削中でない場合、通常の物理を適用
         // まずは重力による影響を計算
@@ -693,6 +728,14 @@ class Player extends SpriteAnimationComponent
   }
 
   // 状態管理メソッド ==============================================================================
+  void _updateUpButtonState() {
+    final state =
+        (inUnderGround || isOnLadder)
+            ? DirectionButtonState.normal
+            : DirectionButtonState.disabled;
+    GameUI.setUpButtonState(state);
+  }
+
   void toggleDigging([bool? diggingState]) {
     isDigging = diggingState ?? !isDigging;
     final bool isDiggingOnGround = diggingState != null && diggingState;
@@ -796,7 +839,6 @@ class Player extends SpriteAnimationComponent
     item.physicsBehavior?.velocity = Vector2.zero();
     // インベントリからアイテムを消費
     itemBag.removeItem(item.name); // アイテム名で削除
-    debugPrint('Item.onUse: ${item.name} をインベントリから削除しました。');
     // プレイヤーが運搬する
     if (carriedItem != null) {
       debugPrint('すでにアイテムを運搬中です: ${carriedItem!.name}');
@@ -817,7 +859,6 @@ class Player extends SpriteAnimationComponent
     item.sprite = await game.loadSprite(item.spritePath);
 
     // UIを運搬モードに切り替える処理は後で実装
-    debugPrint('${item.name} の運搬を開始しました。');
     carriedItem = item;
     isCarryingItemNotifier.value = true; // 運搬モード開始
     GameUI.setPlaceButtonState(ActionButtonState.normal);
@@ -825,11 +866,6 @@ class Player extends SpriteAnimationComponent
 
     // GameRuntimeStateに運搬アイテムの情報を保存
     gameRuntimeState.carriedItemName = item.name;
-    gameRuntimeState.carriedItemDescription = item.description;
-    gameRuntimeState.carriedItemSpritePath = item.spritePath;
-    gameRuntimeState.carriedItemSizeX = item.size.x;
-    gameRuntimeState.carriedItemSizeY = item.size.y;
-    gameRuntimeState.carriedItemValue = item.value;
   }
 
   // アイテム運搬を終了するメソッド
@@ -838,18 +874,11 @@ class Player extends SpriteAnimationComponent
       // ワールドから削除する
       carriedItem!.removeFromParent();
       carriedItem = null; // 荷下ろしなのでnullにする
-      debugPrint('アイテムの運搬を終了しました。');
       isCarryingItemNotifier.value = false; // 運搬モード終了
       GameUI.resetCarryingModeButtons(); // 運搬モードボタンをリセット
 
       // GameRuntimeStateの運搬アイテム情報をリセット
       gameRuntimeState.carriedItemName = null;
-      gameRuntimeState.carriedItemDescription = null;
-      gameRuntimeState.carriedItemSpritePath = null;
-      gameRuntimeState.carriedItemSizeX = null;
-      gameRuntimeState.carriedItemSizeY = null;
-      gameRuntimeState.carriedItemValue = null;
-      debugPrint('stopCarryingが呼び出され、carriedItemがnullになりました');
     }
   }
 
@@ -867,6 +896,9 @@ class Player extends SpriteAnimationComponent
       game.world.add(item);
       await item.loaded; // ItemのonLoadが完了するまで待機
     }
+
+    // GameRuntimeStateの運搬アイテム情報をリセット
+    gameRuntimeState.carriedItemName = null;
   }
 
   Future<void> throwWorldObject(Item object) async {
@@ -888,49 +920,55 @@ class Player extends SpriteAnimationComponent
       item.physicsBehavior.setVelocity(Vector2(horizontalThrowForce, -20));
       item.physicsBehavior.setEnabled(true);
     }
+
+    // GameRuntimeStateの運搬アイテム情報をリセット
+    gameRuntimeState.carriedItemName = null;
   }
 
   // アイテムウィンドウ用メソッド --------------------------------------------------------------------------------
   // ToolItemを装備するメソッド (後で実装)
-  void equipTool(ToolItem tool) {
-    debugPrint('ツール ${tool.name} を装備しました。');
+  void equipItem(String itemName) {
+    debugPrint('ツール $itemName を装備しました。');
     game.windowManager.showWindow(
       GameWindowType.message,
       MessageWindow(
-        messages: ['${tool.name} を装備しました。(嘘)'],
+        messages: ['$itemName を装備しました。'],
         onFinish: () {
           game.windowManager.hideWindow();
         },
       ),
     );
+    itemBag.equipItem(itemName);
   }
 
   // ToolItemを解除するメソッド (後で実装)
-  void unequipTool(ToolItem tool) {
-    debugPrint('ツール ${tool.name} を解除しました。');
+  void unequipItem(String itemName) {
+    debugPrint('ツール $itemName を解除しました。');
     game.windowManager.showWindow(
       GameWindowType.message,
       MessageWindow(
-        messages: ['${tool.name} を解除しました。(そもそも装備していない)'],
+        messages: ['$itemName を解除しました。'],
         onFinish: () {
           game.windowManager.hideWindow();
         },
       ),
     );
+    itemBag.unequipItem();
   }
 
-  // 配置可能アイテムをばらすメソッド (後で実装)
-  void dismantlePlaceableItem(Item item) {
-    debugPrint('配置可能アイテム ${item.name} をばらしました。');
+  // 配置可能アイテムを全て廃棄するメソッド (個数を指定して捨てるという需要がなさそうなので全て捨てる)
+  void disposePlaceableItem(Item item) {
+    debugPrint('配置可能アイテム ${item.name} を廃棄しました。');
     game.windowManager.showWindow(
       GameWindowType.message,
       MessageWindow(
-        messages: ['${item.name} をばらしました。(嘘)', '獲得したアイテムの表示 UI があったらいいですね。'],
+        messages: ['${item.name} を廃棄しました。', '獲得したアイテムの表示 UI があったらいいですね。'],
         onFinish: () {
           game.windowManager.hideWindow();
         },
       ),
     );
+    itemBag.removeItem(item.name, count: 0);
   }
 
   // 宝石を眺めるメソッド (後で実装)
@@ -1147,6 +1185,11 @@ class Player extends SpriteAnimationComponent
       }
     }
 
+    if (other is Item && other.name == 'はしご') {
+      _activeLadders.add(other);
+      _updateUpButtonState();
+    }
+
     // 衝突相手がソリッドなコンポーネントであれば_solidCollisionsに追加
     bool isOtherSolid = other.children.whereType<ShapeHitbox>().any(
       (h) => h.isSolid,
@@ -1240,6 +1283,11 @@ class Player extends SpriteAnimationComponent
       if (_collidingEnemies.isEmpty) {
         isTouchingEnemy = false;
       }
+    }
+
+    if (other is Item && other.name == 'はしご') {
+      _activeLadders.remove(other);
+      _updateUpButtonState();
     }
 
     _solidCollisions.remove(other);

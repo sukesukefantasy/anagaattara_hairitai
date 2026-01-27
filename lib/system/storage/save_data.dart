@@ -8,6 +8,7 @@ class SaveData {
   int miningPoints;
   double maxStress;
   Map<String, int> itemCounts;
+
   String lastSceneId; // 最後にいたシーンのID
   double lastPlayerPositionX; // ゲーム終了時にいたプレイヤーのX座標
   double lastPlayerPositionY; // ゲーム終了時にいたプレイヤーのY座標
@@ -21,18 +22,14 @@ class SaveData {
   double? lastBuildingPositionY; // 最後にいた建物のY座標
 
   String? carriedItemName;
-  String? carriedItemDescription;
-  String? carriedItemSpritePath;
-  double? carriedItemSizeX;
-  double? carriedItemSizeY;
-  int? carriedItemValue;
+  String? equippedItemName;
 
   // 今後追加される可能性のあるその他のデータ
 
   SaveData({
     this.currency = 0,
     this.miningPoints = 0,
-    this.maxStress = 100.0, // Playerクラスの初期値に合わせる
+    this.maxStress = 100.0,
     Map<String, int>? itemCounts,
     this.lastSceneId = 'outdoor', // デフォルトは屋外シーン
     this.lastPlayerPositionX = -50.0, // デフォルトのプレイヤーX座標
@@ -44,11 +41,7 @@ class SaveData {
     this.lastBuildingPositionX = -50.0,
     this.lastBuildingPositionY = 0.0,
     this.carriedItemName,
-    this.carriedItemDescription,
-    this.carriedItemSpritePath,
-    this.carriedItemSizeX,
-    this.carriedItemSizeY,
-    this.carriedItemValue,
+    this.equippedItemName,
   }) : itemCounts = itemCounts ?? {};
 
   // JSONからSaveDataオブジェクトを生成するファクトリコンストラクタ
@@ -73,11 +66,7 @@ class SaveData {
       lastBuildingPositionX: json['lastBuildingPositionX'] as double?,
       lastBuildingPositionY: json['lastBuildingPositionY'] as double?,
       carriedItemName: json['carriedItemName'] as String?,
-      carriedItemDescription: json['carriedItemDescription'] as String?,
-      carriedItemSpritePath: json['carriedItemSpritePath'] as String?,
-      carriedItemSizeX: json['carriedItemSizeX'] as double?,
-      carriedItemSizeY: json['carriedItemSizeY'] as double?,
-      carriedItemValue: json['carriedItemValue'] as int?,
+      equippedItemName: json['equippedItemName'] as String?,
     );
   }
 
@@ -98,11 +87,7 @@ class SaveData {
       'lastBuildingPositionX': lastBuildingPositionX,
       'lastBuildingPositionY': lastBuildingPositionY,
       'carriedItemName': carriedItemName,
-      'carriedItemDescription': carriedItemDescription,
-      'carriedItemSpritePath': carriedItemSpritePath,
-      'carriedItemSizeX': carriedItemSizeX,
-      'carriedItemSizeY': carriedItemSizeY,
-      'carriedItemValue': carriedItemValue,
+      'equippedItemName': equippedItemName,
     };
   }
 }

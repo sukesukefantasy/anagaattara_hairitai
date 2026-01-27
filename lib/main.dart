@@ -417,20 +417,20 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
     debugPrint('Debug: After _performSceneLoad');
 
     // GameRuntimeStateに運搬中のアイテム情報があれば、プレイヤーに設定する
-    if (game.gameRuntimeState.carriedItemName != null &&
-        game.gameRuntimeState.carriedItemDescription != null &&
-        game.gameRuntimeState.carriedItemSpritePath != null &&
-        game.gameRuntimeState.carriedItemSizeX != null &&
-        game.gameRuntimeState.carriedItemSizeY != null &&
-        game.gameRuntimeState.carriedItemValue != null) {
+    if (game.gameRuntimeState.carriedItemName != null) {
       final carriedItem = ItemFactory.createItemByName(
         game.gameRuntimeState.carriedItemName!,
         Vector2.zero(),
       );
-      
+
       if (carriedItem != null) {
         await game.player.startCarrying(carriedItem);
       }
+    }
+
+    // GameRuntimeStateに装備アイテム情報があれば、プレイヤーに設定する
+    if (game.gameRuntimeState.equippedItemName != null) {
+      game.player.equipItem(game.gameRuntimeState.equippedItemName!);
     }
 
     // ゲームロード後にタイトル画面を表示
@@ -558,8 +558,8 @@ class MyGame extends FlameGame
       debugPrint('Error initializing DigEffectComponent: $e'); // エラーログを追加
     }
     if (digEffect != null) {
-      digEffect!.priority = 51; // ! を追加
-      await world.add(digEffect!); // ! を追加
+      digEffect!.priority = 51;
+      await world.add(digEffect!);
     } else {
       debugPrint(
         'DigEffectComponent was not initialized, skipping adding to world.',

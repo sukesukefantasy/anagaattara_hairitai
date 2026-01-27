@@ -29,11 +29,7 @@ class GameRuntimeState {
 
   // 運搬中のアイテム情報
   String? carriedItemName;
-  String? carriedItemDescription;
-  String? carriedItemSpritePath;
-  double? carriedItemSizeX;
-  double? carriedItemSizeY;
-  int? carriedItemValue;
+  String? equippedItemName;
 
   // SaveDataからデータをロード
   void loadFromSaveData(SaveData data) {
@@ -50,19 +46,21 @@ class GameRuntimeState {
     currentBuildingType = data.lastBuildingType;
     currentBuildingPositionX = data.lastBuildingPositionX;
     currentBuildingPositionY = data.lastBuildingPositionY;
-
     carriedItemName = data.carriedItemName;
-    carriedItemDescription = data.carriedItemDescription;
-    carriedItemSpritePath = data.carriedItemSpritePath;
-    carriedItemSizeX = data.carriedItemSizeX;
-    carriedItemSizeY = data.carriedItemSizeY;
-    carriedItemValue = data.carriedItemValue;
+    equippedItemName = data.equippedItemName;
 
     debugPrint('--- GameRuntimeState loaded from SaveData. ---');
     printState();
   }
 
-  // SaveDataオブジェクトを生成
+  // ランタイムセーブデータを恒久セーブデータに保存
+  Future<void> saveGame() async {
+    final saveData = toSaveData();
+    await SaveDataManager().saveGameData(saveData);
+    printState();
+  }
+
+  // 現時点のランタイムセーブデータをSaveDataオブジェクトに変換
   SaveData toSaveData() {
     return SaveData(
       currency: currency,
@@ -79,19 +77,8 @@ class GameRuntimeState {
       lastBuildingPositionX: currentBuildingPositionX,
       lastBuildingPositionY: currentBuildingPositionY,
       carriedItemName: carriedItemName,
-      carriedItemDescription: carriedItemDescription,
-      carriedItemSpritePath: carriedItemSpritePath,
-      carriedItemSizeX: carriedItemSizeX,
-      carriedItemSizeY: carriedItemSizeY,
-      carriedItemValue: carriedItemValue,
+      equippedItemName: equippedItemName,
     );
-  }
-
-  // ランタイムセーブデータを恒久セーブデータに保存
-  Future<void> saveGame() async {
-    final saveData = toSaveData();
-    await SaveDataManager().saveGameData(saveData);
-    printState();
   }
 
   // デバッグ用に現在の状態を表示
@@ -109,11 +96,7 @@ class GameRuntimeState {
     debugPrint('  currentBuildingPositionX: $currentBuildingPositionX');
     debugPrint('  currentBuildingPositionY: $currentBuildingPositionY');
     debugPrint('  carriedItemName: $carriedItemName');
-    debugPrint('  carriedItemDescription: $carriedItemDescription');
-    debugPrint('  carriedItemSpritePath: $carriedItemSpritePath');
-    debugPrint('  carriedItemSizeX: $carriedItemSizeX');
-    debugPrint('  carriedItemSizeY: $carriedItemSizeY');
-    debugPrint('  carriedItemValue: $carriedItemValue');
+    debugPrint('  equippedItemName: $equippedItemName');
     debugPrint('------------------------------------'); */
   }
 }

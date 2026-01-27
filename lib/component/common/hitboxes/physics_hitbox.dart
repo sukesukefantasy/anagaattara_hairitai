@@ -7,6 +7,7 @@ import 'package:anagaattara_hairitai/component/common/ground/ground.dart';
 import 'package:anagaattara_hairitai/component/common/underground/underground.dart';
 import 'package:anagaattara_hairitai/UI/game_ui.dart';
 import 'package:flutter/material.dart';
+import 'package:anagaattara_hairitai/component/common/hitboxes/door_hitbox.dart';
 
 class PhysicsHitbox extends RectangleHitbox with HasGameReference {
   double restitution; // 跳ね返り係数 (0.0: 跳ね返らない, 1.0: 完全に跳ね返る)
@@ -14,7 +15,6 @@ class PhysicsHitbox extends RectangleHitbox with HasGameReference {
   bool _isColliding = false; // 衝突中かどうかを示すフラグ
   double? _collisionStartTime; // 衝突開始時刻
   static const double _stationaryThreshold = 1.2;
-  bool _isStationary = false; // 停止状態かどうかを示すフラグ
 
   @override
   final PositionComponent parent;
@@ -44,7 +44,7 @@ class PhysicsHitbox extends RectangleHitbox with HasGameReference {
         final physicsBehavior = physicsParent.physicsBehavior;
         if (physicsBehavior != null) {
           // velocity.xとvelocity.yが 0.2以下、且つ onCollision状態が1.5秒続いている
-          if (physicsBehavior.velocity.x.abs() < 0.2 &&
+          /* if (physicsBehavior.velocity.x.abs() < 0.2 &&
               physicsBehavior.velocity.y.abs() < 0.2 &&
               game.currentTime() - _collisionStartTime! >=
                   _stationaryThreshold &&
@@ -52,12 +52,12 @@ class PhysicsHitbox extends RectangleHitbox with HasGameReference {
             physicsBehavior.setVelocity(Vector2.zero()); // 速度をゼロにする
             physicsBehavior.setEnabled(false); // 物理挙動を無効にする
             _isStationary = true; // 停止状態に設定
-          }
+          } */
         }
       }
     } else {
       _collisionStartTime = null; // 衝突が終了したらタイマーをリセット
-      _isStationary = false; // 停止状態をリセット
+      /* _isStationary = false; // 停止状態をリセット */
     }
   }
 
@@ -76,7 +76,7 @@ class PhysicsHitbox extends RectangleHitbox with HasGameReference {
     _collisionStartTime = game.currentTime(); // 衝突開始時にタイマーをリセット
 
     // If a Player collides with this hitbox, and its parent is an Item, collect the item.
-    if (other.parent is Player && parent is Item) {
+    if (parent is Item && other.parent is Player) {
       final Player player = other.parent as Player;
       final Item item = parent as Item;
 
@@ -86,7 +86,7 @@ class PhysicsHitbox extends RectangleHitbox with HasGameReference {
         GameUI.setInteractAction(() {
           // 拾える状態にしてから収集する
           item.isCollected = false;
-          // TODO: あとでアイテムに応じてアクションを設定する必要あり
+          // TODO: あとで配置アイテムのためにアクションを設定する必要あり
           item.collectItemByPlayer(player);
           GameUI.setInteractAction(null, null);
         }, Icons.backpack_outlined);
@@ -109,43 +109,114 @@ class PhysicsHitbox extends RectangleHitbox with HasGameReference {
 
     // GroundまたはUnderGroundのヒットボックスとの衝突の場合
     if (other.parent is Ground || other.parent is UnderGround) {
-      if (_isStationary) {
+      /* if (_isStationary) {
+        return;
+      } */
+
+      // 衝突点の中心を計算
+      final contactCenter =
+          intersectionPoints.reduce((a, b) => a + b) /
+          intersectionPoints.length.toDouble();
+      final itemCenter = parent.absoluteCenter;
+      final diff = contactCenter - itemCenter;
+
+      // 横方向の衝突か縦方向の衝突かを判定
+      if ((diff.x.abs() / parent.size.x) > (diff.y.abs() / parent.size.y)) {
+        // 横方向の衝突: 地形の場合は100%跳ね返る
+        physicsBehavior.velocity.x = -physicsBehavior.velocity.x;
+
+        // めり込み防止
+        final overlapX = (parent.size.x / 2) - diff.x.abs();
+        if (overlapX > 0) {
+          parent.position.x -= diff.x.sign * overlapX;
+        }
+      } else {
+        // 縦方向の衝突
+        if (diff.y > 0 && physicsBehavior.velocity.y > 0) {
+          // 下方向（地面）への衝突
+          final overlap = (parent.size.y / 2) - diff.y.abs();
+          if (overlap > 0) {
+            parent.position.y -= overlap;
+          }
+
+          // 垂直方向の跳ね返り (係数を適用)
+          physicsBehavior.velocity.y =
+              -physicsBehavior.velocity.y * restitution;
+
+          // 水平方向の摩擦
+          physicsBehavior.velocity.x *= (1 - friction);
+
+          // 速度が非常に小さい場合は停止させる
+          if (physicsBehavior.velocity.y.abs() < 5) {
+            physicsBehavior.velocity.y = 0;
+          }
+        } else if (diff.y < 0 && physicsBehavior.velocity.y < 0) {
+          // 上方向（天井）への衝突
+          physicsBehavior.velocity.y =
+              -physicsBehavior.velocity.y * restitution;
+
+          final overlap = (parent.size.y / 2) - diff.y.abs();
+          if (overlap > 0) {
+            parent.position.y += overlap;
+          }
+        }
+      }
+    }
+    // 他のアイテムとの衝突の場合
+    else if (other.parent is Item) {
+      /* if (_isStationary) {
+        return;
+      } */
+
+      // 衝突点の中心を計算
+      final contactCenter =
+          intersectionPoints.reduce((a, b) => a + b) /
+          intersectionPoints.length.toDouble();
+      final itemCenter = parent.absoluteCenter;
+      final diff = contactCenter - itemCenter;
+
+      // 横方向の衝突か縦方向の衝突かを判定
+      if ((diff.x.abs() / parent.size.x) > (diff.y.abs() / parent.size.y)) {
+        // 横方向の衝突: アイテム同士の場合はrestitutionを適用する
+        physicsBehavior.velocity.x = -physicsBehavior.velocity.x * restitution;
+
+        // めり込み防止
+        final overlapX = (parent.size.x / 2) - diff.x.abs();
+        if (overlapX > 0) {
+          parent.position.x -= diff.x.sign * overlapX;
+        }
+      } else {
+        // 縦方向の衝突 (アイテム同士)
+        if (diff.y > 0 && physicsBehavior.velocity.y > 0) {
+          // 下方向への衝突
+          final overlap = (parent.size.y / 2) - diff.y.abs();
+          if (overlap > 0) {
+            parent.position.y -= overlap;
+          }
+          physicsBehavior.velocity.y =
+              -physicsBehavior.velocity.y * restitution;
+          physicsBehavior.velocity.x *= (1 - friction);
+          if (physicsBehavior.velocity.y.abs() < 5) {
+            physicsBehavior.velocity.y = 0;
+          }
+        } else if (diff.y < 0 && physicsBehavior.velocity.y < 0) {
+          // 上方向への衝突
+          physicsBehavior.velocity.y =
+              -physicsBehavior.velocity.y * restitution;
+          final overlap = (parent.size.y / 2) - diff.y.abs();
+          if (overlap > 0) {
+            parent.position.y += overlap;
+          }
+        }
+      }
+    } else if (other.parent is Player) {
+      if (parent is Item) {
         return;
       }
-      if (physicsBehavior.velocity.y > 0) {
-        // Falling downwards
-        // Calculate overlap
-        final itemBottom =
-            parent.absolutePosition.y +
-            parent.size.y /
-                2; // Item has Anchor.center, so absolutePosition is center.
-        final groundTop =
-            other
-                .absolutePosition
-                .y; // RectangleHitbox by default has Anchor.topLeft, so absolutePosition is its top-left.
-        final overlap = itemBottom - groundTop;
-
-        if (overlap > 0) {
-          // If there is actual penetration
-          parent.position.y -= overlap; // Move item up out of penetration
-        }
-
-        // Apply restitution (bounce) only on the vertical component
-        physicsBehavior.velocity.y = -physicsBehavior.velocity.y * restitution;
-
-        // Apply friction on the horizontal component
-        physicsBehavior.velocity.x *=
-            (1 - friction); // Scale down horizontal velocity by friction
-
-        // If vertical velocity is very small after bounce, zero it out to prevent jittering
-        if (physicsBehavior.velocity.y.abs() < 5) {
-          // A small threshold
-          physicsBehavior.velocity.y = 0;
-        }
+    } else if (other.parent is DoorHitbox) {
+      if (parent is Item) {
+        return;
       }
-    } else if (parent is Item && other.parent is Item) {
-      // アイテム同士の衝突は無視
-      return;
     } else {
       // Generic collision response for other objects
       final collisionNormal =
@@ -161,7 +232,7 @@ class PhysicsHitbox extends RectangleHitbox with HasGameReference {
     super.onCollisionEnd(other);
     _isColliding = false;
     _collisionStartTime = null; // 衝突が終了したらタイマーをリセット
-    _isStationary = false; // 停止状態をリセット
+    /* _isStationary = false; */ // 停止状態をリセット
 
     // 衝突が終了し、物理挙動が停止状態から抜ける可能性があるため有効化を検討
     if (parent is HasPhysicsBehavior) {
