@@ -1,4 +1,4 @@
-import 'package:flame/components.dart';
+﻿import 'package:flame/components.dart';
 import '../main.dart'; // MyGameをインポート
 import 'player.dart'; // Playerをインポート
 import 'game_stage/gamestage_component.dart'; // BackgroundComponentをインポート
@@ -28,7 +28,7 @@ class CameraController extends Component with HasGameReference<MyGame> {
     game.camera.follow(_player!); // 全方向追従
   }
 
-  // 背景のパララックス効果を更新するメソッド
+  // 背景パララックスの更新
   void updateBackgroundParallax(double playerDx) {
     if (game.player == null || game.sceneManager.currentScene == null) return;
 
@@ -40,6 +40,17 @@ class CameraController extends Component with HasGameReference<MyGame> {
             bg.position.x += -playerDx * bg.parallaxEffect;
           });
     }
+  }
+
+  // 背景位置をリセットするメソッド
+  void resetBackgroundParallax() {
+    if (game.sceneManager.currentScene == null) return;
+    
+    game.sceneManager.currentScene!.children
+        .whereType<GameStageComponent>()
+        .forEach((bg) {
+          bg.position.x = 0;
+        });
   }
 
   // ズームイン/アウト

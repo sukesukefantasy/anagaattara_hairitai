@@ -1,17 +1,11 @@
-import 'package:flame/collisions.dart';
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
-import '../../../UI/game_ui.dart';
-import '../../player.dart';
-import '../../common/hitboxes/door_hitbox.dart';
+import '../../common/hitboxes/interact_hitbox.dart';
 import 'building.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
 import 'dart:math';
-import '../../../main.dart';
 import '../../../UI/window_manager.dart';
 import '../../item/item_bag.dart';
-import '../../../UI/windows/shop_window.dart';
-import '../../../scene/shop_interior_scene.dart'; // ShopInteriorSceneをインポート
 import '../../../scene/abstract_outdoor_scene.dart'; // AbstractOutdoorSceneをインポート
 
 class Shop extends Building {
@@ -19,7 +13,6 @@ class Shop extends Building {
   late SpriteComponent _doorSprite;
 
   bool _isDoorOpen = false;
-  bool _isPlayerNearDoor = false;
 
   // ドアの状態に対応するスプライト
   late Sprite _doorClosedSprite;
@@ -87,28 +80,16 @@ class Shop extends Building {
     );
     add(_doorSprite);
 
-    add(DoorHitbox(
+    add(InteractHitbox(
       position: _doorSprite.position,
       size: _doorSprite.size,
       onPlayerEnter: () {
-        _isPlayerNearDoor = true;
         openOrCloseDoor(true);
-        _updateInteractAction();
       },
       onPlayerLeave: () {
-        _isPlayerNearDoor = false;
         openOrCloseDoor(false);
-        _updateInteractAction();
       },
-    ));
-
-    // このコンポーネント全体のサイズを設定
-    size = _buildingSprite.size;
-  }
-
-  void _updateInteractAction() {
-    if (_isPlayerNearDoor) {
-      GameUI.setInteractAction(() {
+      onInteract: () {
         debugPrint('ショップとインタラクトしました。');
         // 建物から出る際のプレイヤーの目標位置を設定
         String? currentOutdoorSceneId;
@@ -116,10 +97,12 @@ class Shop extends Building {
           currentOutdoorSceneId = game.gameRuntimeState.currentOutdoorSceneId;
         }
         game.sceneManager.enterShopScene(this, initialPlayerPosition: null, outdoorSceneId: currentOutdoorSceneId); // outdoorSceneIdを渡す
-      }, Icons.store);
-    } else {
-      GameUI.setInteractAction(null, null);
-    }
+      },
+      icon: Icons.store,
+    ));
+
+    // このコンポーネント全体のサイズを設定
+    size = _buildingSprite.size;
   }
 
   // プレイヤーが近くにいる、などのイベントでこのメソッドを呼び出す

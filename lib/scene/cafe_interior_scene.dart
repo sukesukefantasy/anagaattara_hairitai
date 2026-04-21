@@ -1,9 +1,5 @@
-import 'package:flame/components.dart';
+﻿import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
-import 'package:flame/collisions.dart';
-import '../main.dart';
-import '../component/player.dart';
-import '../UI/window_manager.dart';
 import 'game_scene.dart';
 import '../component/game_stage/building/building.dart';
 import '../UI/game_ui.dart';
@@ -11,6 +7,8 @@ import '../component/common/ground/ground.dart';
 import '../component/game_stage/building/building_data.dart';
 import '../component/game_stage/gamestage_component.dart';
 import '../component/game_stage/building/building_definitions.dart'; // BuildingDefinitionsをインポート
+import '../component/common/hitboxes/interact_hitbox.dart';
+import '../component/game_stage/building/destructible_object.dart';
 
 class CafeInteriorScene extends GameScene {
   final Building? _enteredBuilding;
@@ -96,10 +94,10 @@ class CafeInteriorScene extends GameScene {
     game.sceneManager.currentScene!.groundComponent = _ground;
     debugPrint('Ground position: ${_ground!.position}, size: ${_ground!.size}');
 
-    // インタラクト可能オブジェクト（例: カウンター）をカスタムコンポーネントに変更
+    // インタラクト可能オブジェクト（例: カウンター）
     final scale =
         _backgroundComponent!.size.x / _backgroundComponent!.data.srcSize.x;
-    final counterComponent = _InteriorCounter(
+    final counterComponent = SpriteComponent(
       sprite: await Sprite.load(
         'CITY_MEGA.png',
         srcPosition: Vector2(1040, 816),
@@ -114,13 +112,36 @@ class CafeInteriorScene extends GameScene {
       size: Vector2(104 * scale, 32 * scale),
     )..priority = 40;
     await add(counterComponent);
+
+    counterComponent.add(InteractHitbox(
+      position: Vector2.zero(),
+      size: counterComponent.size,
+      onInteract: () {
+        debugPrint('カフェのカウンターとインタラクトしました。');
+        // TODO: カフェのインタラクト処理
+      },
+      icon: Icons.coffee,
+    ));
+
     debugPrint(
       'Counter position: ${counterComponent.position}, size: ${counterComponent.size}',
     );
 
-    // プレイヤーの初期位置を設定
-    game.player!.position = _initialPlayerPosition!;
-    game.player!.priority = 50;
+    // Stage 3 ギミック：壊せる家具の配置
+    if (game.gameRuntimeState.currentOutdoorSceneId == 'outdoor_3') {
+      final furnitureSprite = await Sprite.load('CITY_MEGA.png', srcPosition: Vector2(1632, 731), srcSize: Vector2(16, 16));
+      for (int i = 0; i < 5; i++) {
+        await add(DestructibleObject(
+          type: DestructibleType.street, // 3回ヒット
+          itemName: '高密度エネルギーキューブ',
+          uniqueId: 'cafe_interior_furniture_$i',
+          position: Vector2(200 + (i * 100), _backgroundComponent!.position.y + _backgroundComponent!.size.y - 5),
+          size: Vector2(32, 32),
+          sprite: furnitureSprite,
+        ));
+      }
+    }
+    game.player!.priority = 10; // 室内シーンでのプレイヤーのpriorityを調整
     game.player!.unbeatable = false;
     // await add(game.player!); // CafeInteriorSceneの子としてプレイヤーを追加
 
@@ -147,7 +168,8 @@ class CafeInteriorScene extends GameScene {
   void update(double dt) {
     super.update(dt);
 
-    if (game.player == null || _ground == null) return;final exitAreaThreshold = game.player!.size.x;
+    if (game.player == null || _ground == null) return;
+    final exitAreaThreshold = 20.0; // 出口判定を小さく（20px以内）
 
     if (game.player!.position.x <= exitAreaThreshold) {
       if (!_isShowingExitAction) {
@@ -182,7 +204,7 @@ class CafeInteriorScene extends GameScene {
               );
             } else {
               // _enteredBuildingがない場合（main.dartからの直接ロードなど）、BuildingDefinitionsからデフォルト位置を取得
-              final Vector2 buildingOutdoorPosition = _buildingOutdoorPositionFromSave ?? buildingDefinition.defaultOutdoorPosition;
+              final Vector2 buildingOutdoorPosition = _buildingOutdoorPositionFromSave ?? Vector2.zero();
               final Vector2 buildingSize = buildingDefinition.defaultSize;
 
               exitTargetPosition = buildingDefinition.exitPointCalculator(
@@ -219,49 +241,4 @@ class CafeInteriorScene extends GameScene {
     super.onRemove();
   }
 }
-
-class _InteriorCounter extends SpriteComponent
-    with CollisionCallbacks, HasGameReference<MyGame> {
-  _InteriorCounter({
-    required super.sprite,
-    required super.position,
-    required super.size,
-  });
-
-  @override
-  Future<void> onLoad() async {
-    // playerのpriorityをシーンのonLoadで設定
-    if (game.player != null) {
-      game.player!.priority = 10; // 室内シーンでのプレイヤーのpriorityを調整
-      debugPrint('CafeInteriorScene: Player priority set to 10.');
-    }
-    add(
-      RectangleHitbox(
-        size: size,
-        position: Vector2.zero(),
-        isSolid: true,
-        collisionType: CollisionType.passive,
-      ),
-    );
-  }
-
-  @override
-  void onCollisionStart(Set<Vector2> intersectionPoints, PositionComponent other) {
-    super.onCollisionStart(intersectionPoints, other);
-    if (other is Player) {
-      debugPrint('Player collided with CafeCounter!');
-      GameUI.setInteractAction(() {
-        debugPrint('カフェのカウンターとインタラクトしました。');
-        // TODO: カフェのインタラクト処理
-      }, Icons.coffee); // カフェのアイコン
-    }
-  }
-
-  @override
-  void onCollisionEnd(PositionComponent other) {
-    super.onCollisionEnd(other);
-    if (other is Player) {
-      GameUI.setInteractAction(null, null);
-    }
-  }
-} 
+ 

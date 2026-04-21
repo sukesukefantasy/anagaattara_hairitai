@@ -1,4 +1,4 @@
-import 'package:flame/components.dart';
+﻿import 'package:flame/components.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart'; // TextStyleとColorsのために追加
 import '../../main.dart';

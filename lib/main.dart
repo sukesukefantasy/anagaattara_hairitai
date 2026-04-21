@@ -1,4 +1,4 @@
-import 'package:flame/extensions.dart';
+﻿import 'package:flame/extensions.dart';
 import 'package:flame/game.dart';
 import 'package:flame/components.dart';
 import 'package:flame/events.dart';
@@ -21,13 +21,10 @@ import 'UI/windows/pause_window.dart';
 import 'component/item/item_bag.dart';
 import 'UI/windows/title_window.dart';
 import 'scene/scene_manager.dart';
-import 'scene/outdoor_scene.dart';
-import 'scene/outdoor_scene_2.dart';
 import 'scene/abstract_outdoor_scene.dart';
-import 'component/common/physics/physics_behavior.dart';
-import 'component/common/hitboxes/physics_hitbox.dart';
 import 'component/common/underground/underground.dart';
 import 'game_manager/audio_manager.dart';
+import 'game_manager/route_manager.dart';
 import 'scene/game_scene.dart';
 import 'component/camera_conponent.dart';
 import 'component/game_stage/lighting/light_shader.dart';
@@ -44,6 +41,12 @@ import 'dart:async';
 void main() async {
   Logger.root.level = kDebugMode ? Level.FINE : Level.INFO;
   Logger.root.onRecord.listen((record) {
+    // dev.log はデバッガーでのみ表示されることがあるため、print も併用する
+    final logMessage = '${record.time}: [${record.level.name}] ${record.loggerName}: ${record.message}';
+    print(logMessage);
+    if (record.error != null) print('Error: ${record.error}');
+    if (record.stackTrace != null) print('StackTrace: ${record.stackTrace}');
+
     dev.log(
       record.message,
       time: record.time,
@@ -107,24 +110,30 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
   void didChangeDependencies() {
     super.didChangeDependencies();
     if (!_isWindowManagerInitialized) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        // await Future.delayed(const Duration(seconds: 2)); // 2秒待機を削除
-        final Size screenSize = MediaQuery.of(context).size; // 画面サイズを取得
-        _windowManager = WindowManager(
-          screenWidth: screenSize.width,
-          screenHeight: screenSize.height,
-        );
-        // ウィンドウの表示状態に応じてゲームを一時停止・再開
-        _windowManager!.addListener(() {
-          if (_windowManager!.currentWindowType != GameWindowType.none) {
-            game.pauseEngine();
-          } else {
-            game.resumeEngine();
-          }
+      final Size screenSize = MediaQuery.of(context).size; // 画面サイズを取得
+      debugPrint('GameScreen: didChangeDependencies called. screenSize: $screenSize');
+
+      // 画面サイズが(0, 0)でないことを確認してから初期化
+      if (screenSize.width > 0 && screenSize.height > 0) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _windowManager = WindowManager(
+            screenWidth: screenSize.width,
+            screenHeight: screenSize.height,
+          );
+          debugPrint('GameScreen: WindowManager initialized with size: $screenSize');
+          
+          // ウィンドウの表示状態に応じてゲームを一時停止・再開
+          _windowManager!.addListener(() {
+            if (_windowManager!.currentWindowType != GameWindowType.none) {
+              game.pauseEngine();
+            } else {
+              game.resumeEngine();
+            }
+          });
+          _isWindowManagerInitialized = true;
+          _windowManagerInitializedCompleter.complete(); // ここで完了を通知
         });
-        _isWindowManagerInitialized = true;
-        _windowManagerInitializedCompleter.complete(); // ここで完了を通知
-      });
+      }
     }
   }
 
@@ -174,16 +183,24 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
 
   // シーンロード処理を分離 (内容はそのまま)
   Future<void> _performSceneLoad() async {
+    debugPrint('GameScreen: _performSceneLoad started.');
     // 保存されたシーンIDとプレイヤー位置を取得
-    final String savedSceneId =
+    String savedSceneId =
         gameRuntimeState.currentSceneId; // GameRuntimeStateから取得
+
+    // デバッグ用の初期ステージ上書き
+    if (gameRuntimeState.debugInitialStage != null) {
+      debugPrint('DEBUG: Overriding start scene from $savedSceneId to ${gameRuntimeState.debugInitialStage}');
+      savedSceneId = gameRuntimeState.debugInitialStage!;
+    }
+    
+    debugPrint('GameScreen: _performSceneLoad. savedSceneId: $savedSceneId');
     final Vector2 savedPlayerPosition = Vector2(
       gameRuntimeState.currentPlayerPositionX, // GameRuntimeStateから取得
       gameRuntimeState.currentPlayerPositionY, // GameRuntimeStateから取得
     );
-    final String? savedOutdoorSceneId =
-        gameRuntimeState
-            .currentOutdoorSceneId; // GameRuntimeStateから取得 (現在は未使用だが残す)
+    debugPrint('GameScreen: _performSceneLoad. savedPlayerPosition: $savedPlayerPosition');
+    
     final String? savedBuildingType =
         gameRuntimeState.currentBuildingType; // GameRuntimeStateから取得
     final Vector2? savedBuildingOutdoorPosition =
@@ -198,15 +215,21 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
     // ここで初期シーンをロードする
     // 保存されたY座標がデフォルト値 (0.0) の場合はOutdoorSceneのデフォルト計算を適用
     final Vector2 playerInitialLoadPosition;
-    if (savedSceneId == 'outdoor' && savedPlayerPosition.y == 0.0) {
+    // プレイヤーが最初高いところから始まるのを防ぐ
+    if (savedPlayerPosition.y == 0.0) {
+      debugPrint('GameScreen: savedPlayerPosition.y is 0.0, calculating default ground position.');
       playerInitialLoadPosition = Vector2(
         savedPlayerPosition.x,
-        game!.initialGameCanvasSize.y -
-            (game!.player?.size.y ?? 0), // OutdoorSceneのデフォルト位置に近い計算
+        game.initialGameCanvasSize.y -
+            (game.player.size.y / 2), // Anchor.center なので半分だけ浮かせれば足元が地面に付く
       );
     } else {
       playerInitialLoadPosition = savedPlayerPosition;
     }
+    debugPrint('GameScreen: _performSceneLoad. playerInitialLoadPosition: $playerInitialLoadPosition');
+
+    // 背景パララックスをリセットするためにテレポートを使用
+    game.player.teleportTo(playerInitialLoadPosition);
 
     // シーンマネージャーに渡すデータマップを作成
     final Map<String, dynamic> sceneData = {};
@@ -218,11 +241,13 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
           savedBuildingOutdoorPosition;
     }
 
-    await game!.sceneManager.loadScene(
+    await game.sceneManager.loadScene(
       savedSceneId,
       data: sceneData, // パンくずリスト情報をdataとして渡す
       initialPlayerPosition: playerInitialLoadPosition,
     );
+    
+    debugPrint('GameScreen: _performSceneLoad finished.');
   }
 
   @override
@@ -388,64 +413,63 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
 
   // MyGameがロードされた後に実行される追加の初期化処理
   Future<void> _postGameLoadInitialization() async {
-    debugPrint('GameScreen: _postGameLoadInitialization started.');
-    // MyGame.onLoadが完了するのを待機
-    await _gameReadyForSceneLoadCompleter.future;
-    debugPrint(
-      'MyGame: _gameReadyForSceneLoadCompleter.future awaited in _postGameLoadInitialization.',
-    );
-    debugPrint('Debug: After _gameReadyForSceneLoadCompleter.future');
+    try {
+      debugPrint('GameScreen: _postGameLoadInitialization started.');
+      // MyGame.onLoadが完了するのを待機
+      debugPrint('GameScreen: Waiting for _gameReadyForSceneLoadCompleter.future...');
+      await _gameReadyForSceneLoadCompleter.future;
+      debugPrint('GameScreen: _gameReadyForSceneLoadCompleter.future completed.');
 
-    // MyGame.onGameResizeが最初に呼ばれたこと（initialGameCanvasSizeが設定されたこと）を待機
-    await game.initialResizeDone;
-    debugPrint(
-      'MyGame: initialResizeDone awaited in _postGameLoadInitialization.',
-    );
-    debugPrint(
-      'GameScreen: In _postGameLoadInitialization, after initialResizeDone, game.player is: ${game.player != null}',
-    );
-    debugPrint('Debug: After game.initialResizeDone');
+      // MyGame.onGameResizeが最初に呼ばれたこと（initialGameCanvasSizeが設定されたこと）を待機
+      debugPrint('GameScreen: Waiting for game.initialResizeDone...');
+      await game.initialResizeDone;
+      debugPrint('GameScreen: game.initialResizeDone completed. initialSize: ${game.initialGameCanvasSize}');
 
-    // シーンをロード
-    debugPrint(
-      'GameScreen: Calling _performSceneLoad in _postGameLoadInitialization.',
-    );
-    await _performSceneLoad();
-    debugPrint(
-      'GameScreen: _performSceneLoad completed in _postGameLoadInitialization.',
-    );
-    debugPrint('Debug: After _performSceneLoad');
+      // シーンをロード
+      debugPrint('GameScreen: Calling _performSceneLoad...');
+      await _performSceneLoad();
+      debugPrint('GameScreen: _performSceneLoad completed.');
 
-    // GameRuntimeStateに運搬中のアイテム情報があれば、プレイヤーに設定する
-    if (game.gameRuntimeState.carriedItemName != null) {
-      final carriedItem = ItemFactory.createItemByName(
-        game.gameRuntimeState.carriedItemName!,
-        Vector2.zero(),
-      );
+      // GameRuntimeStateに運搬中のアイテム情報があれば、プレイヤーに設定する
+      if (game.gameRuntimeState.carriedItemName != null) {
+        debugPrint('GameScreen: Loading carried item: ${game.gameRuntimeState.carriedItemName}');
+        final carriedItem = ItemFactory.createItemByName(
+          game.gameRuntimeState.carriedItemName!,
+          Vector2.zero(),
+        );
 
-      if (carriedItem != null) {
-        await game.player.startCarrying(carriedItem);
+        if (carriedItem != null) {
+          await game.player.startCarrying(carriedItem);
+          debugPrint('GameScreen: Carried item set to player.');
+        }
       }
-    }
 
-    // GameRuntimeStateに装備アイテム情報があれば、プレイヤーに設定する
-    if (game.gameRuntimeState.equippedItemName != null) {
-      game.player.equipItem(game.gameRuntimeState.equippedItemName!);
-    }
+      // GameRuntimeStateに装備アイテム情報があれば、プレイヤーに設定する
+      if (game.gameRuntimeState.equippedItemName != null) {
+        debugPrint('GameScreen: Equipping item: ${game.gameRuntimeState.equippedItemName}');
+        game.player.equipItem(game.gameRuntimeState.equippedItemName!);
+      }
 
-    // ゲームロード後にタイトル画面を表示
-    debugPrint('GameScreen: Showing TitleWindow.');
-    _windowManager?.showWindow(
-      GameWindowType.title,
-      TitleWindow(windowManager: windowManager),
-    );
-    debugPrint(
-      'WindowManager currentWindowType: ${_windowManager?.currentWindowType}',
-    );
-    debugPrint(
-      'WindowManager currentWindowContent is null: ${_windowManager?.currentWindowContent == null}',
-    );
-    debugPrint('GameScreen: _postGameLoadInitialization finished.');
+      // ゲームロード後にタイトル画面を表示
+      debugPrint('GameScreen: Showing TitleWindow.');
+      _windowManager?.showWindow(
+        GameWindowType.title,
+        TitleWindow(
+          windowManager: windowManager,
+          onStart: () {
+            // ゲーム開始時に羅針盤メッセージを表示（クリア済みルートならスキップされる）
+            final state = game.gameRuntimeState;
+            final currentSceneId = state.currentOutdoorSceneId ?? 'outdoor_1';
+            game.routeManager.showCompassMessage(currentSceneId);
+          },
+        ),
+      );
+      debugPrint('GameScreen: TitleWindow show request completed.');
+      debugPrint('GameScreen: _postGameLoadInitialization finished.');
+    } catch (e, stack) {
+      debugPrint('GameScreen: ERROR in _postGameLoadInitialization: $e');
+      debugPrint('Stack Trace: $stack');
+    }
   }
 }
 
@@ -476,6 +500,7 @@ class MyGame extends FlameGame
   final ItemBag itemBag;
   late final SceneManager sceneManager;
   late final AudioManager audioManager; // AudioManagerを追加
+  late final RouteManager routeManager; // RouteManagerを追加
   late final CameraController cameraController; // CameraControllerを追加
   final Random random = Random(); // Randomインスタンスを追加
   final Size screenSize;
@@ -518,6 +543,8 @@ class MyGame extends FlameGame
     sceneManager = SceneManager(game: this);
     // ここでAudioManagerを初期化
     audioManager = AudioManager(game: this, soloud: SoLoud.instance);
+    // ここでRouteManagerを初期化
+    routeManager = RouteManager(this);
     // ここでCameraControllerを初期化
     cameraController = CameraController();
     // playerをここで初期化する
@@ -667,15 +694,18 @@ class MyGame extends FlameGame
   @override
   void onGameResize(Vector2 gameSize) {
     super.onGameResize(gameSize);
-    if (_initialGameCanvasSize == null) {
+    debugPrint('MyGame: onGameResize called with size: $gameSize');
+    if (_initialGameCanvasSize == null && gameSize.x > 0 && gameSize.y > 0) {
       _initialGameCanvasSize = gameSize;
-      _initialResizeCompleter.complete(); // 初回リサイズ完了を通知
-
-      // WindowManagerの初期化とリスナー登録は_GameScreenStateで行うため、ここから削除
+      debugPrint('MyGame: initialGameCanvasSize set to: $gameSize');
+      if (!_initialResizeCompleter.isCompleted) {
+        _initialResizeCompleter.complete(); // 初回リサイズ完了を通知
+      }
     }
     // 背景が画面全体を覆うために必要な最小ズームを計算
-    minZoomToFit =
-        canvasSize.y / (game.size.y * 1.5); // onGameResizeでは常に最新のcanvasSizeを使用
+    if (game.size.y > 0) {
+      minZoomToFit = canvasSize.y / (game.size.y * 1.5); // onGameResizeでは常に最新のcanvasSizeを使用
+    }
   }
 
   @override
@@ -787,11 +817,11 @@ class MyGame extends FlameGame
     await Future.delayed(const Duration(seconds: 1));
     debugPrint('2s hold complete');
 
-    // 3. player!.position をリセットし、100 money 失う
-    player.position = Vector2(
+    // 3. player.position をリセットし、100 money 失う
+    player.teleportTo(Vector2(
       -50,
-      initialGameCanvasSize.y - player!.size.y / 2,
-    );
+      initialGameCanvasSize.y - player.size.y / 2,
+    ));
     player.updateMoneyPoints(-100);
     debugPrint('Player position reset');
 
@@ -814,7 +844,7 @@ class MyGame extends FlameGame
     player.unbeatable = false;
   }
 
-  Future<void> gameClear() async {
+  Future<void> routeClear() async {
     player.unbeatable = true;
     isGameClear = true;
 
@@ -845,32 +875,23 @@ class MyGame extends FlameGame
     debugPrint('2s hold complete');
 
     // 3. player.position をリセットし、200 money 取得
-    player.position = Vector2(-50, initialGameCanvasSize.y - player.size.y / 2);
+    player.teleportTo(Vector2(-50, initialGameCanvasSize.y - player.size.y / 2));
     player.updateMoneyPoints(200);
     debugPrint('Player position reset');
 
-    // 試しにシーン切り替え
-    if (sceneManager.currentScene is OutdoorScene) {
-      debugPrint('Switching from OutdoorScene to OutdoorScene2');
-      gameRuntimeState.currentOutdoorSceneId = 'outdoor_2';
-      await sceneManager.loadScene(
-        'outdoor_2',
-        initialPlayerPosition: Vector2(
-          player.position.x,
-          initialGameCanvasSize.y - player.size.y / 2,
-        ),
+    // ルートクリア後は常に最初のステージ（outdoor_1）から始まるように戻す
+    // ただし、その週の最大ステージ数（unlockedStageCount）までは電車で移動可能
+    
+    debugPrint('Switching to initial stage after route clear: outdoor_1');
+    final resetPosition = Vector2(
+        -500,
+        initialGameCanvasSize.y - player.size.y / 2,
       );
-    } else if (sceneManager.currentScene is OutdoorScene2) {
-      debugPrint('Switching from OutdoorScene2 to OutdoorScene');
-      gameRuntimeState.currentOutdoorSceneId = 'outdoor';
-      await sceneManager.loadScene(
-        'outdoor',
-        initialPlayerPosition: Vector2(
-          -worldWidth + 100,
-          initialGameCanvasSize.y - player.size.y / 2,
-        ),
-      );
-    }
+    player.teleportTo(resetPosition);
+    await sceneManager.loadScene(
+      'outdoor_1',
+      initialPlayerPosition: resetPosition,
+    );
 
     // 4. 1秒かけて画面を元の明るさに戻す (フェードアウト)
     debugPrint('Starting 1s fade out');

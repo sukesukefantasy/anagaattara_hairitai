@@ -1,17 +1,14 @@
-import 'package:flame/components.dart';
+﻿import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
-import 'package:flame/collisions.dart';
-import '../main.dart';
-import '../component/player.dart';
-import '../UI/window_manager.dart';
 import 'game_scene.dart';
 import '../component/game_stage/building/building.dart'; // Buildingをインポート
 import '../UI/game_ui.dart';
 import '../component/common/ground/ground.dart';
 import '../component/game_stage/building/building_data.dart';
 import '../component/game_stage/gamestage_component.dart';
-import 'outdoor_scene.dart'; // OutdoorSceneをインポート
 import '../component/game_stage/building/building_definitions.dart'; // BuildingDefinitionsをインポート
+import '../component/common/hitboxes/interact_hitbox.dart';
+import '../component/game_stage/building/destructible_object.dart';
 
 class HealthCenterInteriorScene extends GameScene {
   final Building? _enteredBuilding; // nullableに変更
@@ -82,10 +79,10 @@ class HealthCenterInteriorScene extends GameScene {
     game.sceneManager.currentScene!.groundComponent = _ground;
     debugPrint('Ground position: ${_ground.position}, size: ${_ground.size}');
 
-    // インタラクト可能オブジェクト（例: 受付カウンター）をカスタムコンポーネントに変更
-    /* final scale =
+    // インタラクト可能オブジェクト（例: 受付カウンター）
+    final scale =
         _backgroundComponent!.size.x / _backgroundComponent!.data.srcSize.x;
-    final counterComponent = _InteriorCounter(
+    final counterComponent = SpriteComponent(
       sprite: await Sprite.load(
         'CITY_MEGA.png',
         srcPosition: Vector2(96, 849),
@@ -100,13 +97,36 @@ class HealthCenterInteriorScene extends GameScene {
       size: Vector2(64 * scale, 31 * scale),
     )..priority = 40;
     await add(counterComponent);
+
+    counterComponent.add(InteractHitbox(
+      position: Vector2.zero(),
+      size: counterComponent.size,
+      onInteract: () {
+        debugPrint('ヘルスセンターのカウンターとインタラクトしました。');
+        // TODO: ヘルスセンターのインタラクト処理
+      },
+      icon: Icons.local_hospital,
+    ));
+
     debugPrint(
       'Counter position: ${counterComponent.position}, size: ${counterComponent.size}',
-    ); */
+    );
 
-    // プレイヤーの初期位置を設定
-    game.player!.position = _initialPlayerPosition!;
-    game.player!.priority = 50;
+    // Stage 3 ギミック：壊せる家具の配置
+    if (game.gameRuntimeState.currentOutdoorSceneId == 'outdoor_3') {
+      final furnitureSprite = await Sprite.load('CITY_MEGA.png', srcPosition: Vector2(1632, 731), srcSize: Vector2(16, 16));
+      for (int i = 0; i < 5; i++) {
+        await add(DestructibleObject(
+          type: DestructibleType.street, // 3回ヒット
+          itemName: '高密度エネルギーキューブ',
+          uniqueId: 'health_center_interior_furniture_$i',
+          position: Vector2(200 + (i * 100), _backgroundComponent!.position.y + _backgroundComponent!.size.y - 5),
+          size: Vector2(32, 32),
+          sprite: furnitureSprite,
+        ));
+      }
+    }
+    game.player!.priority = 10; // 室内シーンでのプレイヤーのpriorityを調整
     game.player!.unbeatable = false;
     // await add(game.player!); // HealthCenterInteriorSceneの子としてプレイヤーを追加
 
@@ -133,7 +153,8 @@ class HealthCenterInteriorScene extends GameScene {
   void update(double dt) {
     super.update(dt);
 
-    if (game.player == null || _ground == null) return;final exitAreaThreshold = game.player!.size.x;
+    if (game.player == null || _ground == null) return;
+    final exitAreaThreshold = 20.0; // 出口判定を小さく（20px以内）
 
     if (game.player!.position.x <= exitAreaThreshold) {
       if (!_isShowingExitAction) {
@@ -168,7 +189,7 @@ class HealthCenterInteriorScene extends GameScene {
               );
             } else {
               // _enteredBuildingがない場合（main.dartからの直接ロードなど）、BuildingDefinitionsからデフォルト位置を取得
-              final Vector2 buildingOutdoorPosition = _buildingOutdoorPositionFromSave ?? buildingDefinition.defaultOutdoorPosition;
+              final Vector2 buildingOutdoorPosition = _buildingOutdoorPositionFromSave ?? Vector2.zero();
               final Vector2 buildingSize = buildingDefinition.defaultSize;
 
               exitTargetPosition = buildingDefinition.exitPointCalculator(
@@ -205,49 +226,4 @@ class HealthCenterInteriorScene extends GameScene {
     super.onRemove();
   }
 }
-
-class _InteriorCounter extends SpriteComponent
-    with CollisionCallbacks, HasGameReference<MyGame> {
-  _InteriorCounter({
-    required super.sprite,
-    required super.position,
-    required super.size,
-  });
-
-  @override
-  Future<void> onLoad() async {
-    // playerのpriorityをシーンのonLoadで設定
-    if (game.player != null) {
-      game.player!.priority = 10; // 室内シーンでのプレイヤーのpriorityを調整
-      debugPrint('HealthCenterInteriorScene: Player priority set to 10.');
-    }
-    add(
-      RectangleHitbox(
-        size: size,
-        position: Vector2.zero(),
-        isSolid: true,
-        collisionType: CollisionType.passive,
-      ),
-    );
-  }
-
-  @override
-  void onCollisionStart(Set<Vector2> intersectionPoints, PositionComponent other) {
-    super.onCollisionStart(intersectionPoints, other);
-    if (other is Player) {
-      debugPrint('Player collided with HealthCenterCounter!');
-      GameUI.setInteractAction(() {
-        debugPrint('ヘルスセンターのカウンターとインタラクトしました。');
-        // TODO: ヘルスセンターのインタラクト処理
-      }, Icons.local_hospital); // ヘルスセンターのアイコン
-    }
-  }
-
-  @override
-  void onCollisionEnd(PositionComponent other) {
-    super.onCollisionEnd(other);
-    if (other is Player) {
-      GameUI.setInteractAction(null, null);
-    }
-  }
-} 
+ 

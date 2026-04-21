@@ -1,8 +1,5 @@
-import 'package:flame/components.dart';
+﻿import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
-import 'package:flame/collisions.dart';
-import '../main.dart';
-import '../component/player.dart';
 import '../UI/window_manager.dart';
 import '../UI/windows/shop_window.dart';
 import 'game_scene.dart';
@@ -11,8 +8,9 @@ import '../UI/game_ui.dart';
 import '../component/common/ground/ground.dart'; // Groundクラスをインポート
 import '../component/game_stage/building/building_data.dart'; // backgroundDataMapをインポート
 import '../component/game_stage/gamestage_component.dart'; // BackgroundComponentをインポート
-import 'outdoor_scene.dart'; // OutdoorSceneをインポート
 import '../component/game_stage/building/building_definitions.dart'; // BuildingDefinitionsをインポート
+import '../component/common/hitboxes/interact_hitbox.dart';
+import '../component/game_stage/building/destructible_object.dart';
 
 class ShopInteriorScene extends GameScene {
   final Building? _enteredBuilding;
@@ -85,11 +83,11 @@ class ShopInteriorScene extends GameScene {
     game.sceneManager.currentScene!.groundComponent = _ground;
     debugPrint('Ground position: ${_ground!.position}, size: ${_ground!.size}');
 
-    // レジ（インタラクト可能）をカスタムコンポーネントに変更
+    // レジ（インタラクト可能）
     // 倍率
     final scale =
         _backgroundComponent!.size.x / _backgroundComponent!.data.srcSize.x;
-    final counterComponent = _InteriorCounter(
+    final counterComponent = SpriteComponent(
       sprite: await Sprite.load(
         'CITY_MEGA.png',
         srcPosition: Vector2(1792, 731), // ユーザーが変更した値を使用
@@ -104,13 +102,43 @@ class ShopInteriorScene extends GameScene {
       size: Vector2(32 * scale, 21 * scale),
     )..priority = 40;
     await add(counterComponent);
+
+    counterComponent.add(InteractHitbox(
+      position: Vector2.zero(),
+      size: counterComponent.size,
+      onInteract: () {
+        debugPrint('レジとインタラクトしました。ショップウィンドウを開きます。');
+        game.windowManager.showWindow(
+          GameWindowType.shop,
+          ShopWindow(
+            windowManager: game.windowManager,
+            itemBag: game.itemBag,
+            game: game,
+          ),
+        );
+      },
+      icon: Icons.point_of_sale,
+    ));
+
     debugPrint(
       'Counter position: ${counterComponent.position}, size: ${counterComponent.size}',
     );
 
-    // プレイヤーの初期位置を設定
-    game.player!.position = _initialPlayerPosition!;
-    game.player!.priority = 50;
+    // Stage 3 ギミック：壊せる家具の配置
+    if (game.gameRuntimeState.currentOutdoorSceneId == 'outdoor_3') {
+      final furnitureSprite = await Sprite.load('CITY_MEGA.png', srcPosition: Vector2(1632, 731), srcSize: Vector2(16, 16));
+      for (int i = 0; i < 5; i++) {
+        await add(DestructibleObject(
+          type: DestructibleType.street, // 3回ヒット
+          itemName: '高密度エネルギーキューブ',
+          uniqueId: 'shop_interior_furniture_$i',
+          position: Vector2(200 + (i * 100), _backgroundComponent!.position.y + _backgroundComponent!.size.y - 5),
+          size: Vector2(32, 32),
+          sprite: furnitureSprite,
+        ));
+      }
+    }
+    game.player!.priority = 10; // 室内シーンでのプレイヤーのpriorityを調整
     game.player!.unbeatable = false;
     
     // プレイヤーの移動状態をリセット
@@ -140,7 +168,7 @@ class ShopInteriorScene extends GameScene {
     if (game.player == null || _ground == null) return;
 
     // 左端の出入り口エリアの定義
-    final exitAreaThreshold = game.player!.size.x;
+    final exitAreaThreshold = 20.0; // 出口判定を小さく（20px以内）
 
     // 左端エリアにプレイヤーがいる場合
     if (game.player!.position.x <= exitAreaThreshold) {
@@ -176,7 +204,7 @@ class ShopInteriorScene extends GameScene {
               );
             } else {
               // _enteredBuildingがない場合（main.dartからの直接ロードなど）、BuildingDefinitionsからデフォルト位置を取得
-              final Vector2 buildingOutdoorPosition = _buildingOutdoorPositionFromSave ?? buildingDefinition.defaultOutdoorPosition;
+              final Vector2 buildingOutdoorPosition = _buildingOutdoorPositionFromSave ?? Vector2.zero();
               final Vector2 buildingSize = buildingDefinition.defaultSize;
 
               exitTargetPosition = buildingDefinition.exitPointCalculator(
@@ -216,56 +244,3 @@ class ShopInteriorScene extends GameScene {
   }
 }
 
-// カスタムレジコンポーネント
-class _InteriorCounter extends SpriteComponent
-    with CollisionCallbacks, HasGameReference<MyGame> {
-  _InteriorCounter({
-    required super.sprite,
-    required super.position,
-    required super.size,
-  });
-
-  @override
-  Future<void> onLoad() async {
-    // playerのpriorityをシーンのonLoadで設定
-    if (game.player != null) {
-      game.player!.priority = 10; // 室内シーンでのプレイヤーのpriorityを調整
-      debugPrint('ShopInteriorScene: Player priority set to 10.');
-    }
-    add(
-      RectangleHitbox(
-        size: size,
-        position: Vector2.zero(),
-        isSolid: true,
-        collisionType: CollisionType.passive,
-      ),
-    );
-  }
-
-  @override
-  void onCollisionStart(Set<Vector2> intersectionPoints, PositionComponent other) {
-    super.onCollisionStart(intersectionPoints, other);
-    if (other is Player) {
-      debugPrint('Player collided with ShopCounter!'); // デバッグログを追加
-      GameUI.setInteractAction(() {
-        debugPrint('レジとインタラクトしました。ショップウィンドウを開きます。');
-        game.windowManager.showWindow(
-          GameWindowType.shop,
-          ShopWindow(
-            windowManager: game.windowManager,
-            itemBag: game.itemBag,
-            game: game,
-          ),
-        );
-      }, Icons.point_of_sale); // レジのアイコン
-    }
-  }
-
-  @override
-  void onCollisionEnd(PositionComponent other) {
-    super.onCollisionEnd(other);
-    if (other is Player) {
-      GameUI.setInteractAction(null, null);
-    }
-  }
-}

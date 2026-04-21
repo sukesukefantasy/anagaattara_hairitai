@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../main.dart';
 import '../game_manager/time_service.dart';
 import 'window_manager.dart';
@@ -40,6 +40,9 @@ class GameUI extends StatefulWidget {
       ValueNotifier<DirectionButtonState>(DirectionButtonState.normal);
   static final ValueNotifier<bool> _rightButtonPressedNotifier =
       ValueNotifier<bool>(false); // rightボタンの押下状態を通知するNotifier
+
+  // Mission Glitch Notifier
+  static final ValueNotifier<int> missionGlitchNotifier = ValueNotifier<int>(0);
 
   // Action button state notifiers
   static final ValueNotifier<ActionButtonState> _jumpButtonStateNotifier =
@@ -242,22 +245,82 @@ class _GameUIState extends State<GameUI> {
   }
 
   Widget _buildStatusDisplay() {
+    final isMobile = widget.screenSize.width < 600;
     return Positioned(
-      top: widget.screenSize.height * 0.02, // 画面高さの2%
-      left: widget.screenSize.width * 0.02, // 画面幅の2%
-      width: widget.screenSize.width * 0.3, // 画面幅の35%
-      height: widget.screenSize.height * 0.3, // 画面高さの30%に増加
+      top: widget.screenSize.height * 0.02,
+      left: widget.screenSize.width * 0.02,
+      width: widget.screenSize.width * (isMobile ? 0.5 : 0.3), // スマホなら50%、PCなら30%
+      height: widget.screenSize.height * (isMobile ? 0.5 : 0.4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(flex: 5, child: _buildHpBarContent()), // flexを5から6に増やす
+          Expanded(flex: 4, child: _buildHpBarContent()),
           Expanded(
             flex: 2,
             child: _buildDigitalClockContent(),
-          ), // flexを2から1に減らす
+          ),
           Expanded(flex: 2, child: _buildPointsContent()),
+          Expanded(flex: 1, child: _buildScoresContent()),
+          Expanded(flex: 3, child: _buildMissionContent()), // ミッション表示のスペースを増やす
         ],
       ),
+    );
+  }
+
+  Widget _buildMissionContent() {
+    return AnimatedBuilder(
+      animation: Listenable.merge([widget.game.gameRuntimeState, GameUI.missionGlitchNotifier]),
+      builder: (context, child) {
+        final state = widget.game.gameRuntimeState;
+        final mission = state.currentMission;
+        if (mission == null) return const SizedBox.shrink();
+
+        final stageId = state.currentOutdoorSceneId ?? 'outdoor_1';
+        final isConfirmed = state.subRouteConfirmedStages.contains(stageId);
+        
+        // グリッチ演出用のオフセット
+        final glitchValue = GameUI.missionGlitchNotifier.value;
+        final double offsetX = glitchValue > 0 ? (glitchValue % 2 == 0 ? 2 : -2) : 0;
+        final double offsetY = glitchValue > 0 ? (glitchValue % 3 == 0 ? 1 : -1) : 0;
+
+        return Transform.translate(
+          offset: Offset(offsetX, offsetY),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: isConfirmed 
+                  ? Colors.purple.withOpacity(0.8) // 30回達成で色変化
+                  : Colors.orangeAccent.withOpacity(0.7),
+              borderRadius: BorderRadius.circular(5),
+              border: Border.all(
+                color: glitchValue > 0 ? Colors.red : Colors.white, 
+                width: glitchValue > 0 ? 2 : 1
+              ),
+              boxShadow: isConfirmed ? [
+                BoxShadow(color: Colors.purpleAccent.withOpacity(0.5), blurRadius: 4, spreadRadius: 1)
+              ] : null,
+            ),
+            child: Text(
+              glitchValue > 5 ? "ERROR: UNKNOWN_ACTION" : mission,
+              style: TextStyle(
+                fontSize: (widget.screenSize.width * 0.015).clamp(8.0, 14.0),
+                fontWeight: FontWeight.bold,
+                color: isConfirmed ? Colors.white : Colors.black,
+                fontFamily: isConfirmed ? 'TRS-Million-Rg' : null,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildScoresContent() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return const SizedBox.shrink(); // スコア表示を廃止
+      },
     );
   }
 
@@ -562,10 +625,10 @@ class _GameUIState extends State<GameUI> {
                       child: Text(
                         'Health',
                         style: TextStyle(
-                          fontSize: widget.screenSize.width * 0.012,
+                          fontSize: (widget.screenSize.width * 0.012).clamp(8.0, 16.0),
                           fontWeight: FontWeight.bold,
                           fontFamily: 'TRS-Million-Rg',
-                          letterSpacing: 5,
+                          letterSpacing: 2,
                           color: Colors.white,
                         ),
                       ),
@@ -583,10 +646,10 @@ class _GameUIState extends State<GameUI> {
                           return Text(
                             '${currentHp.toInt()}',
                             style: TextStyle(
-                              fontSize: widget.screenSize.width * 0.012,
+                              fontSize: (widget.screenSize.width * 0.012).clamp(8.0, 16.0),
                               fontWeight: FontWeight.bold,
                               fontFamily: 'TRS-Million-Rg',
-                              letterSpacing: 5,
+                              letterSpacing: 2,
                               color: Colors.red,
                             ),
                           );
@@ -615,10 +678,10 @@ class _GameUIState extends State<GameUI> {
                       child: Text(
                         'Stress',
                         style: TextStyle(
-                          fontSize: widget.screenSize.width * 0.012,
+                          fontSize: (widget.screenSize.width * 0.012).clamp(8.0, 16.0),
                           fontWeight: FontWeight.bold,
                           fontFamily: 'TRS-Million-Rg',
-                          letterSpacing: 5,
+                          letterSpacing: 2,
                           color: Colors.white,
                         ),
                       ),
@@ -636,10 +699,10 @@ class _GameUIState extends State<GameUI> {
                           return Text(
                             '${currentStress.toInt()} / ${widget.game.player!.maxStress.toInt()}',
                             style: TextStyle(
-                              fontSize: widget.screenSize.width * 0.012,
+                              fontSize: (widget.screenSize.width * 0.012).clamp(8.0, 16.0),
                               fontWeight: FontWeight.bold,
                               fontFamily: 'TRS-Million-Rg',
-                              letterSpacing: 5,
+                              letterSpacing: 2,
                               color: const Color.fromARGB(122, 61, 32, 230),
                             ),
                           );

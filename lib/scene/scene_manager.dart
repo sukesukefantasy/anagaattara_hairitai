@@ -1,4 +1,4 @@
-import 'package:flame/components.dart';
+﻿import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 
 import '../main.dart';
@@ -7,7 +7,6 @@ import '../component/enemy/car_enemy.dart';
 import '../component/game_stage/lighting/sky_component.dart';
 import 'game_scene.dart';
 import 'outdoor_scene.dart';
-import 'outdoor_scene_2.dart'; // OutdoorScene2をインポート
 import 'abstract_outdoor_scene.dart'; // AbstractOutdoorSceneをインポート
 import 'apartment_interior_scene.dart';
 import 'burger_store_interior_scene.dart';
@@ -23,25 +22,42 @@ class SceneManager extends Component with HasGameReference<MyGame> {
 
   GameScene? get currentScene => _currentScene;
 
+  String get currentSceneId => game.gameRuntimeState.currentSceneId;
+
   // シーン名とコンストラクタのマッピング
   late final Map<String, ({GameScene Function({dynamic data}) constructor})>
   _sceneConstructors;
 
   SceneManager({required MyGame game}) {
     _sceneConstructors = {
-      'outdoor': (
+    'outdoor_1': (
+      constructor: ({dynamic data}) {
+        final Map<String, dynamic>? sceneData =
+            data is Map ? data as Map<String, dynamic> : null;
+        
+        final state = game.gameRuntimeState;
+        String outdoorSceneId = sceneData?['sceneId'] as String? ?? state.currentOutdoorSceneId ?? 'outdoor_1';
+        
+        // 分岐ロジック：特定のステージIDに対する個別の処理（必要があればここに追加）
+        if (outdoorSceneId == 'outdoor_philosophy') {
+          // そのままロード
+        } else if (outdoorSceneId == 'outdoor_despair' || outdoorSceneId == 'outdoor_true') {
+          // そのままロード
+        }
+
+        final Vector2? initialPlayerPosition =
+            sceneData?['initialPlayerPosition'] as Vector2?;
+        return OutdoorScene(
+          sceneId: outdoorSceneId,
+          initialPlayerPosition: initialPlayerPosition,
+        );
+      },
+    ),
+      'outdoor': ( // 互換性のために残すか、完全に移行
         constructor: ({dynamic data}) {
-          final Map<String, dynamic>? sceneData =
-              data is Map ? data as Map<String, dynamic> : null;
-          final String outdoorSceneId =
-              sceneData?['sceneId'] as String? ??
-              game.gameRuntimeState.currentOutdoorSceneId ??
-              'outdoor'; // GameRuntimeStateから取得
-          final Vector2? initialPlayerPosition =
-              sceneData?['initialPlayerPosition'] as Vector2?;
           return OutdoorScene(
-            sceneId: outdoorSceneId,
-            initialPlayerPosition: initialPlayerPosition,
+            sceneId: 'outdoor_1',
+            initialPlayerPosition: (data as Map?)?['initialPlayerPosition'] as Vector2?,
           );
         },
       ),
@@ -151,18 +167,64 @@ class SceneManager extends Component with HasGameReference<MyGame> {
         constructor: ({dynamic data}) {
           final Map<String, dynamic>? sceneData =
               data is Map ? data as Map<String, dynamic> : null;
-          final String outdoorSceneId =
-              sceneData?['sceneId'] as String? ?? 'outdoor_2';
-          final Vector2? initialPlayerPosition =
-              sceneData?['initialPlayerPosition'] as Vector2?;
-          return OutdoorScene2(
-            sceneId: outdoorSceneId,
-            initialPlayerPosition: initialPlayerPosition,
+          return OutdoorScene(
+            sceneId: 'outdoor_2',
+            initialPlayerPosition: sceneData?['initialPlayerPosition'] as Vector2?,
           );
         },
       ),
-    };
-  }
+      'outdoor_3': (
+        constructor: ({dynamic data}) {
+          final Map<String, dynamic>? sceneData =
+              data is Map ? data as Map<String, dynamic> : null;
+          return OutdoorScene(
+            sceneId: 'outdoor_3',
+            initialPlayerPosition: sceneData?['initialPlayerPosition'] as Vector2?,
+          );
+        },
+      ),
+      'outdoor_4': (
+        constructor: ({dynamic data}) {
+          final Map<String, dynamic>? sceneData =
+              data is Map ? data as Map<String, dynamic> : null;
+          return OutdoorScene(
+            sceneId: 'outdoor_4',
+            initialPlayerPosition: sceneData?['initialPlayerPosition'] as Vector2?,
+          );
+        },
+      ),
+      'outdoor_philosophy': (
+        constructor: ({dynamic data}) {
+          final Map<String, dynamic>? sceneData =
+              data is Map ? data as Map<String, dynamic> : null;
+          return OutdoorScene(
+            sceneId: 'outdoor_philosophy',
+            initialPlayerPosition: sceneData?['initialPlayerPosition'] as Vector2?,
+          );
+        },
+      ),
+    'outdoor_despair': (
+      constructor: ({dynamic data}) {
+        final Map<String, dynamic>? sceneData =
+            data is Map ? data as Map<String, dynamic> : null;
+        return OutdoorScene(
+          sceneId: 'outdoor_despair',
+          initialPlayerPosition: sceneData?['initialPlayerPosition'] as Vector2?,
+        );
+      },
+    ),
+    'outdoor_true': (
+      constructor: ({dynamic data}) {
+        final Map<String, dynamic>? sceneData =
+            data is Map ? data as Map<String, dynamic> : null;
+        return OutdoorScene(
+          sceneId: 'outdoor_true',
+          initialPlayerPosition: sceneData?['initialPlayerPosition'] as Vector2?,
+        );
+      },
+    ),
+  };
+}
 
   Future<void> loadScene(
     String sceneId, {
@@ -221,9 +283,11 @@ class SceneManager extends Component with HasGameReference<MyGame> {
       debugPrint('現在のシーンを削除中: ${_currentScene.runtimeType}');
       
       // シーンからプレイヤーを明示的に削除 (ワールドからは削除しない)
-      if (game.player != null && _currentScene!.contains(game.player!)) {
+      final scene = _currentScene!;
+      final player = game.player;
+      if (player != null && scene.contains(player)) {
         debugPrint('シーンからプレイヤーを削除します。');
-        _currentScene!.remove(game.player!); // プレイヤーを古いシーンから削除
+        scene.remove(player); // プレイヤーを古いシーンから削除
       }
 
       // OutdoorSceneからCarEnemyを明示的に削除し、音源を停止させる
@@ -308,6 +372,9 @@ class SceneManager extends Component with HasGameReference<MyGame> {
         'Current outdoor scene ID set to: ${game.gameRuntimeState.currentOutdoorSceneId}',
       );
     }
+
+    // ステージ開始時のミッション設定を更新（メッセージウィンドウは出さない）
+    game.routeManager.showCompassMessage(sceneId, showWindow: false);
 
     // カメラのズームレベルをリセット
     if (sceneId.contains('outdoor')) {

@@ -1,4 +1,4 @@
-import 'package:flame/components.dart';
+﻿import 'package:flame/components.dart';
 import 'package:flame_audio/flame_audio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
@@ -109,6 +109,8 @@ class AudioManager {
     // パスが 'assets/audio/' で始まらない場合は補完する
     final String fullPath =
         path.startsWith('assets/audio/') ? path : 'assets/audio/' + path;
+    
+    debugPrint('AudioManager: loading sound from $fullPath (original: $path)');
 
     final futureSound = soloud.loadAsset(fullPath);
     _loadingSounds[path] = futureSound;

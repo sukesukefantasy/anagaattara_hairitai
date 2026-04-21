@@ -1,4 +1,4 @@
-import 'package:flame/collisions.dart';
+﻿import 'package:flame/collisions.dart';
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 import '../../main.dart';
@@ -7,9 +7,8 @@ import 'vehicle.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
 import 'dart:math';
 import '../../UI/game_ui.dart';
-
 import '../game_stage/building/station.dart';
-import '../common/hitboxes/door_hitbox.dart';
+import '../common/hitboxes/interact_hitbox.dart';
 
 enum TrainState {
   idle,
@@ -43,7 +42,7 @@ class Train extends Vehicle {
   late Vector2 _targetPosition;
   bool _isMovingRight = true;
   bool _isPlayerNearDoor = false;
-  DoorHitbox? _doorHitbox;
+  InteractHitbox? _doorHitbox;
 
   Train({required super.position, required this.station});
 
@@ -98,7 +97,7 @@ class Train extends Vehicle {
     add(_doorSprite);
 
     // ドア周辺の当たり判定
-    _doorHitbox = DoorHitbox(
+    _doorHitbox = InteractHitbox(
       position: _doorSprite.position,
       size: _doorSprite.size,
       onPlayerEnter: () {
@@ -241,9 +240,51 @@ class Train extends Vehicle {
         _isPlayerNearDoor;
 
     if (canInteract) {
-      GameUI.setInteractAction(() {
-        game.gameClear();
+      GameUI.setInteractAction(() async {
+      final currentStageId = game.gameRuntimeState.currentOutdoorSceneId ?? 'outdoor_1';
+      int currentStageNum;
+      if (currentStageId == 'outdoor_philosophy') {
+        currentStageNum = 5;
+      } else if (currentStageId == 'outdoor_despair' || currentStageId == 'outdoor_true') {
+        currentStageNum = 6;
+      } else {
+        currentStageNum = int.tryParse(currentStageId.split('_').last) ?? 1;
+      }
+      
+      // 最大ステージ数
+      final int maxStageNum = 6;
+      int nextStageNum = currentStageNum + 1;
+      if (currentStageNum >= maxStageNum) {
+        nextStageNum = 1;
+      }
+
+      String nextStageId = 'outdoor_$nextStageNum';
+      
+      // 分岐ロジック
+      if (nextStageNum == 5) {
+        nextStageId = 'outdoor_philosophy';
+      } else if (nextStageNum == 6) {
+        bool isSubScenario = true;
+        for (int i = 1; i <= 4; i++) {
+          if (!game.gameRuntimeState.subRouteConfirmedStages.contains('outdoor_$i')) {
+            isSubScenario = false;
+            break;
+          }
+        }
+        nextStageId = isSubScenario ? 'outdoor_true' : 'outdoor_despair';
+      }
+
+      if (nextStageNum == 1) {
+        nextStageId = 'outdoor_1';
+      }
+
+      debugPrint('Train: Traveling to $nextStageId');
+
+        // インタラクトを解除してシーンロード
         GameUI.setInteractAction(null, null);
+        await game.sceneManager.loadScene(nextStageId);
+        // シーンロード後に羅針盤メッセージを表示
+        game.routeManager.showCompassMessage(nextStageId, showWindow: true);
       }, Icons.directions_transit);
     } else {
       GameUI.setInteractAction(null, null);

@@ -1,4 +1,4 @@
-name: anagaattara_hairitai
+﻿name: anagaattara_hairitai
 description: "A new Flutter project."
 publish_to: "none"
 version: 0.1.0
@@ -31,6 +31,8 @@ flutter:
     - assets/audio/cars/
     - assets/audio/buildings/
     - assets/audio/hits/
+    - assets/audio/puzzles/
+    - assets/audio/actions/
 
   fonts:
     - family: TRS-Million-Rg

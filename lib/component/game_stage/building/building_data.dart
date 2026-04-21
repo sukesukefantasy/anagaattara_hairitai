@@ -23,15 +23,15 @@ class BackgroundData {
 }
 
 final Map<String, List<BackgroundData>> backgroundDataMap = {
-  'outdoor': [
+  'outdoor_1': [
     // 遠景（ビル群など）
     BackgroundData(
-      baseSize: 800,
-      imagePath: 'CITY_MEGA.png',
+      baseSize: 450,
+      imagePath: 'outdoor_1.png',
       parallaxEffect: -0.9,
       priority: 2, // 空より手前に配置
-      srcPosition: Vector2(64, 2400), // CITY_MEGA.pngのビル群部分の座標
-      srcSize: Vector2(1599, 319),
+      srcPosition: Vector2(0, 0),
+      srcSize: Vector2(1599, 299),
     ),
     // 近景
     BackgroundData(
@@ -47,11 +47,61 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
   'outdoor_2': [
     BackgroundData(
       baseSize: 450,
-      imagePath: 'CITY_MEGA.png',
+      imagePath: 'outdoor_2.png',
       parallaxEffect: -0.2,
       priority: 2, // 空より手前に配置
-      srcPosition: Vector2(64, 2068), // CITY_MEGA.pngの都会の部分の座標
-      srcSize: Vector2(1600, 268),
+      srcPosition: Vector2(0, 0),
+      srcSize: Vector2(1599, 299),
+    ),
+  ],
+  'outdoor_3': [
+    BackgroundData(
+      baseSize: 450,
+      imagePath: 'outdoor_3.png',
+      parallaxEffect: -0.2,
+      priority: 2,
+      srcPosition: Vector2(0, 0),
+      srcSize: Vector2(1599, 299),
+    ),
+  ],
+  'outdoor_4': [
+    BackgroundData(
+      baseSize: 450,
+      imagePath: 'outdoor_4.png',
+      parallaxEffect: -0.2,
+      priority: 2,
+      srcPosition: Vector2(0, 0),
+      srcSize: Vector2(1599, 299),
+    ),
+  ],
+  'outdoor_philosophy': [
+    BackgroundData(
+      baseSize: 450,
+      imagePath: 'outdoor_philosophy.png',
+      parallaxEffect: -0.2,
+      priority: 2,
+      srcPosition: Vector2(0, 0),
+      srcSize: Vector2(1599, 299),
+    ),
+  ],
+  'outdoor_despair': [
+    BackgroundData(
+      baseSize: 450,
+      imagePath: 'outdoor_despair.png',
+      parallaxEffect: -0.2,
+      priority: 2,
+      srcPosition: Vector2(0, 0),
+      srcSize: Vector2(1599, 299),
+    ),
+  ],
+  'outdoor_true': [
+    BackgroundData(
+      baseSize: 450,
+      imagePath: 'outdoor_true.png',
+      parallaxEffect: -0.2,
+      priority: 2,
+      srcPosition: Vector2(0, 0),
+      srcSize: Vector2(1599, 299),
     ),
   ],
   'shop_interior': [

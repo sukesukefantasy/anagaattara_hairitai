@@ -1,13 +1,15 @@
-import 'package:flame/components.dart';
+﻿import 'package:flame/components.dart';
 import 'package:flame/collisions.dart';
 import 'package:flutter/material.dart';
 import 'dart:math';
+import 'dart:ui' show lerpDouble;
 import '../main.dart';
 import '../UI/game_ui.dart';
 import '../UI/window_manager.dart';
 import '../UI/windows/message_window.dart';
 import 'game_stage/building/station.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
+import 'game_stage/building/destructible_object.dart';
 import 'item/item_bag.dart';
 import 'item/item.dart';
 import '../scene/abstract_outdoor_scene.dart'; // AbstractOutdoorSceneをインポート
@@ -16,6 +18,7 @@ import 'common/underground/underground.dart';
 import '../scene/game_scene.dart'; // GameSceneをインポート
 import '../game_manager/audio_manager.dart'; // Add this line
 import '../system/storage/game_runtime_state.dart'; // GameRuntimeStateをインポート
+import 'npc/npc.dart';
 
 enum PlayerState { idle, walking, jumping, digging, falling }
 
@@ -141,19 +144,26 @@ class Player extends SpriteAnimationComponent
   late SpriteAnimation diggingAnimation;
 
   // オーディオ用の変数
-  late List<AudioSource> _footstepsAudioSources;
-  final List<String> _footstepsSoundFiles = [
-    'assets/audio/footsteps/step_lth1.mp3',
-    'assets/audio/footsteps/step_lth2.mp3',
-    'assets/audio/footsteps/step_lth3.mp3',
-    'assets/audio/footsteps/step_lth4.mp3',
-  ];
-  late List<AudioSource> _hitsAudioSources;
-  final List<String> _hitsSoundFiles = [
-    'assets/audio/hits/Hit1.wav',
-    'assets/audio/hits/Hit2.wav',
-    'assets/audio/hits/Hit3.wav',
-  ];
+  final Map<String, List<AudioSource>> _playerSounds = {};
+  
+  final Map<String, List<String>> _playerSoundFiles = {
+    'footsteps': [
+      'assets/audio/footsteps/step_lth1.mp3',
+      'assets/audio/footsteps/step_lth2.mp3',
+      'assets/audio/footsteps/step_lth3.mp3',
+      'assets/audio/footsteps/step_lth4.mp3',
+    ],
+    'hits': [
+      'assets/audio/hits/Hit1.wav',
+      'assets/audio/hits/Hit2.wav',
+      'assets/audio/hits/Hit3.wav',
+    ],
+    'swing': [
+      'assets/audio/actions/swish-7.wav',
+      'assets/audio/actions/swish-8.wav',
+      'assets/audio/actions/swish-9.wav',
+    ],
+  };
 
   // ダメージ表現用のフラグとタイマー
   bool _isTintedRed = false;
@@ -185,8 +195,9 @@ class Player extends SpriteAnimationComponent
     super.onLoad();
     // ヒットボックスの追加（1つに統合）
     add(
-      PolygonHitbox(
-        [Vector2(15, 0), Vector2(35, 0), Vector2(35, 50), Vector2(15, 50)],
+      RectangleHitbox(
+        size: Vector2(20, 50),
+        position: Vector2(15, 0),
         collisionType: CollisionType.active,
         isSolid: true,
       ),
@@ -354,16 +365,13 @@ class Player extends SpriteAnimationComponent
     _lastPlayerX = position.x; // 初期位置を設定
 
     // オーディオの読み込み
-    _footstepsAudioSources = await Future.wait(
-      _footstepsSoundFiles
-          .map((file) => audioManager.loadAndCacheSound(file))
-          .toList(),
-    );
-    _hitsAudioSources = await Future.wait(
-      _hitsSoundFiles
-          .map((file) => audioManager.loadAndCacheSound(file))
-          .toList(),
-    );
+    for (final type in _playerSoundFiles.keys) {
+      _playerSounds[type] = await Future.wait(
+        _playerSoundFiles[type]!
+            .map((file) => audioManager.loadAndCacheSound(file))
+            .toList(),
+      );
+    }
   }
 
   @override
@@ -390,9 +398,28 @@ class Player extends SpriteAnimationComponent
   // プレイヤーの足元のY座標を計算するgetter
   double get playerFootPositionY => absolutePosition.y + (size.y / 2);
 
+  /// プレイヤーをテレポートさせ、背景パララックスをリセットする
+  void teleportTo(Vector2 newPosition) {
+    position = newPosition;
+    _lastPlayerX = newPosition.x;
+    game.cameraController.resetBackgroundParallax();
+  }
+
   @override
   void update(double dt) {
     super.update(dt);
+
+    if (gameRuntimeState.isAutoPlay) {
+      _performAutoPlay(dt);
+      _handleUnderGroundAndGroundCollisionLogic(dt);
+      return;
+    }
+    
+    // ディテールルート発動中の操作不能
+    if (gameRuntimeState.isDetailRouteTriggered) {
+      velocity.x = 0;
+      return;
+    }
 
     // 背景パララックスの更新
     final double currentPlayerX = position.x;
@@ -486,7 +513,7 @@ class Player extends SpriteAnimationComponent
       if (animationTicker!.currentIndex != _lastMovingAnimationFrameIndex) {
         // 歩く音を再生
         final double playbackRate = 0.9 + Random().nextDouble() * 0.2;
-        requestPlayFootstepSound(0.8, playbackRate);
+        requestPlayPlayerSound('footsteps', volume: 0.8, playbackRate: playbackRate);
         _lastMovingAnimationFrameIndex = animationTicker!.currentIndex;
       }
     } else {
@@ -727,6 +754,92 @@ class Player extends SpriteAnimationComponent
     _handleUnderGroundAndGroundCollisionLogic(dt);
   }
 
+  // オートプレイ用のロジック
+  void _performAutoPlay(double dt) {
+    // Stage 6 のオートプレイ：右へ移動し続ける、あるいは目標へ移動
+    // 今回は単純に右へ移動
+    velocity.x = speed;
+    animation = movingRightAnimation;
+    _lastMoveDirection.x = 1.0;
+    position.x += velocity.x * dt;
+
+    if (_applyGravity) {
+      velocity.y += gravity * dt;
+    }
+    position.y += velocity.y * dt;
+  }
+
+  void performMeleeAttack() {
+    // 1. 攻撃範囲の計算（ワールド座標系）
+    final playerCenter = absolutePosition;
+    final meleeSize = Vector2(60, 60); 
+    
+    // ご要望のオフセット調整 (+25)
+    // 向きに応じてXの位置を決定し、さらに+25
+    final double meleeX = facingDirection.x > 0 
+        ? playerCenter.x + 10 + 25
+        : playerCenter.x - 70 + 25; 
+    
+    // Y軸も+25
+    final double meleeY = playerCenter.y - (meleeSize.y / 2) + 25;
+    
+    final attackRect = Rect.fromLTWH(meleeX, meleeY, meleeSize.x, meleeSize.y);
+
+    // 2. 攻撃エフェクトの表示（視覚的な確認用）
+    final effectX = facingDirection.x > 0 ? 35.0 : -45.0; // 計算済みXオフセット
+    final attackEffect = RectangleComponent(
+      position: Vector2(effectX, -(meleeSize.y / 2) + 25),
+      size: meleeSize,
+      paint: Paint()..color = Colors.white.withOpacity(0.4),
+    );
+    add(attackEffect);
+    
+    // FlameのTimerComponentを使用して確実に削除
+    add(TimerComponent(
+      period: 0.1,
+      removeOnFinish: true,
+      onTick: () {
+        if (attackEffect.isMounted) attackEffect.removeFromParent();
+      },
+    ));
+
+    // 攻撃音
+    requestPlayPlayerSound('swing', volume: 1.0, playbackRate: 1.1);
+
+    // 3. ヒット判定（現在のシーンの子コンポーネントを検索）
+    final currentScene = game.sceneManager.currentScene;
+    if (currentScene == null) return;
+
+    // 破壊可能オブジェクト
+    final destructibles = currentScene.children.whereType<DestructibleObject>();
+    for (final obj in destructibles) {
+      if (obj.toAbsoluteRect().overlaps(attackRect)) {
+        debugPrint('Melee Hit: DestructibleObject at ${obj.position}');
+        obj.onHit();
+      }
+    }
+
+    // 敵
+    final enemies = currentScene.children.whereType<EnemyBase>();
+    for (final enemy in enemies) {
+      if (enemy.toAbsoluteRect().overlaps(attackRect)) {
+        debugPrint('Melee Hit: Enemy at ${enemy.position}');
+        if (game.gameRuntimeState.currentOutdoorSceneId == 'outdoor_2') {
+          game.routeManager.onAction(GameRuntimeState.routeViolence);
+        }
+        enemy.hitByMelee();
+      }
+    }
+    
+    // NPC
+    final npcs = currentScene.children.whereType<Npc>();
+    for (final npc in npcs) {
+      if (npc.toAbsoluteRect().overlaps(attackRect)) {
+        debugPrint('Melee Hit: NPC at ${npc.position}');
+      }
+    }
+  }
+
   // 状態管理メソッド ==============================================================================
   void _updateUpButtonState() {
     final state =
@@ -829,43 +942,86 @@ class Player extends SpriteAnimationComponent
   // アイテムを収集するメソッド (Itemクラスから呼び出される)
   void collectItem(Item item) {
     itemBag.addItem(item);
+    
+    // 能動性（余計な行動）の加算
+    // 石やクオーツなどの基本アイテムを拾うのは「余計な行動」とする
+    if (item.type == ItemType.gem || item.name == '石') {
+      gameRuntimeState.addExtraAction(game);
+      
+      // Stage 1の石拾いミッション更新
+      if (item.name == '石') {
+        game.routeManager.onPickupStone(itemBag.getItemCount('石'));
+      }
+    }
+
+    // ロケットパーツの拾得時のミッション更新 (Stage 1)
+    if (item.name == 'バルブ' || item.name == '点火装置' || item.name == 'ノズル' || item.name == '石') {
+      game.routeManager.onPickupRocketPart();
+    }
+
+    // Stage 5 コレクションアイテム拾得時のルート進行
+    if (item.name == '掌握された自意識' || item.name == 'レスポンス') {
+      game.routeManager.onPickupPhilosophyItem();
+    }
   }
 
   // アイテム運搬メソッド --------------------------------------------------------------------------------
   // アイテム運搬を開始するメソッド
   Future<void> startCarrying(Item item) async {
-    // 物理挙動を無効にする
-    item.physicsBehavior?.setEnabled(false);
-    item.physicsBehavior?.velocity = Vector2.zero();
-    // インベントリからアイテムを消費
-    itemBag.removeItem(item.name); // アイテム名で削除
-    // プレイヤーが運搬する
+    // 運搬アイテムの重複チェック
     if (carriedItem != null) {
-      debugPrint('すでにアイテムを運搬中です: ${carriedItem!.name}');
+      if (carriedItem!.name == item.name) {
+        // 同じアイテムをすでに持っている場合は、位置だけ再設定して早期リターン
+        carriedItem!.position = Vector2(0, -30);
+        isCarryingItemNotifier.value = true;
+        return;
+      }
+      debugPrint('すでに別のアイテムを運搬中です: ${carriedItem!.name}');
       return;
     }
-    // アイテムがすでに親にアタッチされている場合は一度削除してから追加
+
+    // 物理挙動を無効にする
+    item.physicsBehavior.setEnabled(false);
+    item.physicsBehavior.velocity = Vector2.zero();
+
+    // インベントリからアイテムを消費（初期化時のロード時は、すでにバッグにないはず）
+    if (itemBag.getItemCount(item.name) > 0) {
+      itemBag.removeItem(item.name);
+    }
+
+    // プレイヤーの子として追加
     if (item.isMounted) {
       item.removeFromParent();
     }
-    add(item); // プレイヤーの子として追加
-    item.anchor = Anchor.center; // プレイヤーの頭上に表示するためアンカーを調整
+    add(item); 
+    
+    // アンカーを中央にし、プレイヤーの頭上に配置
+    item.anchor = Anchor.center;
+    item.position = Vector2(size.x / 2, -30); // プレイヤーの頭上(Playerの中心からの相対座標)
 
     // 運搬中はアイテムの衝突判定を無効にする
-    item.children.whereType<ShapeHitbox>().first.collisionType =
-        CollisionType.inactive;
+    await item.loaded;
+    final hitboxes = item.children.whereType<ShapeHitbox>();
+    if (hitboxes.isNotEmpty) {
+      hitboxes.first.collisionType = CollisionType.inactive;
+    }
 
     // スプライトを再ロードして表示を確実にする
-    item.sprite = await game.loadSprite(item.spritePath);
+    if (item.spritePath.isNotEmpty) {
+      item.sprite = await game.loadSprite(item.spritePath);
+    }
 
-    // UIを運搬モードに切り替える処理は後で実装
     carriedItem = item;
-    isCarryingItemNotifier.value = true; // 運搬モード開始
+    // UIを確実に更新するために、一度falseにしてからtrueにする（再起動時のロード対策）
+    isCarryingItemNotifier.value = false;
+    isCarryingItemNotifier.value = true;
+    
     GameUI.setPlaceButtonState(ActionButtonState.normal);
     GameUI.setStoreButtonState(ActionButtonState.normal);
 
     // GameRuntimeStateに運搬アイテムの情報を保存
     gameRuntimeState.carriedItemName = item.name;
+    debugPrint('Player: Started carrying ${item.name}. Position set to ${item.position}');
   }
 
   // アイテム運搬を終了するメソッド
@@ -895,6 +1051,7 @@ class Player extends SpriteAnimationComponent
       item.isCollected = true;
       game.world.add(item);
       await item.loaded; // ItemのonLoadが完了するまで待機
+      gameRuntimeState.addExtraAction(game); // 余計な行動としてカウント
     }
 
     // GameRuntimeStateの運搬アイテム情報をリセット
@@ -905,14 +1062,37 @@ class Player extends SpriteAnimationComponent
     final offset = facingDirection * 25;
     final newPosition = Vector2(position.x + offset.x, position.y);
 
+    // Stage 2 の追尾ギミック：近くの敵に吸い付く
+    Vector2 finalPosition = newPosition;
+    if (gameRuntimeState.currentOutdoorSceneId == 'outdoor_2') {
+      final enemies = game.world.children.whereType<EnemyBase>();
+      EnemyBase? nearestEnemy;
+      double minDistance = 150.0;
+
+      for (final enemy in enemies) {
+        final distance = (absolutePosition - enemy.absolutePosition).length;
+        if (distance < minDistance) {
+          minDistance = distance;
+          nearestEnemy = enemy;
+        }
+      }
+
+      if (nearestEnemy != null) {
+        // 最適な攻撃位置（敵の少し横）にニュルっと移動
+        final targetX = nearestEnemy.position.x - (facingDirection.x * 40);
+        position.x = lerpDouble(position.x, targetX, 0.5)!;
+      }
+    }
+
     // 運搬を終了
     stopCarrying();
 
-    final item = ItemFactory.createItemByName(object.name, newPosition);
+    final item = ItemFactory.createItemByName(object.name, finalPosition);
     if (item != null) {
       item.isCollected = true;
       game.world.add(item);
       await item.loaded; // ItemのonLoadが完了するまで待機
+      gameRuntimeState.addExtraAction(game); // 余計な行動としてカウント
 
       // プレイヤーの向きに応じて水平方向の力を設定
       final horizontalThrowForce =
@@ -929,14 +1109,8 @@ class Player extends SpriteAnimationComponent
   // ToolItemを装備するメソッド (後で実装)
   void equipItem(String itemName) {
     debugPrint('ツール $itemName を装備しました。');
-    game.windowManager.showWindow(
-      GameWindowType.message,
-      MessageWindow(
-        messages: ['$itemName を装備しました。'],
-        onFinish: () {
-          game.windowManager.hideWindow();
-        },
-      ),
+    game.windowManager.showDialog(
+      ['$itemName を装備しました。'],
     );
     itemBag.equipItem(itemName);
   }
@@ -944,14 +1118,8 @@ class Player extends SpriteAnimationComponent
   // ToolItemを解除するメソッド (後で実装)
   void unequipItem(String itemName) {
     debugPrint('ツール $itemName を解除しました。');
-    game.windowManager.showWindow(
-      GameWindowType.message,
-      MessageWindow(
-        messages: ['$itemName を解除しました。'],
-        onFinish: () {
-          game.windowManager.hideWindow();
-        },
-      ),
+    game.windowManager.showDialog(
+      ['$itemName を解除しました。'],
     );
     itemBag.unequipItem();
   }
@@ -959,72 +1127,43 @@ class Player extends SpriteAnimationComponent
   // 配置可能アイテムを全て廃棄するメソッド (個数を指定して捨てるという需要がなさそうなので全て捨てる)
   void disposePlaceableItem(Item item) {
     debugPrint('配置可能アイテム ${item.name} を廃棄しました。');
-    game.windowManager.showWindow(
-      GameWindowType.message,
-      MessageWindow(
-        messages: ['${item.name} を廃棄しました。', '獲得したアイテムの表示 UI があったらいいですね。'],
-        onFinish: () {
-          game.windowManager.hideWindow();
-        },
-      ),
+    game.windowManager.showDialog(
+      ['${item.name} を廃棄しました。'],
     );
     itemBag.removeItem(item.name, count: 0);
+    if (game.gameRuntimeState.currentOutdoorSceneId == 'outdoor_3') {
+      game.routeManager.onAction(GameRuntimeState.routeEfficiency); // ルート進行
+    }
   }
 
   // 宝石を眺めるメソッド (後で実装)
   void viewGem(Item gem) {
     debugPrint('宝石 ${gem.name} を眺めました。');
-    game.windowManager.showWindow(
-      GameWindowType.message,
-      MessageWindow(
-        messages: ['${gem.name} を眺められる機能って必要？俺はいらないと思う。', 'あってもいいけど。'],
-        onFinish: () {
-          game.windowManager.hideWindow();
-        },
-      ),
+    game.windowManager.showDialog(
+      ['${gem.name} を眺められる機能って必要？俺はいらないと思う。', 'あってもいいけど。'],
     );
   }
 
   // プレイヤー音源 メソッド ==============================================================================
 
-  Future<void> requestPlayFootstepSound(
-    double volume,
-    double playbackRate,
-  ) async {
-    if (!audioManager.soloud.isInitialized || _footstepsAudioSources.isEmpty) {
-      return;
-    }
+  Future<void> requestPlayPlayerSound(
+    String type, {
+    double volume = 1.0,
+    double playbackRate = 1.0,
+  }) async {
+    if (!audioManager.soloud.isInitialized) return;
+    final sources = _playerSounds[type];
+    if (sources == null || sources.isEmpty) return;
 
     try {
-      final soundToPlay =
-          _footstepsAudioSources[Random().nextInt(
-            _footstepsAudioSources.length,
-          )];
+      final soundToPlay = sources[Random().nextInt(sources.length)];
       final SoundHandle handle = await audioManager.soloud.play(
         soundToPlay,
         volume: volume,
       );
       audioManager.soloud.setRelativePlaySpeed(handle, playbackRate);
     } catch (e) {
-      // エラーログは残す
-    }
-  }
-
-  Future<void> requestPlayHitSound(double volume, double playbackRate) async {
-    if (!audioManager.soloud.isInitialized || _hitsAudioSources.isEmpty) {
-      return;
-    }
-
-    try {
-      final soundToPlay =
-          _hitsAudioSources[Random().nextInt(_hitsAudioSources.length)];
-      final SoundHandle handle = await audioManager.soloud.play(
-        soundToPlay,
-        volume: volume,
-      );
-      audioManager.soloud.setRelativePlaySpeed(handle, playbackRate);
-    } catch (e) {
-      // エラーログは残す
+      // エラーログ
     }
   }
 
@@ -1162,7 +1301,7 @@ class Player extends SpriteAnimationComponent
     if (other is EnemyBase) {
       _collidingEnemies.add(other);
       isTouchingEnemy = true;
-      requestPlayHitSound(0.8, 1.0);
+      requestPlayPlayerSound('hits', volume: 0.8, playbackRate: 1.0);
 
       // ストレス値とHPの更新
       // 衝突している敵からのストレス増加

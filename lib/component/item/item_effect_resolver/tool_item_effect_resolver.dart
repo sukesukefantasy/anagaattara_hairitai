@@ -1,4 +1,4 @@
-import 'package:anagaattara_hairitai/component/item/item.dart';
+﻿import 'package:anagaattara_hairitai/component/item/item.dart';
 import 'package:anagaattara_hairitai/component/player.dart';
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
@@ -10,7 +10,7 @@ class ToolEffectResolver {
     switch (effectName) {
       case 'swing':
         return (player) {
-          debugPrint('swing');
+          player.performMeleeAttack();
         };
       case 'throw':
         return (player) {

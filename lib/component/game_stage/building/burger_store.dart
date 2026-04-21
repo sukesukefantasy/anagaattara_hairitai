@@ -1,14 +1,9 @@
-import 'package:flame/collisions.dart';
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
-import '../../../UI/game_ui.dart';
-import '../../player.dart';
-import '../../common/hitboxes/door_hitbox.dart';
+import '../../common/hitboxes/interact_hitbox.dart';
 import 'building.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
 import 'dart:math';
-import '../../../main.dart';
-import '../../../scene/burger_store_interior_scene.dart'; // BurgerStoreInteriorSceneをインポート
 import '../../../scene/abstract_outdoor_scene.dart'; // AbstractOutdoorSceneをインポート
 
 class BurgerStore extends Building {
@@ -16,7 +11,6 @@ class BurgerStore extends Building {
   late SpriteComponent _doorSprite;
 
   bool _isDoorOpen = false;
-  bool _isPlayerNearDoor = false;
 
   late Sprite _doorClosedSprite;
   late Sprite _doorOpenSprite;
@@ -70,27 +64,16 @@ class BurgerStore extends Building {
     );
     add(_doorSprite);
 
-    add(DoorHitbox(
+    add(InteractHitbox(
       position: _doorSprite.position,
       size: _doorSprite.size,
       onPlayerEnter: () {
-        _isPlayerNearDoor = true;
         openOrCloseDoor(true);
-        _updateInteractAction();
       },
       onPlayerLeave: () {
-        _isPlayerNearDoor = false;
         openOrCloseDoor(false);
-        _updateInteractAction();
       },
-    ));
-
-    size = _buildingSprite.size;
-  }
-
-  void _updateInteractAction() {
-    if (_isPlayerNearDoor) {
-      GameUI.setInteractAction(() {
+      onInteract: () {
         debugPrint('ハンバーガー店とインタラクトしました。');
         // 建物から出る際のプレイヤーの目標位置を設定
         String? currentOutdoorSceneId;
@@ -98,10 +81,11 @@ class BurgerStore extends Building {
           currentOutdoorSceneId = game.gameRuntimeState.currentOutdoorSceneId;
         }
         game.sceneManager.enterBurgerStoreScene(this, initialPlayerPosition: null, outdoorSceneId: currentOutdoorSceneId); // outdoorSceneIdを渡す
-      }, Icons.restaurant);
-    } else {
-      GameUI.setInteractAction(null, null);
-    }
+      },
+      icon: Icons.restaurant,
+    ));
+
+    size = _buildingSprite.size;
   }
 
   void openOrCloseDoor(bool isPlayerColliding) {

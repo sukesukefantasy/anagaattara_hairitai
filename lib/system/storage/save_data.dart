@@ -1,4 +1,4 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter/foundation.dart';
@@ -24,25 +24,82 @@ class SaveData {
   String? carriedItemName;
   String? equippedItemName;
 
-  // 今後追加される可能性のあるその他のデータ
+  // ルート進行用のカウンターとフラグ
+  int hitCount;
+  int giftCount;
+  int scrappedObjectCount;
+  int readLogCount;
+  int randomActionCount;
+  String? currentMission;
+  List<String> triggeredRouteIds;
+
+  // 能動性（余計な行動）システム
+  Map<String, int> extraActionCounts; // ステージごとのカウント
+  List<String> subRouteConfirmedStages; // 30回達成したステージID
+
+  // ディテールシナリオ（隠し要素）
+  List<String> unlockedDetailRouteIds; // 開放済みディテールルート
+  bool isDetailRouteTriggered; // ディテールルート発動中
+
+  int dayCount;
+  List<String> completedRouteIds;
+  String? activeRouteId;
+  int unlockedStageCount;
+
+  // 地下の採掘状況（シーンIDごとの座標文字列リスト）
+  Map<String, List<String>> dugAreas;
+
+  bool hasShownCompassToday; // 今日の羅針盤を表示したか
+  Map<String, Map<String, double>> buildingPlacements; // シーンごとの建物配置 (sceneId -> {buildingType: x})
+  Map<String, int> destructibleHealths; // 破壊可能オブジェクトの状態 (uniqueId -> health)
+  List<String> satisfiedNpcIds; // 満足したNPCのIDリスト
 
   SaveData({
     this.currency = 0,
     this.miningPoints = 0,
     this.maxStress = 100.0,
     Map<String, int>? itemCounts,
-    this.lastSceneId = 'outdoor', // デフォルトは屋外シーン
-    this.lastPlayerPositionX = -50.0, // デフォルトのプレイヤーX座標
-    this.lastPlayerPositionY = 0.0, // デフォルトのプレイヤーY座標（OutdoorSceneで設定される）
-    this.exitPlayerPositionX = -50.0, // 建物に入る前のX座標
-    this.exitPlayerPositionY = 0.0, // 建物に入る前のY座標
-    this.lastOutdoorSceneId = 'outdoor',
+    this.lastSceneId = 'outdoor_1',
+    this.lastPlayerPositionX = -50.0,
+    this.lastPlayerPositionY = 0.0,
+    this.exitPlayerPositionX = -50.0,
+    this.exitPlayerPositionY = 0.0,
+    this.lastOutdoorSceneId = 'outdoor_1',
     this.lastBuildingType = 'shop',
     this.lastBuildingPositionX = -50.0,
     this.lastBuildingPositionY = 0.0,
     this.carriedItemName,
     this.equippedItemName,
-  }) : itemCounts = itemCounts ?? {};
+    this.hitCount = 0,
+    this.giftCount = 0,
+    this.scrappedObjectCount = 0,
+    this.readLogCount = 0,
+    this.randomActionCount = 0,
+    this.currentMission,
+    List<String>? triggeredRouteIds,
+    Map<String, int>? extraActionCounts,
+    List<String>? subRouteConfirmedStages,
+    List<String>? unlockedDetailRouteIds,
+    this.isDetailRouteTriggered = false,
+    this.dayCount = 1,
+    List<String>? completedRouteIds,
+    this.activeRouteId,
+    this.unlockedStageCount = 1,
+    Map<String, List<String>>? dugAreas,
+    this.hasShownCompassToday = false,
+    Map<String, Map<String, double>>? buildingPlacements,
+    Map<String, int>? destructibleHealths,
+    List<String>? satisfiedNpcIds,
+  }) : itemCounts = itemCounts ?? {},
+       triggeredRouteIds = triggeredRouteIds ?? [],
+       extraActionCounts = extraActionCounts ?? {},
+       subRouteConfirmedStages = subRouteConfirmedStages ?? [],
+       unlockedDetailRouteIds = unlockedDetailRouteIds ?? [],
+       completedRouteIds = completedRouteIds ?? [],
+       dugAreas = dugAreas ?? {},
+       buildingPlacements = buildingPlacements ?? {},
+       destructibleHealths = destructibleHealths ?? {},
+       satisfiedNpcIds = satisfiedNpcIds ?? [];
 
   // JSONからSaveDataオブジェクトを生成するファクトリコンストラクタ
   factory SaveData.fromJson(Map<String, dynamic> json) {
@@ -50,13 +107,10 @@ class SaveData {
       currency: json['currency'] as int? ?? 0,
       miningPoints: json['miningPoints'] as int? ?? 0,
       maxStress: json['maxStress'] as double? ?? 100.0,
-      itemCounts: Map<String, int>.from(
-        (json['itemCounts'] as Map<dynamic, dynamic>?)?.map(
-              (key, value) => MapEntry(key.toString(), value as int),
-            ) ??
-            {},
-      ),
-      lastSceneId: json['lastSceneId'] as String? ?? 'outdoor',
+      itemCounts: (json['itemCounts'] as Map<dynamic, dynamic>?)?.map(
+            (key, value) => MapEntry(key.toString(), value as int),
+          ),
+      lastSceneId: json['lastSceneId'] as String? ?? 'outdoor_1',
       lastPlayerPositionX: json['lastPlayerPositionX'] as double? ?? -50.0,
       lastPlayerPositionY: json['lastPlayerPositionY'] as double? ?? 0.0,
       exitPlayerPositionX: json['exitPlayerPositionX'] as double? ?? -50.0,
@@ -67,6 +121,30 @@ class SaveData {
       lastBuildingPositionY: json['lastBuildingPositionY'] as double?,
       carriedItemName: json['carriedItemName'] as String?,
       equippedItemName: json['equippedItemName'] as String?,
+      hitCount: json['hitCount'] as int? ?? 0,
+      giftCount: json['giftCount'] as int? ?? 0,
+      scrappedObjectCount: json['scrappedObjectCount'] as int? ?? 0,
+      readLogCount: json['readLogCount'] as int? ?? 0,
+      randomActionCount: json['randomActionCount'] as int? ?? 0,
+      currentMission: json['currentMission'] as String?,
+      triggeredRouteIds: (json['triggeredRouteIds'] as List<dynamic>?)?.cast<String>(),
+      extraActionCounts: (json['extraActionCounts'] as Map<String, dynamic>?)?.cast<String, int>(),
+      subRouteConfirmedStages: (json['subRouteConfirmedStages'] as List<dynamic>?)?.cast<String>(),
+      unlockedDetailRouteIds: (json['unlockedDetailRouteIds'] as List<dynamic>?)?.cast<String>(),
+      isDetailRouteTriggered: json['isDetailRouteTriggered'] as bool? ?? false,
+      dayCount: json['dayCount'] as int? ?? 1,
+      completedRouteIds: (json['completedRouteIds'] as List<dynamic>?)?.cast<String>(),
+      activeRouteId: json['activeRouteId'] as String?,
+      unlockedStageCount: json['unlockedStageCount'] as int? ?? 1,
+      dugAreas: (json['dugAreas'] as Map<String, dynamic>?)?.map(
+            (key, value) => MapEntry(key, List<String>.from(value as List)),
+          ),
+      hasShownCompassToday: json['hasShownCompassToday'] as bool? ?? false,
+      buildingPlacements: (json['buildingPlacements'] as Map<String, dynamic>?)?.map(
+        (key, value) => MapEntry(key, Map<String, double>.from(value as Map)),
+      ),
+      destructibleHealths: (json['destructibleHealths'] as Map<String, dynamic>?)?.cast<String, int>(),
+      satisfiedNpcIds: (json['satisfiedNpcIds'] as List<dynamic>?)?.cast<String>(),
     );
   }
 
@@ -88,6 +166,26 @@ class SaveData {
       'lastBuildingPositionY': lastBuildingPositionY,
       'carriedItemName': carriedItemName,
       'equippedItemName': equippedItemName,
+      'hitCount': hitCount,
+      'giftCount': giftCount,
+      'scrappedObjectCount': scrappedObjectCount,
+      'readLogCount': readLogCount,
+      'randomActionCount': randomActionCount,
+      'currentMission': currentMission,
+      'triggeredRouteIds': triggeredRouteIds,
+      'extraActionCounts': extraActionCounts,
+      'subRouteConfirmedStages': subRouteConfirmedStages,
+      'unlockedDetailRouteIds': unlockedDetailRouteIds,
+      'isDetailRouteTriggered': isDetailRouteTriggered,
+      'dayCount': dayCount,
+      'completedRouteIds': completedRouteIds,
+      'activeRouteId': activeRouteId,
+      'unlockedStageCount': unlockedStageCount,
+      'dugAreas': dugAreas,
+      'hasShownCompassToday': hasShownCompassToday,
+      'buildingPlacements': buildingPlacements,
+      'destructibleHealths': destructibleHealths,
+      'satisfiedNpcIds': satisfiedNpcIds,
     };
   }
 }
@@ -118,16 +216,27 @@ class SaveDataManager {
       // エラーが発生した場合はデフォルト値を返す
       return SaveData();
     }
-    return SaveData(); // ファイルが存在しないか、読み込みに失敗した場合はデフォルト値を返す
+    return SaveData();
   }
 
   Future<void> saveGameData(SaveData data) async {
     try {
       final file = await _localFile;
-      final jsonString = jsonEncode(data.toJson());
-      await file.writeAsString(jsonString);
+      final json = jsonEncode(data.toJson());
+      await file.writeAsString(json);
     } catch (e) {
-      debugPrint('save_data.dart: Error saving game data: $e');
+      debugPrint('Error saving game data: $e');
+    }
+  }
+
+  Future<void> deleteSaveData() async {
+    try {
+      final file = await _localFile;
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (e) {
+      debugPrint('Error deleting save data: $e');
     }
   }
 }

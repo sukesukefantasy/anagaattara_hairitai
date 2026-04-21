@@ -1,4 +1,14 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
+import 'windows/message_window.dart';
+
+/// メッセージリクエストのデータ構造
+class MessageRequest {
+  final List<String> messages;
+  final VoidCallback? onFinish;
+  final List<String>? options; // 選択肢
+  final Function(int)? onSelect; // 選択時のコールバック
+  MessageRequest({required this.messages, this.onFinish, this.options, this.onSelect});
+}
 
 /// ウィンドウの種類を識別するためのEnum
 enum GameWindowType {
@@ -8,6 +18,7 @@ enum GameWindowType {
   itemBag,
   shop,
   message,
+  puzzle,
 }
 
 /// ウィンドウ表示の状態と内容を管理するChangeNotifier
@@ -19,6 +30,9 @@ class WindowManager extends ChangeNotifier {
   final double screenWidth;
   final double screenHeight;
 
+  // メッセージのキュー
+  final List<MessageRequest> _messageQueue = [];
+
   GameWindowType get currentWindowType => _currentWindowType;
   Widget? get currentWindowContent => _currentWindowContent;
   // これらのgetterは直接は不要になるが、互換性のため残すか、使用箇所を修正する
@@ -27,6 +41,44 @@ class WindowManager extends ChangeNotifier {
 
   // コンストラクタで画面サイズを受け取る
   WindowManager({required this.screenWidth, required this.screenHeight});
+
+  /// メッセージをキューに追加して表示する（推奨される新しい方法）
+  void showDialog(List<String> messages, {VoidCallback? onFinish, List<String>? options, Function(int)? onSelect}) {
+    _messageQueue.add(MessageRequest(messages: messages, onFinish: onFinish, options: options, onSelect: onSelect));
+    
+    // 他のウィンドウ（ポーズなど）が開いておらず、かつメッセージ表示中でなければ開始
+    if (_currentWindowType == GameWindowType.none) {
+      _processNextMessage();
+    }
+  }
+
+  /// キュー内の次のメッセージを処理
+  void _processNextMessage() {
+    if (_messageQueue.isEmpty) {
+      hideWindow();
+      return;
+    }
+
+    final request = _messageQueue.removeAt(0);
+    
+    // 内部的に showWindow を呼び出す
+    _currentWindowType = GameWindowType.message;
+    _currentWindowContent = MessageWindow(
+      key: UniqueKey(), // 状態をリセットするためにKeyを追加
+      messages: request.messages,
+      options: request.options,
+      onSelect: (index) {
+        request.onSelect?.call(index);
+      },
+      onFinish: () {
+        // このメッセージの終了処理を実行
+        request.onFinish?.call();
+        // 次のメッセージがあれば表示
+        _processNextMessage();
+      },
+    );
+    notifyListeners();
+  }
 
   void showWindow(GameWindowType type, Widget? content) {
     _currentWindowType = type;
@@ -42,6 +94,7 @@ class WindowManager extends ChangeNotifier {
   void hideWindow() {
     _currentWindowType = GameWindowType.none;
     _currentWindowContent = null;
+    _messageQueue.clear(); // 強制終了時はキューもクリア
     notifyListeners();
   }
 } 

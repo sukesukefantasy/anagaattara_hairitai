@@ -1,4 +1,4 @@
-import 'package:flame/collisions.dart';
+﻿import 'package:flame/collisions.dart';
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 import 'dart:math';
@@ -6,6 +6,7 @@ import 'package:flutter_soloud/flutter_soloud.dart';
 import 'package:flame/particles.dart';
 
 import '../../../../main.dart';
+import '../../item/item.dart';
 
 
 class UnderGround extends RectangleComponent
@@ -34,9 +35,9 @@ class UnderGround extends RectangleComponent
 
   Set<double> get diggableEntranceXPositions => _diggableEntranceXPositions;
 
-  UnderGround({required double groundHeight})
+  UnderGround({required double groundHeight, double height = 1024.0})
     : _groundHeight = groundHeight,
-      super(size: Vector2(MyGame.worldWidth, underGroundHeight));
+      super(size: Vector2(MyGame.worldWidth, height));
 
   Future<void> addDiggableEntrances(List<double> xPositions) async {
     for (final x in xPositions) {
@@ -127,6 +128,17 @@ class UnderGround extends RectangleComponent
   Future<void> onLoad() async {
     await super.onLoad();
 
+    // GameRuntimeStateから既存の掘削エリアをロード
+    final savedAreas = game.gameRuntimeState.dugAreas[game.sceneManager.currentSceneId];
+    if (savedAreas != null) {
+      for (final areaStr in savedAreas) {
+        final coords = areaStr.split(',');
+        if (coords.length == 2) {
+          dugAreas.add(Vector2(double.parse(coords[0]), double.parse(coords[1])));
+        }
+      }
+    }
+
     try {
       _underGroundSprite = await Sprite.load('concrete_ground.png');
       debugPrint('UnderGround: _underGroundSprite loaded.');
@@ -163,10 +175,33 @@ class UnderGround extends RectangleComponent
 
     if (!dugAreas.contains(dugAreaWorldPos)) {
       dugAreas.add(dugAreaWorldPos);
+      
+      // GameRuntimeStateに保存
+      final sceneId = game.sceneManager.currentSceneId;
+      game.gameRuntimeState.dugAreas[sceneId] ??= [];
+      game.gameRuntimeState.dugAreas[sceneId]!.add('${dugAreaWorldPos.x},${dugAreaWorldPos.y}');
+      
       //debugPrint('addDugArea: $position');
       updateHitboxes();
       _playSoundEffectWithSoloud();
       _spawnDiggingParticles(dugAreaWorldPos); // dugAreaWorldPos を渡す
+
+      // "石"アイテムを2~4個ランダムに生成
+      final int stoneCount = _random.nextInt(3) + 2; // (0~2) + 2 = 2~4
+      for (int i = 0; i < stoneCount; i++) {
+        // 掘ったエリア内のランダムな位置に配置
+        final randomOffset = Vector2(
+          _random.nextDouble() * UnderGround.digAreaSize,
+          _random.nextDouble() * UnderGround.digAreaSize,
+        );
+        final stoneItem = ItemFactory.createItemByName(
+          '石',
+          dugAreaWorldPos + randomOffset,
+        );
+        if (stoneItem != null) {
+          game.world.add(stoneItem);
+        }
+      }
     }
   }
 

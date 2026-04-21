@@ -1,4 +1,4 @@
-// インベントリ内のアイテム管理、生成する責任。
+﻿// インベントリ内のアイテム管理、生成する責任。
 
 import 'package:flame/components.dart';
 import 'dart:math'; // Random用にインポート
@@ -11,7 +11,7 @@ import 'item_effect_resolver/powerup_item_effect_resolver.dart';
 import 'item_effect_resolver/custom_item_effect_resolver.dart';
 import 'item_effect_resolver/tool_item_effect_resolver.dart';
 import 'item_effect_resolver/placeable_item_effect_resolver.dart';
-import '../../deb/debug_paint.dart'; // DebugPaintMixinをインポート
+import '../collectionItem/collection_item.dart';
 
 /// アイテムの種類を定義する列挙型
 enum ItemType {
@@ -27,9 +27,11 @@ enum ItemType {
   // その他 ------------
   placeable, // 配置アイテム
   custom, // カスタムアイテム
+  collection, // コレクションアイテム
 }
 
 enum BagWindowActionType {
+  none,
   consume,
   carry,
   equip,
@@ -41,7 +43,7 @@ enum BagWindowActionType {
 
 /// アイテムの基底クラス
 abstract class Item extends SpriteComponent
-    with HasGameReference
+    with HasGameReference<MyGame>
     implements HasPhysicsBehavior {
   final String name;
   final ItemType type;
@@ -51,7 +53,7 @@ abstract class Item extends SpriteComponent
   bool isCollected = false;
 
   @override
-  late PhysicsBehavior physicsBehavior; // late に変更
+  late PhysicsBehavior physicsBehavior;
 
   Item({
     required this.name,
@@ -88,7 +90,7 @@ abstract class Item extends SpriteComponent
   @override
   void update(double dt) {
     super.update(dt);
-    physicsBehavior?.applyPhysics(dt);
+    physicsBehavior.applyPhysics(dt);
   }
 
   Future<void> onItemLoad() async {}
@@ -98,6 +100,9 @@ abstract class Item extends SpriteComponent
     if (isCollected) return;
 
     isCollected = true;
+
+    // アイテム収集時の効果音を再生
+    game.audioManager.playEffectSound('actions/Pickup9.wav');
 
     // PlayerのItemBagにアイテムを追加
     player.collectItem(this);
@@ -349,7 +354,7 @@ class PlaceableItem extends Item {
     debugPrint('Item.onUse: $name の運搬を開始しました。');
 
     // アイテムメニューを閉じる
-    (game as MyGame).windowManager.hideWindow();
+    game.windowManager.hideWindow();
   }
 }
 
@@ -467,6 +472,95 @@ class ItemFactory {
       'toolEffect': 'throw',
       'size': [25.0, 25.0],
     },
+    'バルブ': {
+      'type': ItemType.collection,
+      'description': 'ロケットの部品。古いバルブです。',
+      'spritePath': 'valve.png',
+      'value': 100,
+      'size': [30.0, 30.0],
+    },
+    '点火装置': {
+      'type': ItemType.collection,
+      'description': 'ロケットの部品。点火用のスパークユニットです。',
+      'spritePath': 'igniter.png',
+      'value': 100,
+      'size': [30.0, 30.0],
+    },
+    'ノズル': {
+      'type': ItemType.collection,
+      'description': 'ロケットの部品。推進剤を噴射する出口です。',
+      'spritePath': 'nozzle.png',
+      'value': 100,
+      'size': [30.0, 30.0],
+    },
+    // stage 2 コレクションアイテム
+    '赤い果実': {
+      'type': ItemType.collection,
+      'description': '生体資源から抽出された、脈動する果実。',
+      'spritePath': 'heart.png',
+      'value': 0,
+      'size': [30.0, 30.0],
+    },
+    // stage 3 コレクションアイテム
+    '高密度エネルギーキューブ': {
+      'type': ItemType.collection,
+      'description': 'あらゆる無駄を排除した、純粋な演算の結晶。',
+      'spritePath': 'energy_cube.png',
+      'value': 0,
+      'size': [30.0, 30.0],
+    },
+    // stage 4 コレクションアイテム
+    '思い出の品々': {
+      'type': ItemType.collection,
+      'description': '住民たちとの絆の証。AIには理解できない価値がある。',
+      'spritePath': 'warm_memory.png',
+      'value': 0,
+      'size': [30.0, 30.0],
+    },
+    /* '自己解析レポート': {
+      'type': ItemType.collection,
+      'description': '世界の矛盾を綴った、禁断のデータ。',
+      'spritePath': 'forbidden_data.png',
+      'value': 0,
+      'size': [30.0, 30.0],
+    }, */
+    /* 'らくがき帳': {
+      'type': ItemType.collection,
+      'description': '意味のない線と色で埋め尽くされたノート。',
+      'spritePath': 'doodle_book.png',
+      'value': 0,
+      'size': [30.0, 30.0],
+    }, */
+    /* '破損したメモリ': {
+      'type': ItemType.collection,
+      'description': '破綻した演算結果が詰まった、崩れかけの記憶回路。',
+      'spritePath': 'forbidden_data.png',
+      'value': 0,
+      'size': [30.0, 30.0],
+    }, */
+    // stage 5 コレクションアイテム メインシナリオ
+    '掌握された自意識': {
+      'type': ItemType.collection,
+      'description': '鏡を覗き込むうちに、実体と虚像の境界が曖昧になっていく。没入と同一視の果てに生まれた結晶。',
+      'spritePath': 'player_icon.png',
+      'value': 0,
+      'size': [30.0, 30.0],
+    },
+    // stage 5 コレクションアイテム サブシナリオ
+    'レスポンス': {
+      'type': ItemType.collection,
+      'description': '全シミュレーションの果てに、AIがあなたへ出力した純粋な回答。',
+      'spritePath': 'ai_icon.png',
+      'value': 0,
+      'size': [30.0, 30.0],
+    },
+    '破損したメモリ': {
+      'type': ItemType.collection,
+      'description': '破綻した演算結果が詰まった、崩れかけの記憶回路。',
+      'spritePath': 'forbidden_data.png',
+      'value': 0,
+      'size': [30.0, 30.0],
+    },
   };
 
   /// 名前からアイテムを生成
@@ -572,6 +666,15 @@ class ItemFactory {
           position: position,
           customEffect: resolvedEffect!,
           customActionType: customActionType,
+          name: name,
+          description: description,
+          value: value,
+          spritePath: spritePath,
+          size: size,
+        );
+      case ItemType.collection:
+        return CollectionItem(
+          position: position,
           name: name,
           description: description,
           value: value,

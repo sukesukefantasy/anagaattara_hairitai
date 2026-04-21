@@ -56,7 +56,7 @@ class Station extends Building {
     add(platformHitbox);
 
     // インタラクション用の当たり判定
-    /* add(DoorHitbox(
+    /* add(InteractHitbox(
       position: Vector2(0, 0), // 駅全体を覆う
       size: size,
       onPlayerEnter: () {

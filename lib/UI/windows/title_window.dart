@@ -1,10 +1,11 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../window_manager.dart';
 
 class TitleWindow extends StatelessWidget {
   final WindowManager windowManager;
+  final VoidCallback? onStart;
 
-  const TitleWindow({super.key, required this.windowManager});
+  const TitleWindow({super.key, required this.windowManager, this.onStart});
 
   @override
   Widget build(BuildContext context) {
@@ -35,6 +36,7 @@ class TitleWindow extends StatelessWidget {
             ElevatedButton(
               onPressed: () {
                 windowManager.hideWindow(); // タイトル画面を閉じる
+                if (onStart != null) onStart!();
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.green[700],

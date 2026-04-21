@@ -131,7 +131,7 @@ class ItemBagWindow extends StatelessWidget {
                                           right: 0,
                                           bottom: 0,
                                           child: Container(
-                                            padding: const EdgeInsets.all(2),
+                                            padding: const EdgeInsets.all(10),
                                             decoration: BoxDecoration(
                                               color: Colors.black54,
                                               borderRadius: BorderRadius.circular(4),
@@ -466,6 +466,8 @@ class ItemBagWindow extends StatelessWidget {
         return BagWindowActionType.dispose; // Placeableは廃棄するがメインアクション
       case ItemType.custom:
         return (item as CustomItem).customActionType; // customActionType を参照
+      case ItemType.collection:
+        return BagWindowActionType.none;
     }
   }
 
@@ -516,6 +518,8 @@ class ItemBagWindow extends StatelessWidget {
       case BagWindowActionType.custom:
         item.onUse(game.player);
         break;
+      case BagWindowActionType.none:
+        break;
     }
   }
 
@@ -550,6 +554,8 @@ class ItemBagWindow extends StatelessWidget {
       case BagWindowActionType.custom:
         buttonText = '';
         break;
+      case BagWindowActionType.none:
+        return const SizedBox.shrink();
     }
 
     return ElevatedButton(
@@ -627,6 +633,8 @@ class ItemBagWindow extends StatelessWidget {
           _showUseItemDialog(context, item, count); // カスタムアクションは使用ダイアログで処理
         };
         break;
+      case BagWindowActionType.none:
+        return const SizedBox.shrink();
     }
 
     return _buildItemActionButton(

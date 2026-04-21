@@ -7,7 +7,7 @@ import 'package:anagaattara_hairitai/component/common/ground/ground.dart';
 import 'package:anagaattara_hairitai/component/common/underground/underground.dart';
 import 'package:anagaattara_hairitai/UI/game_ui.dart';
 import 'package:flutter/material.dart';
-import 'package:anagaattara_hairitai/component/common/hitboxes/door_hitbox.dart';
+import 'package:anagaattara_hairitai/component/common/hitboxes/interact_hitbox.dart';
 
 class PhysicsHitbox extends RectangleHitbox with HasGameReference {
   double restitution; // 跳ね返り係数 (0.0: 跳ね返らない, 1.0: 完全に跳ね返る)
@@ -213,7 +213,7 @@ class PhysicsHitbox extends RectangleHitbox with HasGameReference {
       if (parent is Item) {
         return;
       }
-    } else if (other.parent is DoorHitbox) {
+    } else if (other.parent is InteractHitbox) {
       if (parent is Item) {
         return;
       }
