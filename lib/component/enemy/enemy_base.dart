@@ -54,9 +54,11 @@ abstract class EnemyBase extends SpriteAnimationComponent
     // Stage 2 でプレイヤーが近くにいる場合にマーカーを表示
     if (game.gameRuntimeState.currentOutdoorSceneId == 'outdoor_2') {
       final player = game.player;
-      if (player != null) {
+      if (player != null && !player.isHiding) {
         final distance = (player.absolutePosition - absolutePosition).length;
         showTargetMarker(distance < 150);
+      } else {
+        showTargetMarker(false);
       }
     } else {
       showTargetMarker(false);

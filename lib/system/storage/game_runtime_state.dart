@@ -39,7 +39,7 @@ class GameRuntimeState extends ChangeNotifier {
 
   // デバッグ用：初期ステージを上書きしたい場合（例：'outdoor_4'）
   // 開発時以外は null にしておく
-  String? debugInitialStage;
+  String? debugInitialStage = 'outdoor_3';
 
   // ルート進行用のカウンターとフラグ
   int hitCount = 0;             // Violence: NPCにぶつけた回数
@@ -83,10 +83,6 @@ class GameRuntimeState extends ChangeNotifier {
   Set<String> subRouteConfirmedStages = {};
   bool isAutoPlay = false; // オートプレイ中フラグ
 
-  // ディテールシナリオ（隠し要素）
-  Set<String> unlockedDetailRouteIds = {};
-  bool isDetailRouteTriggered = false;
-
   int dayCount = 1;
   List<String> completedRouteIds = [];
   String? activeRouteId;
@@ -103,6 +99,34 @@ class GameRuntimeState extends ChangeNotifier {
   
   // 満足したNPCのID
   Set<String> satisfiedNpcIds = {};
+
+  // プレイヤー能力強化
+  double hpBonus = 0.0;
+  double stressBonus = 0.0;
+  double throwPowerBonus = 1.0;
+  double movementSpeedBonus = 1.0;
+  bool canRun = false;
+
+  // アチーブメント
+  Set<String> unlockedAchievements = {};
+  String? lastUnlockedAchievement;
+
+  void unlockAchievement(String achievementId, String title) {
+    if (!unlockedAchievements.contains(achievementId)) {
+      unlockedAchievements.add(achievementId);
+      lastUnlockedAchievement = title;
+      // 通知（簡易版としてデバッグプリント、本来はUIで表示）
+      debugPrint('ACHIEVEMENT UNLOCKED: $title');
+      saveGame();
+      notifyListeners();
+      
+      // 一定時間後にリセット
+      Future.delayed(const Duration(seconds: 3), () {
+        lastUnlockedAchievement = null;
+        notifyListeners();
+      });
+    }
+  }
 
   // 能動性（余計な行動）カウントの追加
   void addExtraAction(MyGame game) {
@@ -152,8 +176,6 @@ class GameRuntimeState extends ChangeNotifier {
     triggeredRouteIds = Set<String>.from(data.triggeredRouteIds);
     extraActionCounts = Map<String, int>.from(data.extraActionCounts);
     subRouteConfirmedStages = Set<String>.from(data.subRouteConfirmedStages);
-    unlockedDetailRouteIds = Set<String>.from(data.unlockedDetailRouteIds);
-    isDetailRouteTriggered = data.isDetailRouteTriggered;
 
     dayCount = data.dayCount;
     completedRouteIds = List<String>.from(data.completedRouteIds);
@@ -166,6 +188,7 @@ class GameRuntimeState extends ChangeNotifier {
     ));
     destructibleHealths = Map<String, int>.from(data.destructibleHealths);
     satisfiedNpcIds = Set<String>.from(data.satisfiedNpcIds);
+    unlockedAchievements = Set<String>.from(data.unlockedAchievements);
 
     debugPrint('--- GameRuntimeState loaded from SaveData. ---');
     printState();
@@ -204,8 +227,6 @@ class GameRuntimeState extends ChangeNotifier {
       triggeredRouteIds: triggeredRouteIds.toList(),
       extraActionCounts: extraActionCounts,
       subRouteConfirmedStages: subRouteConfirmedStages.toList(),
-      unlockedDetailRouteIds: unlockedDetailRouteIds.toList(),
-      isDetailRouteTriggered: isDetailRouteTriggered,
       dayCount: dayCount,
       completedRouteIds: completedRouteIds,
       activeRouteId: activeRouteId,
@@ -217,6 +238,7 @@ class GameRuntimeState extends ChangeNotifier {
       )),
       destructibleHealths: Map<String, int>.from(destructibleHealths),
       satisfiedNpcIds: satisfiedNpcIds.toList(),
+      unlockedAchievements: unlockedAchievements.toList(),
     );
   }
 

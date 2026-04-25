@@ -3,7 +3,6 @@ import '../UI/game_ui.dart';
 import '../system/storage/game_runtime_state.dart';
 import '../component/item/item.dart';
 import 'package:flame/components.dart';
-import 'package:flutter/foundation.dart';
 
 class RouteManager {
   final MyGame game;
@@ -14,6 +13,17 @@ class RouteManager {
   static const int countTriggerEntry = 1;    // ルート入口（ミッション発生）
   static const int countTriggerMid = 5;      // 中間（警告/没入）
   static const int countTriggerFinal = 10;   // 確定（アイテム獲得）
+
+  // ステージとルートの対応マップ
+  static const Map<String, String> stageToRoute = {
+    'outdoor_1': GameRuntimeState.routeNormal,
+    'outdoor_2': GameRuntimeState.routeViolence,
+    'outdoor_3': GameRuntimeState.routeEfficiency,
+    'outdoor_4': GameRuntimeState.routeEmpathy,
+    'outdoor_philosophy': GameRuntimeState.routePhilosophy,
+    'outdoor_despair': GameRuntimeState.routeDespair,
+    'outdoor_true': GameRuntimeState.routeTrue,
+  };
 
   /// ルート確定（クリア）に必要な回数を取得する
   int _getFinalThreshold(String routeId) {
@@ -38,52 +48,62 @@ class RouteManager {
     'outdoor_true': "メインミッション：真実のフィードバック。",
   };
 
-  // ディテールルートの閾値
-  static const Map<String, int> detailThresholds = {
-    'outdoor_1': 10, // 石10個
-    'outdoor_2': 15, // 敵15体
-    'outdoor_3': 30, // 家具ヒット30回
-    'outdoor_4': 20, // プレゼント5回
-  };
+  /// 現在の状況に基づき、適切なミッション文字列を決定する
+  String _calculateMissionText(String sceneId) {
+    final state = game.gameRuntimeState;
+    final routeForStage = stageToRoute[sceneId];
+
+    // 優先順位1: すでにそのルートが「完了（エンディングを見た）」している場合
+    if (routeForStage != null && state.completedRouteIds.contains(routeForStage)) {
+      return "メインミッション：調査完了。次のエリアへ進め。";
+    }
+
+    // 優先順位2: そのステージのルートアイテムを獲得済み（ルート確定）の場合
+    if (routeForStage != null && state.activeRouteId == routeForStage) {
+      return "メインミッション：ミッション完了。目的地（駅またはロケット）へ向かえ。";
+    }
+
+    // 優先順位3: 特定ステージの進行中ロジック
+    if (sceneId == 'outdoor_1') {
+      final stoneCount = game.player.itemBag.getItemCount('石');
+      final nozzleCount = game.player.itemBag.getItemCount('ノズル');
+      final valveCount = game.player.itemBag.getItemCount('バルブ');
+      final igniterCount = game.player.itemBag.getItemCount('点火装置');
+      final partsCount = (nozzleCount > 0 ? 1 : 0) + (valveCount > 0 ? 1 : 0) + (igniterCount > 0 ? 1 : 0);
+
+      if (stoneCount >= 1 && partsCount >= 3) {
+        return "メインミッション：基本調査完了。ロケットのトランクへ向かってください。";
+      } else {
+        return "メインミッション：基本調査。パーツ($partsCount/3)と石($stoneCount/1)を回収せよ。";
+      }
+    }
+
+    // 優先順位4: ルートイベントが開始されている場合
+    if (routeForStage != null && state.triggeredRouteIds.contains(routeForStage)) {
+      switch (routeForStage) {
+        case GameRuntimeState.routeViolence: return "ミッション：生体反応の更なる調査（排除を継続）";
+        case GameRuntimeState.routeEmpathy: return "ミッション：住民との共鳴（プレゼントと対話）";
+        case GameRuntimeState.routeEfficiency: return "ミッション：世界の最適化（オブジェクトの全廃棄）";
+        case GameRuntimeState.routePhilosophy: return "ミッション：深淵の観測（哲学の欠片の収集）";
+      }
+    }
+
+    // 優先順位5: デフォルトのステージミッション
+    return stageMissions[sceneId] ?? "探索を続ける";
+  }
+
+  /// ミッションUIを最新の状態に更新する
+  void refreshMissionText([String? sceneId]) {
+    final targetSceneId = sceneId ?? game.gameRuntimeState.currentOutdoorSceneId ?? 'outdoor_1';
+    game.gameRuntimeState.currentMission = _calculateMissionText(targetSceneId);
+  }
 
   /// ステージ開始時のミッション設定
   void showCompassMessage(String sceneId, {bool showWindow = true}) {
     final state = game.gameRuntimeState;
     
-    final stageId = state.currentOutdoorSceneId ?? 'outdoor_1';
-    
-    // ステージとルートの対応マップ
-    final stageToRoute = {
-      'outdoor_1': GameRuntimeState.routeNormal,
-      'outdoor_2': GameRuntimeState.routeViolence,
-      'outdoor_3': GameRuntimeState.routeEfficiency,
-      'outdoor_4': GameRuntimeState.routeEmpathy,
-      'outdoor_philosophy': GameRuntimeState.routePhilosophy,
-      'outdoor_despair': GameRuntimeState.routeDespair,
-      'outdoor_true': GameRuntimeState.routeTrue,
-    };
-
-    // メインミッションを設定（ウィンドウを出すかに関わらずUIを更新）
-    state.currentMission = stageMissions[stageId] ?? "探索を続ける";
-
-    // 1. すでに過去にクリア済みのルート（エンディングを見た）の場合
-    final routeForStage = stageToRoute[stageId];
-    if (routeForStage != null && state.completedRouteIds.contains(routeForStage)) {
-      state.currentMission = "メインミッション：調査完了。次のエリアへ進め。";
-      if (!showWindow || state.hasShownCompassToday) return;
-      debugPrint('RouteManager: $routeForStage already completed. Window skipped.');
-      // クリア済みなのでメッセージウィンドウは出さず終了
-      return;
-    }
-
-    // 2. このステージのミッションを今クリアした（アイテム獲得済み/ルート確定済み）の場合
-    if (routeForStage != null && routeForStage != GameRuntimeState.routeNormal) {
-      if (state.activeRouteId == routeForStage) {
-        state.currentMission = "メインミッション：ミッション完了。目的地（駅またはロケット）へ向かえ。";
-      }
-    } else if (stageId == 'outdoor_1') {
-      _updateStage1Mission(); // 既存のStage1ロジック
-    }
+    // UIを最新の状態に更新
+    refreshMissionText(sceneId);
 
     if (!showWindow || state.hasShownCompassToday) return; // 表示不要か、すでに表示済みなら何もしない
 
@@ -98,7 +118,7 @@ class RouteManager {
 
     // ステージ開始時の独り言（羅針盤）
     String message = "";
-    switch (stageId) {
+    switch (sceneId) {
       case 'outdoor_1':
         message = "「……惑星調査を開始する。まずは周囲を探索し、ロケットの修理に必要な『3つのパーツ』と『希少な鉱石（石）』をトランクに詰め込む必要があるようだ。」";
         break;
@@ -152,13 +172,11 @@ class RouteManager {
 
     // このステージで発生して良いメインミッション（ルート）かを判定
     if (!_isRouteAllowedInStage(stageId, routeId)) {
-      _checkDetailRoute(stageId); // ディテールルートの判定だけは行う
       return;
     }
 
     // すでにクリア済みのルート、または別のルートが確定済みの場合は無視
     if (state.completedRouteIds.contains(routeId) || (state.activeRouteId != null && state.activeRouteId != routeId)) {
-      _checkDetailRoute(stageId); // ディテールルートの判定だけは行う
       return;
     }
 
@@ -182,9 +200,6 @@ class RouteManager {
         break;
     }
 
-    // ディテールルート判定
-    _checkDetailRoute(stageId);
-
     // 1. 入口トリガー (ミッション表示)
     if (currentCount == countTriggerEntry) {
       _showEntryEvent(routeId);
@@ -198,10 +213,8 @@ class RouteManager {
       _showFinalEvent(routeId);
     }
     
-    // ミッションクリア後の案内（次のエリアへ）
-    if (state.activeRouteId == routeId) {
-      state.currentMission = "メインミッション：ミッション完了。目的地（駅またはロケット）へ向かえ。";
-    }
+    // 状態が変化したのでUIを更新
+    refreshMissionText();
 
     state.saveGame();
   }
@@ -225,7 +238,7 @@ class RouteManager {
 
   /// 石を拾った際のミッション更新 (Stage 1)
   void onPickupStone(int count) {
-    _updateStage1Mission();
+    refreshMissionText();
   }
 
   /// コレクションアイテムを拾った際のミッション更新 (Stage 5)
@@ -236,83 +249,16 @@ class RouteManager {
     // アイテムを拾ったら確定
     _showFinalEvent(GameRuntimeState.routePhilosophy);
     
-    // ミッション更新
-    state.currentMission = "メインミッション：ミッション完了。ロケットへ向かえ。";
+    // UIを更新
+    refreshMissionText();
     state.saveGame();
   }
 
   void onPickupRocketPart() {
-    _updateStage1Mission();
+    refreshMissionText();
   }
 
-  void _updateStage1Mission() {
-    final state = game.gameRuntimeState;
-    if (state.currentOutdoorSceneId == 'outdoor_1' || state.currentOutdoorSceneId == null) {
-      final stoneCount = game.player.itemBag.getItemCount('石');
-      final nozzleCount = game.player.itemBag.getItemCount('ノズル');
-      final valveCount = game.player.itemBag.getItemCount('バルブ');
-      final igniterCount = game.player.itemBag.getItemCount('点火装置');
-      final partsCount = (nozzleCount > 0 ? 1 : 0) + (valveCount > 0 ? 1 : 0) + (igniterCount > 0 ? 1 : 0);
-
-      if (stoneCount >= 1 && partsCount >= 3) {
-        state.currentMission = "メインミッション：基本調査完了。ロケットのトランクへ向かってください。";
-      } else {
-        state.currentMission = "メインミッション：基本調査。パーツ($partsCount/3)と石($stoneCount/1)を回収せよ。";
-      }
-    }
-  }
-
-  void _checkDetailRoute(String stageId) {
-    final state = game.gameRuntimeState;
-    if (state.isDetailRouteTriggered) return;
-    
-    // すでに開放済みのディテールルートなら判定しない
-    if (state.unlockedDetailRouteIds.contains(stageId)) return;
-
-    final threshold = detailThresholds[stageId];
-    if (threshold == null) return;
-
-    int currentVal = 0;
-    switch (stageId) {
-      case 'outdoor_1': currentVal = game.player.itemBag.getItemCount('石'); break;
-      case 'outdoor_2': currentVal = state.hitCount; break;
-      case 'outdoor_3': currentVal = state.scrappedObjectCount; break;
-      case 'outdoor_4': currentVal = state.giftCount; break;
-    }
-
-    if (currentVal >= threshold) {
-      _triggerDetailRoute(stageId);
-    }
-  }
-
-  void _triggerDetailRoute(String stageId) {
-    final state = game.gameRuntimeState;
-    state.isDetailRouteTriggered = true;
-    state.unlockedDetailRouteIds.add(stageId);
-
-    game.windowManager.showDialog(
-      [
-        "「……警告。ミッションの過度な遂行により、論理回路がオーバーヒートしました。」",
-        "「詳細な調査結果をアーカイブしました。……本日の調査を強制終了し、再起動します。」",
-        "（ディテールルート：${_getDetailName(stageId)} が開放されました）"
-      ],
-      onFinish: () {
-        // ステージ進捗を進めず、outdoor_1の最初に戻る（ループ演出）
-        state.isDetailRouteTriggered = false;
-        game.sceneManager.loadScene('outdoor_1', initialPlayerPosition: Vector2(-50, game.initialGameCanvasSize.y - 50));
-      },
-    );
-  }
-
-  String _getDetailName(String stageId) {
-    switch (stageId) {
-      case 'outdoor_1': return "過剰な収集癖";
-      case 'outdoor_2': return "虐殺の記録";
-      case 'outdoor_3': return "解体の美学";
-      case 'outdoor_4': return "偽善の極致";
-      default: return "不明";
-    }
-  }
+  // 以前の個別更新メソッドは廃止し、refreshMissionText() に統一
 
   void _showEntryEvent(String routeId) {
     String message = "";
@@ -337,8 +283,8 @@ class RouteManager {
         break;
     }
 
-    game.gameRuntimeState.currentMission = mission;
     game.gameRuntimeState.triggeredRouteIds.add(routeId);
+    refreshMissionText();
     _displayThoughtList([message, "（新しいミッションが発生しました：$mission）"]);
   }
 
@@ -395,8 +341,11 @@ class RouteManager {
 
     if (itemName.isNotEmpty) {
       game.gameRuntimeState.activeRouteId = routeId;
-      game.gameRuntimeState.currentMission = "ミッション完了：ロケットを発射せよ";
+      refreshMissionText();
       
+      // アチーブメントの開放
+      game.gameRuntimeState.unlockAchievement(routeId, 'ルート確定: ${_getRouteName(routeId)}');
+
       final item = ItemFactory.createItemByName(itemName, Vector2.zero());
       if (item != null) {
         game.player.itemBag.addItem(item);

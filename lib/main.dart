@@ -259,8 +259,8 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
     _windowManager?.dispose(); // null安全に呼び出し
     itemBag.dispose();
 
-    gameRuntimeState.currentPlayerPositionX = game.player!.position.x;
-    gameRuntimeState.currentPlayerPositionY = game.player!.position.y;
+    gameRuntimeState.currentPlayerPositionX = game.player.position.x;
+    gameRuntimeState.currentPlayerPositionY = game.player.position.y;
     gameRuntimeState.saveGame();
     super.dispose();
   }
@@ -290,8 +290,8 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
         'Game paused and SoLoud volume set to 0.0 due to app state: $state',
       );
       // ゲーム終了前に状態を保存
-      gameRuntimeState.currentPlayerPositionX = game.player!.position.x;
-      gameRuntimeState.currentPlayerPositionY = game.player!.position.y;
+      gameRuntimeState.currentPlayerPositionX = game.player.position.x;
+      gameRuntimeState.currentPlayerPositionY = game.player.position.y;
       gameRuntimeState.saveGame();
     } else if (state == AppLifecycleState.resumed) {
       // アプリがフォアグラウンドに戻ったとき
@@ -403,11 +403,12 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
     );
   }
 
-  void _onPressedJumpButton() {
-    if (game.player == null) return; // playerがnullの場合は何もしない
-    if (game.player!.isOnGround) {
-      game.player!.isOnGround = false;
-      game.player!.velocity.y = Player.jumpForce;
+  void _onPressedJumpButton(bool isPressed) {
+    if (game.player == null) return;
+    if (isPressed) {
+      game.player.jump();
+    } else {
+      game.player.stopJump();
     }
   }
 
@@ -597,7 +598,7 @@ class MyGame extends FlameGame
     // CameraControllerをワールドに追加
     await world.add(cameraController); // cameraControllerを先にworldに追加
     if (player != null) {
-      cameraController.initializeCamera(player!);
+      cameraController.initializeCamera(player);
     }
 
     // シーンマネージャーをゲームワールドに追加
@@ -661,8 +662,8 @@ class MyGame extends FlameGame
     if (player == null) return;
 
     // 掘りエフェクトの表示/非表示を制御
-    if (player!.isDigging) {
-      if (digEffect != null && !digEffect!.isMounted && player!.inUnderGround) {
+    if (player.isDigging) {
+      if (digEffect != null && !digEffect!.isMounted && player.inUnderGround) {
         world.add(digEffect!);
       }
     } else {
@@ -679,14 +680,14 @@ class MyGame extends FlameGame
             is AbstractOutdoorScene && // シーンがAbstractOutdoorSceneであることを確認
         (sceneManager.currentScene as AbstractOutdoorScene).ground !=
             null && // groundがnullでないことを確認
-        player!.position.y >
+        player.position.y >
             initialGameCanvasSize.y +
                 (sceneManager.currentScene as AbstractOutdoorScene)
                     .ground!
                     .size
                     .y + // groundHeightを直接ground.size.yに置き換え
                 UnderGround.underGroundHeight) {
-      player!.position.y = initialGameCanvasSize.y / 1.2;
+      player.position.y = initialGameCanvasSize.y / 1.2;
     }
   }
 
@@ -729,40 +730,40 @@ class MyGame extends FlameGame
     // プレイヤーの移動処理
 
     // 左右の矢印キーは時間調整に割り当てたため、ここではAとDキーのみを使用
-    player!.isMovingRight = keysPressed.contains(LogicalKeyboardKey.keyD);
-    player!.isMovingLeft = keysPressed.contains(LogicalKeyboardKey.keyA);
+    player.isMovingRight = keysPressed.contains(LogicalKeyboardKey.keyD);
+    player.isMovingLeft = keysPressed.contains(LogicalKeyboardKey.keyA);
 
     // 下方向への移動
-    player!.isMovingDown =
+    player.isMovingDown =
         keysPressed.contains(LogicalKeyboardKey.arrowDown) ||
         keysPressed.contains(LogicalKeyboardKey.keyS);
 
     // しゃがみ処理
-    player!.iscrouching =
+    player.iscrouching =
         (keysPressed.contains(LogicalKeyboardKey.arrowDown) ||
             keysPressed.contains(LogicalKeyboardKey.keyS)) &&
         !player.isDigging;
 
     // 上方向への移動
-    player!.isMovingUp =
+    player.isMovingUp =
         keysPressed.contains(LogicalKeyboardKey.arrowUp) ||
         keysPressed.contains(LogicalKeyboardKey.keyW);
 
     // 掘る（トグル機能）
     if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.keyP) {
-      player!.toggleDigging(true);
+      player.toggleDigging(true);
     } else if (event is KeyUpEvent &&
         event.logicalKey == LogicalKeyboardKey.keyP) {
-      player!.toggleDigging(false);
+      player.toggleDigging(false);
     }
 
     // ジャンプ処理
-    if (keysPressed.contains(LogicalKeyboardKey.space) && player!.isOnGround) {
+    if (keysPressed.contains(LogicalKeyboardKey.space) && player.isOnGround) {
       if (!GameUI.showJumpButton) {
         return KeyEventResult.ignored;
       }
-      player!.isOnGround = false;
-      player!.velocity.y = Player.jumpForce;
+      player.isOnGround = false;
+      player.velocity.y = Player.jumpForce;
     }
 
     // ズーム機能
@@ -798,9 +799,9 @@ class MyGame extends FlameGame
         1.0, // 暗転時の不透明度 (0.0 - 1.0)
         EffectController(duration: 1),
         onComplete: () {
-          player!.updateHp(player!.maxHp);
-          player!.updateStress(0);
-          player!.addMaxStress(-10);
+          player.updateHp(player.maxHp);
+          player.updateStress(0);
+          player.addMaxStress(-10);
           timeService.advanceTime(90);
           // エフェクトが完了したら自身を削除
           _fadeOverlay.children.whereType<OpacityEffect>().forEach((effect) {
@@ -855,9 +856,9 @@ class MyGame extends FlameGame
         1.0, // 暗転時の不透明度 (0.0 - 1.0)
         EffectController(duration: 1),
         onComplete: () {
-          player!.updateHp(player!.maxHp);
-          player!.updateStress(0);
-          player!.addMaxStress(10);
+          player.updateHp(player.maxHp);
+          player.updateStress(0);
+          player.addMaxStress(10);
           timeService.advanceTime(420);
           // エフェクトが完了したら自身を削除
           _fadeOverlay.children.whereType<OpacityEffect>().forEach((effect) {

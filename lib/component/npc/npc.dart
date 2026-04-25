@@ -1,5 +1,6 @@
 ﻿import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
+import 'dart:math';
 import '../../../main.dart';
 import '../common/hitboxes/interact_hitbox.dart';
 import '../../../system/storage/game_runtime_state.dart';
@@ -10,6 +11,9 @@ class Npc extends SpriteComponent with HasGameReference<MyGame> {
   final String giftResponse;
   final String uniqueId; // 永続化用のID
   bool isSatisfied = false;
+
+  late final SpriteComponent _speechBubble;
+  bool _hasMission = true; // とりあえず全てのNPCがミッションを持っていると仮定
 
   Npc({
     required this.name,
@@ -29,6 +33,7 @@ class Npc extends SpriteComponent with HasGameReference<MyGame> {
     // 永続化データの適用
     if (game.gameRuntimeState.satisfiedNpcIds.contains(uniqueId)) {
       isSatisfied = true;
+      _hasMission = false;
     }
 
     // 仮のスプライト（歩行エネミーのフレームなどを流用）
@@ -38,6 +43,16 @@ class Npc extends SpriteComponent with HasGameReference<MyGame> {
       srcSize: Vector2(21, 30),
     );
 
+    // 吹き出しアイコン（簡易版としてSpriteで実装、必要に応じて画像を用意）
+    _speechBubble = SpriteComponent(
+      sprite: await Sprite.load('CITY_MEGA.png', srcPosition: Vector2(220, 18), srcSize: Vector2(16, 16)), // 適当なアイコン
+      position: Vector2(0, -size.y - 10),
+      size: Vector2(16, 16),
+      anchor: Anchor.bottomCenter,
+      priority: 10, // 親（NPC）より前面に
+    );
+    add(_speechBubble);
+
     // インタラクト用のヒットボックスを追加
     add(InteractHitbox(
       position: Vector2(0, 0),
@@ -45,6 +60,18 @@ class Npc extends SpriteComponent with HasGameReference<MyGame> {
       onInteract: _onTalk,
       icon: Icons.chat,
     ));
+  }
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    // 満足したNPCやミッションがない場合は吹き出しを消す
+    _speechBubble.opacity = _hasMission ? 1.0 : 0.0;
+    
+    // 吹き出しをふわふわさせる
+    if (_hasMission) {
+      _speechBubble.position.y = -size.y - 10 + sin(game.timeService.totalPlayTime * 3) * 2;
+    }
   }
 
   void _onTalk() {

@@ -4,6 +4,7 @@ import 'package:flame/effects.dart';
 import '../../../main.dart';
 import '../../item/item.dart';
 import '../../../system/storage/game_runtime_state.dart';
+import '../../../scene/abstract_outdoor_scene.dart';
 
 enum DestructibleType {
   glass,    // 1回で壊れる
@@ -121,7 +122,13 @@ class DestructibleObject extends SpriteComponent with HasGameReference<MyGame>, 
     game.routeManager.onAction(GameRuntimeState.routeEfficiency);
     
     // 平らなステージ3へ移動（再ロード）
-    await game.sceneManager.loadScene('outdoor_3');
+    // すでに屋外にいる場合は現在位置を保持してワープを避ける
+    final bool isAlreadyOutdoor = game.sceneManager.currentScene is AbstractOutdoorScene;
+    if (isAlreadyOutdoor) {
+      await game.sceneManager.loadScene('outdoor_3', initialPlayerPosition: game.player.position.clone());
+    } else {
+      await game.sceneManager.loadScene('outdoor_3');
+    }
 
     game.windowManager.showDialog(
       [

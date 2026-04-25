@@ -240,18 +240,38 @@ class _RoutePuzzleWidgetState extends State<_RoutePuzzleWidget> {
         localPos.dy / canvasSize.height,
       );
       
+      final hitDist = (canvasSize.shortestSide * 0.1).clamp(25.0, 50.0);
+
+      // 「戻る」機能：一つ前のポイントに戻った場合、現在のポイントを解除
+      if (widget.puzzle.path.length > 1) {
+        final lastPoint = widget.puzzle.path.last;
+        // Goalに到達している場合は戻れない（または条件付きで戻れるようにする）
+        if (!lastPoint.isGoal) {
+          final prevPoint = widget.puzzle.path[widget.puzzle.path.length - 2];
+          Offset prevAbsPos = prevPoint.getAbsolutePosition(canvasSize);
+          double distToPrev = (localPos - prevAbsPos).distance;
+          
+          if (distToPrev < hitDist * 0.8) { // 少し判定を厳しめにする
+            lastPoint.isVisited = false;
+            widget.puzzle.currentFuel -= lastPoint.value;
+            widget.puzzle.path.removeLast();
+            widget.game.audioManager.playEffectSound('hits/Hit3.wav', volume: 0.3);
+            return;
+          }
+        }
+      }
+
       for (var point in widget.puzzle.points) {
         if (!point.isVisited) {
           Offset absPos = point.getAbsolutePosition(canvasSize);
           double dist = (localPos - absPos).distance;
           
-          double hitDist = (canvasSize.shortestSide * 0.1).clamp(25.0, 50.0);
-          
           if (dist < hitDist) {
             Offset lastAbsPos = widget.puzzle.path.last.getAbsolutePosition(canvasSize);
             double distFromLast = (lastAbsPos - absPos).distance;
             
-            if (distFromLast < canvasSize.width * 0.7) {
+            // 遠すぎるポイントには飛べない
+            if (distFromLast < canvasSize.width * 0.5) {
               point.isVisited = true;
               widget.puzzle.path.add(point);
               widget.puzzle.currentFuel += point.value;

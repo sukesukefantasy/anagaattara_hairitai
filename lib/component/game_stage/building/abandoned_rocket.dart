@@ -5,6 +5,7 @@ import '../../../main.dart';
 import '../../../UI/windows/message_window.dart';
 import '../../../UI/windows/puzzle_window.dart';
 import '../../../UI/window_manager.dart';
+import '../../../puzzles/fuel_puzzle/fuel_puzzle.dart';
 import '../../../puzzles/bypass_puzzle/bypass_puzzle.dart';
 import '../../../puzzles/route_puzzle/route_puzzle.dart';
 import '../../../puzzles/manifold_puzzle/manifold_puzzle.dart';
@@ -41,23 +42,18 @@ class AbandonedRocket extends SpriteComponent with HasGameReference<MyGame> {
     final state = game.gameRuntimeState;
     final stageId = state.currentOutdoorSceneId ?? 'outdoor_1';
 
-    // 必要パーツのチェック
+    // 必要パーツのチェック (バルブ、点火装置、ノズル)
     final parts = ['バルブ', '点火装置', 'ノズル'];
-    for (int i = 0; i < parts.length; i++) {
-      if (i < solvedPuzzles) continue; // すでにパズルを解いて消費済みのパーツはチェックしない
-      
-      final part = parts[i];
-      if (game.player.itemBag.getItemCount(part) == 0) {
+    
+    // 現在のステップに必要なパーツをチェック
+    if (solvedPuzzles < 3) {
+      final requiredPart = parts[solvedPuzzles];
+      if (game.player.itemBag.getItemCount(requiredPart) == 0) {
         game.windowManager.showDialog(
-          ['ロケットを修理するためのパーツ「$part」が不足しています。'],
+          ['ロケットを修理するためのパーツ「$requiredPart」が不足しています。'],
         );
         return;
       }
-    }
-
-    if (solvedPuzzles >= 3) {
-      _launchRocket();
-      return;
     }
 
     // 各ルートのコレクションアイテム
@@ -83,24 +79,30 @@ class AbandonedRocket extends SpriteComponent with HasGameReference<MyGame> {
       }
       targetItemName = isSubScenario ? routeItems['outdoor_philosophy_sub'] : routeItems['outdoor_philosophy_main'];
     }
-    
-    if (targetItemName != null && game.player.itemBag.getItemCount(targetItemName) == 0) {
-      // Efficiency（効率化）ルートの場合、アイテムを「廃棄（データ化）」することがミッションなので、
-      // バッグになくてもルートが確定していれば打ち上げを許可する（AIロジックの優先）
-      final isOptimized = stageId == 'outdoor_3' && state.activeRouteId == GameRuntimeState.routeEfficiency;
-      
-      if (!isOptimized) {
-        game.windowManager.showDialog(
-          ['ロケットを打ち上げるには、今回の調査対象である「$targetItemName」をトランクに詰め込む必要があります。'],
-        );
-        return;
+
+    // 4番目のパズル（Manifold）の前にコレクションアイテムをチェック
+    if (solvedPuzzles == 3) {
+      if (targetItemName != null && game.player.itemBag.getItemCount(targetItemName) == 0) {
+        final isOptimized = stageId == 'outdoor_3' && state.activeRouteId == GameRuntimeState.routeEfficiency;
+        if (!isOptimized) {
+          game.windowManager.showDialog(
+            ['ロケットを起動するには、今回の調査対象である「$targetItemName」を統合コアにセットする必要があります。'],
+          );
+          return;
+        }
       }
     }
 
+    if (solvedPuzzles >= 4) {
+      _launchRocket();
+      return;
+    }
+
     final puzzles = [
-      BypassPuzzle(),
-      RoutePuzzle(),
-      ManifoldPuzzle(),
+      FuelPuzzle(),      // 1. 燃料補給
+      BypassPuzzle(),    // 2. 電力接続
+      RoutePuzzle(),     // 3. 航路設定
+      ManifoldPuzzle(),  // 4. 意識統合
     ];
 
     final currentPuzzle = puzzles[solvedPuzzles];
@@ -113,18 +115,27 @@ class AbandonedRocket extends SpriteComponent with HasGameReference<MyGame> {
         puzzle: currentPuzzle,
         onComplete: () {
           solvedPuzzles++;
-          debugPrint('パズルクリア！ 現在のクリア数: $solvedPuzzles');
+          debugPrint('ステップ $solvedPuzzles クリア！');
           
           // パーツを１つずつ消費
           if (solvedPuzzles == 1) game.player.itemBag.removeItem('バルブ');
           if (solvedPuzzles == 2) game.player.itemBag.removeItem('点火装置');
-          if (solvedPuzzles == 3) {
-            game.player.itemBag.removeItem('ノズル');
+          if (solvedPuzzles == 3) game.player.itemBag.removeItem('ノズル');
+          
+          if (solvedPuzzles == 4) {
             // 最後にコレクションアイテムも消費
             if (targetItemName != null) {
               game.player.itemBag.removeItem(targetItemName);
             }
             _launchRocket();
+          } else {
+            // 次のパズルを連続して解くか、一旦戻るか
+            game.windowManager.showDialog(
+              ['修理ステップ $solvedPuzzles が完了しました。次の工程に進みます。'],
+              onFinish: () {
+                _showPuzzle(); // 連続して次のパズルを表示
+              }
+            );
           }
         },
       ),

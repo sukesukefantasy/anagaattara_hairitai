@@ -4,8 +4,19 @@
 flutter build apk --release
 flutter install
 
+
 --- pubspec.yaml の更新 ---
 
 flutter pub get
+
+
+--- pubspec.yaml の更新 ---
+
+flutter clean
+flutter pub get
+cd android
+./gradlew clean
+cd ..
+
 
 

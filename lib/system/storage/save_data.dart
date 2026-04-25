@@ -37,10 +37,6 @@ class SaveData {
   Map<String, int> extraActionCounts; // ステージごとのカウント
   List<String> subRouteConfirmedStages; // 30回達成したステージID
 
-  // ディテールシナリオ（隠し要素）
-  List<String> unlockedDetailRouteIds; // 開放済みディテールルート
-  bool isDetailRouteTriggered; // ディテールルート発動中
-
   int dayCount;
   List<String> completedRouteIds;
   String? activeRouteId;
@@ -53,6 +49,7 @@ class SaveData {
   Map<String, Map<String, double>> buildingPlacements; // シーンごとの建物配置 (sceneId -> {buildingType: x})
   Map<String, int> destructibleHealths; // 破壊可能オブジェクトの状態 (uniqueId -> health)
   List<String> satisfiedNpcIds; // 満足したNPCのIDリスト
+  List<String> unlockedAchievements; // 解放済みアチーブメント
 
   SaveData({
     this.currency = 0,
@@ -79,8 +76,6 @@ class SaveData {
     List<String>? triggeredRouteIds,
     Map<String, int>? extraActionCounts,
     List<String>? subRouteConfirmedStages,
-    List<String>? unlockedDetailRouteIds,
-    this.isDetailRouteTriggered = false,
     this.dayCount = 1,
     List<String>? completedRouteIds,
     this.activeRouteId,
@@ -90,16 +85,17 @@ class SaveData {
     Map<String, Map<String, double>>? buildingPlacements,
     Map<String, int>? destructibleHealths,
     List<String>? satisfiedNpcIds,
+    List<String>? unlockedAchievements,
   }) : itemCounts = itemCounts ?? {},
        triggeredRouteIds = triggeredRouteIds ?? [],
        extraActionCounts = extraActionCounts ?? {},
        subRouteConfirmedStages = subRouteConfirmedStages ?? [],
-       unlockedDetailRouteIds = unlockedDetailRouteIds ?? [],
        completedRouteIds = completedRouteIds ?? [],
        dugAreas = dugAreas ?? {},
        buildingPlacements = buildingPlacements ?? {},
        destructibleHealths = destructibleHealths ?? {},
-       satisfiedNpcIds = satisfiedNpcIds ?? [];
+       satisfiedNpcIds = satisfiedNpcIds ?? [],
+       unlockedAchievements = unlockedAchievements ?? [];
 
   // JSONからSaveDataオブジェクトを生成するファクトリコンストラクタ
   factory SaveData.fromJson(Map<String, dynamic> json) {
@@ -130,8 +126,6 @@ class SaveData {
       triggeredRouteIds: (json['triggeredRouteIds'] as List<dynamic>?)?.cast<String>(),
       extraActionCounts: (json['extraActionCounts'] as Map<String, dynamic>?)?.cast<String, int>(),
       subRouteConfirmedStages: (json['subRouteConfirmedStages'] as List<dynamic>?)?.cast<String>(),
-      unlockedDetailRouteIds: (json['unlockedDetailRouteIds'] as List<dynamic>?)?.cast<String>(),
-      isDetailRouteTriggered: json['isDetailRouteTriggered'] as bool? ?? false,
       dayCount: json['dayCount'] as int? ?? 1,
       completedRouteIds: (json['completedRouteIds'] as List<dynamic>?)?.cast<String>(),
       activeRouteId: json['activeRouteId'] as String?,
@@ -145,6 +139,7 @@ class SaveData {
       ),
       destructibleHealths: (json['destructibleHealths'] as Map<String, dynamic>?)?.cast<String, int>(),
       satisfiedNpcIds: (json['satisfiedNpcIds'] as List<dynamic>?)?.cast<String>(),
+      unlockedAchievements: (json['unlockedAchievements'] as List<dynamic>?)?.cast<String>(),
     );
   }
 
@@ -175,8 +170,6 @@ class SaveData {
       'triggeredRouteIds': triggeredRouteIds,
       'extraActionCounts': extraActionCounts,
       'subRouteConfirmedStages': subRouteConfirmedStages,
-      'unlockedDetailRouteIds': unlockedDetailRouteIds,
-      'isDetailRouteTriggered': isDetailRouteTriggered,
       'dayCount': dayCount,
       'completedRouteIds': completedRouteIds,
       'activeRouteId': activeRouteId,
@@ -186,6 +179,7 @@ class SaveData {
       'buildingPlacements': buildingPlacements,
       'destructibleHealths': destructibleHealths,
       'satisfiedNpcIds': satisfiedNpcIds,
+      'unlockedAchievements': unlockedAchievements,
     };
   }
 }

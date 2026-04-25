@@ -1,15 +1,15 @@
-﻿import 'package:flame/components.dart';
-import 'package:flame/collisions.dart';
+﻿import 'package:flame/collisions.dart';
+import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 import 'dart:math';
 import 'dart:ui' show lerpDouble;
 import '../main.dart';
 import '../UI/game_ui.dart';
-import '../UI/window_manager.dart';
-import '../UI/windows/message_window.dart';
 import 'game_stage/building/station.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
 import 'game_stage/building/destructible_object.dart';
+import 'game_stage/building/hideable_object.dart';
+import 'effect/hiding_vignette.dart';
 import 'item/item_bag.dart';
 import 'item/item.dart';
 import '../scene/abstract_outdoor_scene.dart'; // AbstractOutdoorSceneをインポート
@@ -19,6 +19,7 @@ import '../scene/game_scene.dart'; // GameSceneをインポート
 import '../game_manager/audio_manager.dart'; // Add this line
 import '../system/storage/game_runtime_state.dart'; // GameRuntimeStateをインポート
 import 'npc/npc.dart';
+import '../component/effect/hp_low_effect.dart';
 
 enum PlayerState { idle, walking, jumping, digging, falling }
 
@@ -57,7 +58,16 @@ class Player extends SpriteAnimationComponent
   static const double speed = 180.0;
   static const double powerOfPlayer = 1.25;
   static const double gravity = 700.0;
-  static const double jumpForce = -300.0;
+  static const double jumpForce = -250.0; // 少し弱める
+  static const double maxJumpTime = 0.25; // ジャンプ持続時間の最大値
+
+  bool isJumpButtonPressed = false;
+  double _jumpTime = 0.0;
+  bool _isJumping = false;
+
+  bool isHiding = false;
+  HideableObject? hidingSpot;
+  HidingVignette? _hidingVignette;
 
   bool unbeatable = false;
 
@@ -414,12 +424,6 @@ class Player extends SpriteAnimationComponent
       _handleUnderGroundAndGroundCollisionLogic(dt);
       return;
     }
-    
-    // ディテールルート発動中の操作不能
-    if (gameRuntimeState.isDetailRouteTriggered) {
-      velocity.x = 0;
-      return;
-    }
 
     // 背景パララックスの更新
     final double currentPlayerX = position.x;
@@ -483,13 +487,8 @@ class Player extends SpriteAnimationComponent
     if (game.sceneManager.currentScene is AbstractOutdoorScene) {
       final currentScene =
           game.sceneManager.currentScene as AbstractOutdoorScene; // 明示的にキャスト
-      if (currentScene.underGround != null) {
-        // underGroundがnullでないことを確認
-        // 足元が少しでも地下に入ったら inUnderGround とする
-        inUnderGround = (position.y + 20) >= currentScene.underGround.position.y;
-      } else {
-        inUnderGround = false; // underGroundが未初期化の場合、地下にいないと見なす
-      }
+      // 足元が少しでも地下に入ったら inUnderGround とする
+      inUnderGround = (position.y + 20) >= currentScene.underGround.position.y;
     } else {
       inUnderGround = false; // 屋外シーン以外では地下にいない
     }
@@ -645,8 +644,19 @@ class Player extends SpriteAnimationComponent
         }
       } else {
         // 掘削中でない場合、通常の物理を適用
+        
+        // 可変ジャンプの実装
+        if (_isJumping) {
+          if (isJumpButtonPressed && _jumpTime < maxJumpTime) {
+            _jumpTime += dt;
+            velocity.y = jumpForce; // 上向きの力を維持
+          } else {
+            _isJumping = false;
+          }
+        }
+
         // まずは重力による影響を計算
-        if (_applyGravity) {
+        if (_applyGravity && !_isJumping) {
           velocity.y += gravity * dt;
         }
 
@@ -673,6 +683,7 @@ class Player extends SpriteAnimationComponent
         // 垂直速度が0以上かつ下向きの速度がある場合は接地とみなす
         if (newIsOnGround && velocity.y >= 0) {
           velocity.y = 0; // 地面にいる場合は垂直速度を0に固定
+          _isJumping = false; // 着地したのでジャンプ終了
         }
 
         isOnGround = newIsOnGround; // 新しい接地状態を適用
@@ -769,6 +780,77 @@ class Player extends SpriteAnimationComponent
     position.y += velocity.y * dt;
   }
 
+  void jump() {
+    if (isOnGround || isOnLadder) {
+      isOnGround = false;
+      _isJumping = true;
+      _jumpTime = 0.0;
+      velocity.y = jumpForce;
+      isJumpButtonPressed = true;
+      
+      // ジャンプ音
+      requestPlayPlayerSound('swing', volume: 0.5, playbackRate: 1.5);
+    }
+  }
+
+  void stopJump() {
+    isJumpButtonPressed = false;
+    // _isJumping は update 内で _jumpTime >= maxJumpTime になったら false になるが、
+    // ボタンを離した瞬間に上昇を止める（または弱める）ことでキレのある操作感にする
+    if (velocity.y < 0) {
+      velocity.y *= 0.5;
+    }
+    _isJumping = false;
+  }
+
+  void enterHide(HideableObject spot) {
+    if (isHiding) return;
+    isHiding = true;
+    hidingSpot = spot;
+    
+    // プレイヤーを非表示にする（または半透明にする）
+    opacity = 0.0;
+    velocity = Vector2.zero();
+    
+    // ビネットエフェクトを追加
+    _hidingVignette = HidingVignette();
+    game.camera.viewport.add(_hidingVignette!);
+    
+    // 操作不能にする（updateで制御）
+    unbeatable = true;
+    setPhysicsBehavior(
+      applyGravity: false,
+      enableHorizontalPhysics: false,
+      enableVerticalMovement: false,
+    );
+    
+    // UIの更新（隠れるボタンを「出る」アイコンに変える）
+    GameUI.setInteractButtonIcon(Icons.exit_to_app);
+  }
+
+  void exitHide() {
+    if (!isHiding) return;
+    isHiding = false;
+    hidingSpot = null;
+    
+    // プレイヤーを表示に戻す
+    opacity = 1.0;
+    
+    // ビネットエフェクトを削除
+    _hidingVignette?.removeFromParent();
+    _hidingVignette = null;
+    
+    // 物理挙動を元に戻す
+    unbeatable = false;
+    setPhysicsBehavior(
+      applyGravity: true,
+      enableHorizontalPhysics: true,
+      enableVerticalMovement: true,
+    );
+    
+    // UIの更新
+    GameUI.setInteractButtonIcon(Icons.meeting_room);
+  }
   void performMeleeAttack() {
     // 1. 攻撃範囲の計算（ワールド座標系）
     final playerCenter = absolutePosition;
@@ -1254,7 +1336,7 @@ class Player extends SpriteAnimationComponent
     } else if (inUnderGround &&
         isDigging &&
         velocity.y < 0 &&
-        predictedPosition.y < ground!.position.y + ground.groundHeight!) {
+        predictedPosition.y < ground!.position.y + ground.groundHeight) {
       // --- 採掘中は地表に出ない --- //
       final groundBottomY = ground.position.y + ground.groundHeight;
       position.y = groundBottomY;
@@ -1267,7 +1349,7 @@ class Player extends SpriteAnimationComponent
     // HPが300以下の場合の画面全体のエフェクト管理
     if (currentHp <= 350) {
       if (game.camera.viewport.children.whereType<HpLowEffect>().isEmpty) {
-        game.camera.viewport.add(HpLowEffect()); // game インスタンスを渡す
+        game.camera.viewport.add(HpLowEffect()); 
       }
     } else {
       // HPが300より大きい場合、既存のHpLowEffectがあれば削除
@@ -1431,68 +1513,6 @@ class Player extends SpriteAnimationComponent
 
     _solidCollisions.remove(other);
     //debugPrint('Removed ${other.runtimeType} from _solidCollisions. Current solids: ${_solidCollisions.map((c) => c.runtimeType).join(', ')}');
-  }
-}
-
-// HPが低い時のエフェクトコンポーネント
-class HpLowEffect extends Component with HasGameReference<MyGame> {
-  // `OpacityEffect` によって制御される透明度のための内部変数
-  double _currentOpacity = 1.0;
-  double _opacityDirection = -1.0; // 1.0 は増加、-1.0 は減少（最初は不透明度が減少するように）
-  static const double _minOpacity = 0.5; // 最小不透明度
-  static const double _maxOpacity = 1.0; // 最大不透明度
-  static const double _cycleDuration = 2.0; // 1サイクルの時間 (秒)
-  static const double _opacitySpeed =
-      (_maxOpacity - _minOpacity) / (_cycleDuration / 2.0); // 透明度変化の速度
-
-  HpLowEffect() : super(priority: 1051);
-
-  @override
-  Future<void> onLoad() async {
-    // OpacityEffect は手動で透明度を制御するため不要
-  }
-
-  @override
-  void render(Canvas canvas) {
-    // HpLowEffect の現在の透明度 (`_currentOpacity`) を利用して、色をブレンドする
-    final baseColor = const Color.fromARGB(192, 107, 9, 9); // 元の赤い色
-    final blendedColor = baseColor.withOpacity(
-      baseColor.opacity * _currentOpacity,
-    );
-
-    // HPが低い時に画面全体を黒くし、中央を透明にするグラデーション
-    final paint =
-        Paint()
-          ..shader = RadialGradient(
-            center: Alignment.center,
-            radius: 1.0, // 画面全体を覆うように調整
-            colors: [
-              Colors.transparent, // 中央は完全に透明
-              blendedColor, // 外側に向かって点滅する赤みがかった色
-            ],
-            stops: const [0.0, 1.0], // 透明から不透明への変化の割合
-          ).createShader(game.size.toRect());
-    canvas.drawRect(game.size.toRect(), paint);
-  }
-
-  @override
-  void update(double dt) {
-    super.update(dt);
-
-    // 透明度を周期的に変更して点滅効果をシミュレート
-    _currentOpacity += _opacityDirection * _opacitySpeed * dt;
-    if (_currentOpacity > _maxOpacity) {
-      _currentOpacity = _maxOpacity;
-      _opacityDirection = -1.0; // 減少に転じる
-    } else if (_currentOpacity < _minOpacity) {
-      _currentOpacity = _minOpacity;
-      _opacityDirection = 1.0; // 増加に転じる
-    }
-
-    // HPがエフェクト閾値を超えた場合にのみ削除
-    if (game.player != null && game.player!.currentHp > 350) {
-      removeFromParent();
-    }
   }
 }
 

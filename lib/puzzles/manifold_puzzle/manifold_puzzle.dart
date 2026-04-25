@@ -82,7 +82,7 @@ class ManifoldPuzzle extends PuzzleBase {
     final stageId = state.currentOutdoorSceneId ?? 'outdoor_1';
     final routeItems = {
       'outdoor_1': {'name': '石', 'sprite': 'stone.png'},
-      'outdoor_2': {'name': '赤い果実', 'sprite': 'red_fruit.png'},
+      'outdoor_2': {'name': '赤い果実', 'sprite': 'heart.png'},
       'outdoor_3': {'name': '高密度エネルギーキューブ', 'sprite': 'energy_cube.png'},
       'outdoor_4': {'name': '思い出の品々', 'sprite': 'warm_memory.png'},
       'outdoor_philosophy_main': {'name': '掌握された自意識', 'sprite': 'player_icon.png'},

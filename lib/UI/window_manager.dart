@@ -39,6 +39,9 @@ class WindowManager extends ChangeNotifier {
   double get currentWindowWidth => screenWidth;
   double get currentWindowHeight => screenHeight;
 
+  // 画面幅と高さに基づいた統一フォントサイズ
+  double get fontSize => (screenWidth < 600 || screenHeight < 500) ? 12.0 : 16.0;
+
   // コンストラクタで画面サイズを受け取る
   WindowManager({required this.screenWidth, required this.screenHeight});
 
@@ -55,7 +58,10 @@ class WindowManager extends ChangeNotifier {
   /// キュー内の次のメッセージを処理
   void _processNextMessage() {
     if (_messageQueue.isEmpty) {
-      hideWindow();
+      // メッセージ終了時に他のウィンドウ（パズルなど）が開始されていなければ非表示にする
+      if (_currentWindowType == GameWindowType.message) {
+        hideWindow();
+      }
       return;
     }
 
@@ -66,6 +72,7 @@ class WindowManager extends ChangeNotifier {
     _currentWindowContent = MessageWindow(
       key: UniqueKey(), // 状態をリセットするためにKeyを追加
       messages: request.messages,
+      fontSize: fontSize, // WindowManagerのfontSizeを渡す
       options: request.options,
       onSelect: (index) {
         request.onSelect?.call(index);

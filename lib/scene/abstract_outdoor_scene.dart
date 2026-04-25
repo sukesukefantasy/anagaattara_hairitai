@@ -27,6 +27,7 @@ import '../component/game_stage/building/destructible_object.dart';
 import '../component/common/hitboxes/interact_hitbox.dart';
 import '../component/item/item.dart';
 import '../system/storage/game_runtime_state.dart';
+import '../game_manager/route_manager.dart';
 import 'dart:math';
 
 abstract class AbstractOutdoorScene extends GameScene {
@@ -90,12 +91,15 @@ abstract class AbstractOutdoorScene extends GameScene {
   Future<void> initializeScene(dynamic data) async {
     debugPrint('AbstractOutdoorScene: initializeScene started.');
     final state = game.gameRuntimeState;
+    final bool isEfficiencyFlattened = sceneId == 'outdoor_3' && state.activeRouteId == GameRuntimeState.routeEfficiency;
+
     debugPrint(
       'AbstractOutdoorScene initializeScene start. game.initialGameCanvasSize.y: ${game.initialGameCanvasSize.y}',
     );
 
     // 背景の初期化
-    final outdoorBackgrounds = backgroundDataMap[sceneId];
+    // 効率化ルート確定時は背景（街並み）を表示しない
+    final outdoorBackgrounds = isEfficiencyFlattened ? null : backgroundDataMap[sceneId];
     if (outdoorBackgrounds != null) {
       for (final bgData in outdoorBackgrounds) {
         final background = GameStageComponent(data: bgData, loop: true)
@@ -125,16 +129,7 @@ abstract class AbstractOutdoorScene extends GameScene {
     debugPrint('AbstractOutdoorScene: Building definitions loaded.');
 
     // ステージとルートの対応マップ
-    const stageToRoute = {
-      'outdoor_1': GameRuntimeState.routeNormal,
-      'outdoor_2': GameRuntimeState.routeViolence,
-      'outdoor_3': GameRuntimeState.routeEfficiency,
-      'outdoor_4': GameRuntimeState.routeEmpathy,
-      'outdoor_philosophy': GameRuntimeState.routePhilosophy,
-      'outdoor_despair': GameRuntimeState.routeDespair,
-      'outdoor_true': GameRuntimeState.routeTrue,
-    };
-    final currentRouteId = stageToRoute[sceneId];
+    final currentRouteId = RouteManager.stageToRoute[sceneId];
     final bool isCleared = currentRouteId != null && state.completedRouteIds.contains(currentRouteId);
 
     // Stationの初期化
@@ -152,7 +147,11 @@ abstract class AbstractOutdoorScene extends GameScene {
       }
 
       // クリア済みのステージ、かつ despair/true でない場合に駅を表示
-      bool shouldAddStation = isCleared && sceneId != 'outdoor_despair' && sceneId != 'outdoor_true';
+      // 効率化ルート確定時は駅も配置しない
+      bool shouldAddStation = isCleared && 
+          sceneId != 'outdoor_despair' && 
+          sceneId != 'outdoor_true' &&
+          !isEfficiencyFlattened;
       
       // 特殊ケース：全ルートクリア後などは駅を置いても良いかもしれないが、現状は上記に従う
       
@@ -249,8 +248,9 @@ abstract class AbstractOutdoorScene extends GameScene {
       }
     }
 
-    final buildingTypesInScene =
-        currentSceneBuildingDefinitions.keys
+    final buildingTypesInScene = isEfficiencyFlattened 
+        ? [] // 効率化ルート確定時は建物を配置しない（平坦な世界）
+        : currentSceneBuildingDefinitions.keys
             .where((key) => key != 'station')
             .toList();
     
@@ -336,8 +336,8 @@ abstract class AbstractOutdoorScene extends GameScene {
     debugPrint('AbstractOutdoorScene: All buildings added.');
 
     // 敵の初期化
-    int walkingEnemyCount = 10;
-    int carEnemyCount = 1;
+    int walkingEnemyCount = isEfficiencyFlattened ? 0 : 10;
+    int carEnemyCount = isEfficiencyFlattened ? 0 : 1;
 
     if (sceneId == 'outdoor_2') {
       walkingEnemyCount = 20; // Violenceステージは敵を増やす
@@ -406,9 +406,20 @@ abstract class AbstractOutdoorScene extends GameScene {
       }
     } else {
       // 通常のロード時
-      final Vector2 targetPos = initialPlayerPosition ??
-          Vector2(-50, game.initialGameCanvasSize.y - game.player.size.y / 2);
-      game.player.teleportTo(targetPos); // 背景パララックスのリセット
+      // Stage 3 効率ルート確定時の「平坦化」リロード時はワープを避ける
+      final bool isEfficiencyFlattening = sceneId == 'outdoor_3' && 
+          state.activeRouteId == GameRuntimeState.routeEfficiency &&
+          initialPlayerPosition != null;
+
+      if (isEfficiencyFlattening) {
+        debugPrint('AbstractOutdoorScene: Efficiency flattening detected. Keeping current position.');
+        // positionのセットのみ行い、カメラリセットを伴うteleportToは避ける
+        game.player.position.setFrom(initialPlayerPosition!);
+      } else {
+        final Vector2 targetPos = initialPlayerPosition ??
+            Vector2(-50, game.initialGameCanvasSize.y - game.player.size.y / 2);
+        game.player.teleportTo(targetPos); // 背景パララックスのリセット
+      }
     }
     
     game.player.priority = 50;
@@ -431,8 +442,8 @@ abstract class AbstractOutdoorScene extends GameScene {
 
   void _spawnDestructibles() async {
     final state = game.gameRuntimeState;
-    // Efficiencyルートが既に確定している場合は、破壊可能オブジェクトを配置しない（平坦な世界）
-    if (state.currentOutdoorSceneId == 'outdoor_3' && state.activeRouteId == GameRuntimeState.routeEfficiency) {
+    // 効率化ルートが既に確定している場合は、破壊可能オブジェクトを配置しない（平坦な世界）
+    if (sceneId == 'outdoor_3' && state.activeRouteId == GameRuntimeState.routeEfficiency) {
       return;
     }
 
@@ -454,6 +465,12 @@ abstract class AbstractOutdoorScene extends GameScene {
   }
 
   void _spawnNpc() {
+    final state = game.gameRuntimeState;
+    // 効率化ルートが既に確定している場合は、NPCを配置しない（平坦な世界）
+    if (sceneId == 'outdoor_3' && state.activeRouteId == GameRuntimeState.routeEfficiency) {
+      return;
+    }
+
     if (sceneId == 'outdoor_4') {
       // ステージ4では3体のNPCを配置
       for (int i = 0; i < 3; i++) {

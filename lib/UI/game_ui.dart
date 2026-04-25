@@ -10,7 +10,7 @@ import '../component/item/item.dart';
 
 class GameUI extends StatefulWidget {
   final Size screenSize;
-  final VoidCallback onPressedJumpButton;
+  final Function(bool) onPressedJumpButton;
   final MyGame game;
   final TimeService timeService;
   final bool isShowJumpButton;
@@ -180,10 +180,7 @@ class _GameUIState extends State<GameUI> {
   }
 
   Future<void> _initializePlayer() async {
-    // playerの初期化を待つ
-    while (!mounted || widget.game.player == null) {
-      await Future.delayed(const Duration(milliseconds: 100));
-    }
+    // playerの初期化を待つ (MyGameのplayerはlate finalなので、初期化完了を待つロジックが必要な場合は別のフラグやFutureを検討)
     if (mounted) {
       setState(() => _isPlayerInitialized = true);
       // ItemBagの変更を監視
@@ -221,8 +218,16 @@ class _GameUIState extends State<GameUI> {
     }
   }
 
+  double _getFontSize(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    // 横画面のスマホ（高さが小さく幅がそれなりにある）も考慮
+    final bool isMobile = size.width < 600 || size.height < 500;
+    return isMobile ? 12.0 : 16.0;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final fontSize = _getFontSize(context);
     return Stack(
       children: [
         // 透明な背景を追加
@@ -235,39 +240,92 @@ class _GameUIState extends State<GameUI> {
           ),
         ),
         if (_isPlayerInitialized) ...[
-          _buildStatusDisplay(),
+          _buildStatusDisplay(fontSize),
           _buildDirectionalButtons(),
-          _buildActionButtons(), // アクションボタン
-          _buildTopRightButtons(), // ポーズボタンとアイテムバッグボタンをグループ化
+          _buildActionButtons(fontSize), // アクションボタン
+          _buildTopRightButtons(fontSize), // ポーズボタンとアイテムバッグボタンをグループ化
+          _buildAchievementNotification(fontSize), // アチーブメント通知
         ],
       ],
     );
   }
 
-  Widget _buildStatusDisplay() {
-    final isMobile = widget.screenSize.width < 600;
+  Widget _buildAchievementNotification(double fontSize) {
     return Positioned(
-      top: widget.screenSize.height * 0.02,
-      left: widget.screenSize.width * 0.02,
-      width: widget.screenSize.width * (isMobile ? 0.5 : 0.3), // スマホなら50%、PCなら30%
-      height: widget.screenSize.height * (isMobile ? 0.5 : 0.4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(flex: 4, child: _buildHpBarContent()),
-          Expanded(
-            flex: 2,
-            child: _buildDigitalClockContent(),
-          ),
-          Expanded(flex: 2, child: _buildPointsContent()),
-          Expanded(flex: 1, child: _buildScoresContent()),
-          Expanded(flex: 3, child: _buildMissionContent()), // ミッション表示のスペースを増やす
-        ],
+      top: widget.screenSize.height * 0.1,
+      left: 0,
+      right: 0,
+      child: Center(
+        child: AnimatedBuilder(
+          animation: widget.game.gameRuntimeState,
+          builder: (context, child) {
+            final title = widget.game.gameRuntimeState.lastUnlockedAchievement;
+            if (title == null) return const SizedBox.shrink();
+            
+            return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.8),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Colors.amber, width: 2),
+                boxShadow: [
+                  BoxShadow(color: Colors.amberAccent.withOpacity(0.5), blurRadius: 10)
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.emoji_events, color: Colors.amber),
+                  const SizedBox(width: 10),
+                  Text(
+                    'Achievement Unlocked: $title',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: fontSize,
+                      fontWeight: FontWeight.bold,
+                      fontFamily: 'TRS-Million-Rg',
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
       ),
     );
   }
 
-  Widget _buildMissionContent() {
+  Widget _buildStatusDisplay(double fontSize) {
+    final bool isMobile = widget.screenSize.width < 600 || widget.screenSize.height < 500;
+    final double effectiveFontSize = isMobile ? 12.0 : 16.0;
+
+    return Positioned(
+      top: widget.screenSize.height * 0.02,
+      left: widget.screenSize.width * 0.02,
+      width: widget.screenSize.width * (isMobile ? 0.45 : 0.3), // 幅をコンパクトに
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: widget.screenSize.height * 0.45,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildHpBarContent(effectiveFontSize),
+            const SizedBox(height: 4),
+            _buildDigitalClockContent(effectiveFontSize),
+            const SizedBox(height: 4),
+            _buildPointsContent(effectiveFontSize),
+            const SizedBox(height: 4),
+            _buildMissionContent(effectiveFontSize),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMissionContent(double fontSize) {
+    final isMobile = widget.screenSize.width < 600 || widget.screenSize.height < 500;
     return AnimatedBuilder(
       animation: Listenable.merge([widget.game.gameRuntimeState, GameUI.missionGlitchNotifier]),
       builder: (context, child) {
@@ -283,14 +341,18 @@ class _GameUIState extends State<GameUI> {
         final double offsetX = glitchValue > 0 ? (glitchValue % 2 == 0 ? 2 : -2) : 0;
         final double offsetY = glitchValue > 0 ? (glitchValue % 3 == 0 ? 1 : -1) : 0;
 
+        // 日本語の改行を助けるためにゼロ幅スペースを挿入
+        final String rawText = glitchValue > 5 ? "ERROR: UNKNOWN_ACTION" : mission;
+        final String missionText = rawText.split('').join('\u{200B}');
+        
         return Transform.translate(
           offset: Offset(offsetX, offsetY),
           child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(4),
+            constraints: BoxConstraints(maxWidth: widget.screenSize.width * (isMobile ? 0.6 : 0.4)), // 幅を制限して改行を促す
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             decoration: BoxDecoration(
               color: isConfirmed 
-                  ? Colors.purple.withOpacity(0.8) // 30回達成で色変化
+                  ? Colors.purple.withOpacity(0.8)
                   : Colors.orangeAccent.withOpacity(0.7),
               borderRadius: BorderRadius.circular(5),
               border: Border.all(
@@ -301,14 +363,41 @@ class _GameUIState extends State<GameUI> {
                 BoxShadow(color: Colors.purpleAccent.withOpacity(0.5), blurRadius: 4, spreadRadius: 1)
               ] : null,
             ),
-            child: Text(
-              glitchValue > 5 ? "ERROR: UNKNOWN_ACTION" : mission,
-              style: TextStyle(
-                fontSize: (widget.screenSize.width * 0.015).clamp(8.0, 14.0),
-                fontWeight: FontWeight.bold,
-                color: isConfirmed ? Colors.white : Colors.black,
-                fontFamily: isConfirmed ? 'TRS-Million-Rg' : null,
-              ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min, // コンテナが幅を使い切らないように
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                // プレイヤーの顔アイコン
+                Container(
+                  width: fontSize * 2.5, // アイコンを大きく
+                  height: fontSize * 2.5,
+                  margin: const EdgeInsets.only(right: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.5),
+                    shape: BoxShape.circle,
+                  ),
+                  child: ClipOval(
+                    child: Image.asset(
+                      'assets/images/player_icon.png',
+                      errorBuilder: (context, error, stackTrace) => 
+                        Icon(Icons.face, size: fontSize * 1.8, color: Colors.black54),
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    missionText,
+                    style: TextStyle(
+                      fontSize: fontSize,
+                      fontWeight: FontWeight.bold,
+                      color: isConfirmed ? Colors.white : Colors.black,
+                      fontFamily: isConfirmed ? 'TRS-Million-Rg' : null,
+                      height: 1.1,
+                    ),
+                    softWrap: true,
+                  ),
+                ),
+              ],
             ),
           ),
         );
@@ -316,85 +405,157 @@ class _GameUIState extends State<GameUI> {
     );
   }
 
-  Widget _buildScoresContent() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return const SizedBox.shrink(); // スコア表示を廃止
-      },
-    );
-  }
+
 
   Widget _buildDirectionalButtons() {
+    final dpadSize = widget.screenSize.width * 0.25;
+    final buttonSize = widget.screenSize.width * 0.07;
+    final iconSize = widget.screenSize.width * 0.05;
+
     return Positioned(
-      left: widget.screenSize.width * 0.05, // 画面幅の5%
-      bottom: widget.screenSize.height * 0.05, // 画面高さの5%
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          DirectionButton(
-            icon: Icons.arrow_circle_up_outlined,
-            onPressed: (isPressed) {
-              if (widget.game.player != null) {
-                GameUI._upButtonPressedNotifier.value = isPressed;
-              }
-            },
-            stateNotifier: GameUI._upButtonStateNotifier,
-            buttonSize: widget.screenSize.width * 0.07, // 画面幅の7%
-            iconSize: widget.screenSize.width * 0.05, // 画面幅の5%
+      left: widget.screenSize.width * 0.05,
+      bottom: widget.screenSize.height * 0.05,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: (details) => _handleDpadTouch(details.localPosition, dpadSize),
+        onTapUp: (_) => _resetDpadStates(), // タップを離した時にリセット
+        onTapCancel: () => _resetDpadStates(), // タップがキャンセルされた時にリセット
+        onPanStart: (details) => _handleDpadTouch(details.localPosition, dpadSize),
+        onPanUpdate: (details) => _handleDpadTouch(details.localPosition, dpadSize),
+        onPanEnd: (_) => _resetDpadStates(),
+        child: Container(
+          width: dpadSize,
+          height: dpadSize,
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.1),
+            shape: BoxShape.circle,
           ),
-          Row(
-            mainAxisSize: MainAxisSize.min,
+          child: Stack(
+            alignment: Alignment.center,
             children: [
-              DirectionButton(
-                icon: Icons.arrow_circle_left_outlined,
-                onPressed: (isPressed) {
-                  if (widget.game.player != null) {
-                    GameUI._leftButtonPressedNotifier.value = isPressed;
-                  }
-                },
-                stateNotifier: GameUI._leftButtonStateNotifier,
-                buttonSize: widget.screenSize.width * 0.07, // 画面幅の7%
-                iconSize: widget.screenSize.width * 0.05, // 画面幅の5%
+              // Up
+              Positioned(
+                top: 0,
+                child: DirectionButton(
+                  icon: Icons.arrow_circle_up_outlined,
+                  onPressed: (_) {}, // GestureDetectorで処理するため空
+                  stateNotifier: GameUI._upButtonStateNotifier,
+                  buttonSize: buttonSize,
+                  iconSize: iconSize,
+                ),
               ),
-              SizedBox(width: widget.screenSize.width * 0.07), // 画面幅の7%
-              DirectionButton(
-                icon: Icons.arrow_circle_right_outlined,
-                onPressed: (isPressed) {
-                  if (widget.game.player != null) {
-                    GameUI._rightButtonPressedNotifier.value = isPressed;
-                  }
-                },
-                stateNotifier: GameUI._rightButtonStateNotifier,
-                buttonSize: widget.screenSize.width * 0.07, // 画面幅の7%
-                iconSize: widget.screenSize.width * 0.05, // 画面幅の5%
+              // Down
+              Positioned(
+                bottom: 0,
+                child: DirectionButton(
+                  icon: Icons.arrow_circle_down_outlined,
+                  onPressed: (_) {},
+                  stateNotifier: GameUI._downButtonStateNotifier,
+                  buttonSize: buttonSize,
+                  iconSize: iconSize,
+                ),
+              ),
+              // Left
+              Positioned(
+                left: 0,
+                child: DirectionButton(
+                  icon: Icons.arrow_circle_left_outlined,
+                  onPressed: (_) {},
+                  stateNotifier: GameUI._leftButtonStateNotifier,
+                  buttonSize: buttonSize,
+                  iconSize: iconSize,
+                ),
+              ),
+              // Right
+              Positioned(
+                right: 0,
+                child: DirectionButton(
+                  icon: Icons.arrow_circle_right_outlined,
+                  onPressed: (_) {},
+                  stateNotifier: GameUI._rightButtonStateNotifier,
+                  buttonSize: buttonSize,
+                  iconSize: iconSize,
+                ),
               ),
             ],
           ),
-          DirectionButton(
-            icon: Icons.arrow_circle_down_outlined,
-            onPressed: (isPressed) {
-              if (widget.game.player != null) {
-                GameUI._downButtonPressedNotifier.value = isPressed;
-              }
-            },
-            stateNotifier: GameUI._downButtonStateNotifier,
-            buttonSize: widget.screenSize.width * 0.07, // 画面幅の7%
-            iconSize: widget.screenSize.width * 0.05, // 画面幅の5%
-          ),
-        ],
+        ),
       ),
     );
   }
 
-  Widget _buildActionButtons() {
+  void _handleDpadTouch(Offset localPosition, double dpadSize) {
+    final center = Offset(dpadSize / 2, dpadSize / 2);
+    final delta = localPosition - center;
+    final distance = delta.distance;
+
+    // デッドゾーンと最大半径のチェック
+    if (distance < 10) {
+      _resetDpadStates();
+      return;
+    }
+
+    _resetDpadStates();
+
+    // 角度に基づいてボタンを判定 (4方向)
+    final angle = delta.direction; // -pi to pi
+
+    const double pi = 3.1415926535897932;
+    const double pi4 = pi / 4;
+
+    if (angle >= -pi4 * 3 && angle < -pi4) {
+      // Up
+      GameUI._upButtonPressedNotifier.value = true;
+      GameUI._upButtonStateNotifier.value = DirectionButtonState.pressed;
+    } else if (angle >= pi4 && angle < pi4 * 3) {
+      // Down
+      GameUI._downButtonPressedNotifier.value = true;
+      GameUI._downButtonStateNotifier.value = DirectionButtonState.pressed;
+    } else if (angle >= pi4 * 3 || angle < -pi4 * 3) {
+      // Left
+      GameUI._leftButtonPressedNotifier.value = true;
+      GameUI._leftButtonStateNotifier.value = DirectionButtonState.pressed;
+    } else if (angle >= -pi4 && angle < pi4) {
+      // Right
+      GameUI._rightButtonPressedNotifier.value = true;
+      GameUI._rightButtonStateNotifier.value = DirectionButtonState.pressed;
+    }
+  }
+
+  void _resetDpadStates() {
+    GameUI._upButtonPressedNotifier.value = false;
+    GameUI._downButtonPressedNotifier.value = false;
+    GameUI._leftButtonPressedNotifier.value = false;
+    GameUI._rightButtonPressedNotifier.value = false;
+
+    if (GameUI._upButtonStateNotifier.value == DirectionButtonState.pressed) {
+      GameUI._upButtonStateNotifier.value = DirectionButtonState.normal;
+    }
+    if (GameUI._downButtonStateNotifier.value == DirectionButtonState.pressed) {
+      GameUI._downButtonStateNotifier.value = DirectionButtonState.normal;
+    }
+    if (GameUI._leftButtonStateNotifier.value == DirectionButtonState.pressed) {
+      GameUI._leftButtonStateNotifier.value = DirectionButtonState.normal;
+    }
+    if (GameUI._rightButtonStateNotifier.value == DirectionButtonState.pressed) {
+      GameUI._rightButtonStateNotifier.value = DirectionButtonState.normal;
+    }
+    // _updateUpButtonStateなどはPlayer側で定期的に呼ばれるか、listenerで同期される
+    // ここでは単純に押下状態を解除する
+  }
+
+  Widget _buildActionButtons(double fontSize) {
+    final buttonSize = widget.screenSize.width * 0.07;
+    final iconSize = widget.screenSize.width * 0.05;
+
     return Positioned(
-      right: widget.screenSize.width * 0.05, // 画面幅の5%
-      bottom: widget.screenSize.height * 0.1, // 画面高さの10%
+      right: widget.screenSize.width * 0.05,
+      bottom: widget.screenSize.height * 0.1,
       child: ValueListenableBuilder<bool>(
-        valueListenable: widget.game.player!.isCarryingItemNotifier,
+        valueListenable: widget.game.player.isCarryingItemNotifier,
         builder: (context, isCarrying, child) {
           if (isCarrying) {
-            return _buildCarryingActionButtons(); // 運搬モードのボタンを表示
+            return _buildCarryingActionButtons(buttonSize, iconSize);
           } else {
             return Row(
               mainAxisSize: MainAxisSize.min,
@@ -423,8 +584,8 @@ class _GameUIState extends State<GameUI> {
                               },
                               stateNotifier:
                                   GameUI._equippedItemUseButtonStateNotifier,
-                              buttonSize: widget.screenSize.width * 0.07,
-                              iconSize: widget.screenSize.width * 0.05,
+                              buttonSize: buttonSize,
+                              iconSize: iconSize,
                             ),
                             SizedBox(width: widget.screenSize.width * 0.03),
                           ],
@@ -437,37 +598,37 @@ class _GameUIState extends State<GameUI> {
                 ActionButton(
                   icon: Icons.keyboard_double_arrow_down_sharp,
                   onTogglePressed: (isPressed) {
-                    if (widget.game.player != null) {
-                      widget.game.player.toggleDigging(isPressed);
-                    }
+                    widget.game.player.toggleDigging(isPressed);
                   },
                   stateNotifier: GameUI._digButtonStateNotifier,
-                  buttonSize: widget.screenSize.width * 0.07, // 画面幅の7%
-                  iconSize: widget.screenSize.width * 0.05, // 画面幅の5%
+                  buttonSize: buttonSize,
+                  iconSize: iconSize,
                 ),
-                SizedBox(width: widget.screenSize.width * 0.03), // 画面幅の3%
+                SizedBox(width: widget.screenSize.width * 0.03),
                 // Interact Button
                 ValueListenableBuilder<(VoidCallback, IconData)?>(
                   valueListenable: GameUI.interactActionNotifier,
                   builder: (context, interaction, child) {
                     return ActionButton(
-                      icon: interaction?.$2, // interactActionNotifierからアイコンを取得
+                      icon: interaction?.$2,
                       onPressed: interaction?.$1,
                       stateNotifier: GameUI._interactButtonStateNotifier,
                       iconNotifier: GameUI._interactButtonIconNotifier,
-                      buttonSize: widget.screenSize.width * 0.07, // 画面幅の7%
-                      iconSize: widget.screenSize.width * 0.05, // 画面幅の5%
+                      buttonSize: buttonSize,
+                      iconSize: iconSize,
                     );
                   },
                 ),
-                SizedBox(width: widget.screenSize.width * 0.03), // 画面幅の3%
+                SizedBox(width: widget.screenSize.width * 0.03),
                 // Jump Button
                 ActionButton(
                   icon: Icons.keyboard_double_arrow_up,
-                  onPressed: widget.onPressedJumpButton,
+                  onTogglePressed: (isPressed) {
+                    widget.onPressedJumpButton(isPressed);
+                  },
                   stateNotifier: GameUI._jumpButtonStateNotifier,
-                  buttonSize: widget.screenSize.width * 0.07, // 画面幅の7%
-                  iconSize: widget.screenSize.width * 0.05, // 画面幅の5%
+                  buttonSize: buttonSize,
+                  iconSize: iconSize,
                 ),
               ],
             );
@@ -478,7 +639,7 @@ class _GameUIState extends State<GameUI> {
   }
 
   // 運搬モード時のアクションボタン
-  Widget _buildCarryingActionButtons() {
+  Widget _buildCarryingActionButtons(double buttonSize, double iconSize) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -486,68 +647,59 @@ class _GameUIState extends State<GameUI> {
         ActionButton(
           icon: Icons.backpack_outlined,
           onPressed: () {
-            debugPrint('GameUI: 収納ボタンが押されました。');
-            if (widget.game.player!.carriedItem != null) {
-              final carriedItem = widget.game.player!.carriedItem!;
-              debugPrint('GameUI: 収納するアイテム: ${carriedItem.name}');
-              widget.game.player!.itemBag.addItem(
-                carriedItem,
-              ); // アイテムをインベントリに戻す
-              widget.game.player!.stopCarrying(); // 運搬を終了
-            } else {
-              debugPrint('GameUI: 運搬中のアイテムがありません。');
+            if (widget.game.player.carriedItem != null) {
+              final carriedItem = widget.game.player.carriedItem!;
+              widget.game.player.itemBag.addItem(carriedItem);
+              widget.game.player.stopCarrying();
             }
-            debugPrint('GameUI: 収納ボタン処理終了。');
           },
           stateNotifier: GameUI._storeButtonStateNotifier,
-          buttonSize: widget.screenSize.width * 0.07, // 画面幅の7%
-          iconSize: widget.screenSize.width * 0.05, // 画面幅の5%
+          buttonSize: buttonSize,
+          iconSize: iconSize,
         ),
-        SizedBox(width: widget.screenSize.width * 0.06), // 画面幅の6%
+        SizedBox(width: widget.screenSize.width * 0.06),
         // 配置ボタン
         ActionButton(
-          icon:
-              widget.game.player!.iscrouching
+          icon: widget.game.player.iscrouching
                   ? Icons.place_outlined
                   : Icons.arrow_forward_outlined,
           onPressed: () {
-            if (widget.game.player!.carriedItem != null) {
-              final carriedItem = widget.game.player!.carriedItem!;
-              final player = widget.game.player!;
+            if (widget.game.player.carriedItem != null) {
+              final carriedItem = widget.game.player.carriedItem!;
+              final player = widget.game.player;
               player.velocity != Vector2.zero()
                   ? player.throwWorldObject(carriedItem)
                   : player.placeWorldObject(carriedItem);
             }
-            debugPrint('配置ボタンが押されました');
           },
           stateNotifier: GameUI._placeButtonStateNotifier,
-          buttonSize: widget.screenSize.width * 0.07, // 画面幅の7%
-          iconSize: widget.screenSize.width * 0.05, // 画面幅の5%
+          buttonSize: buttonSize,
+          iconSize: iconSize,
         ),
-        SizedBox(width: widget.screenSize.width * 0.03), // 画面幅の3%
+        SizedBox(width: widget.screenSize.width * 0.03),
         // Jump Button
         ActionButton(
           icon: Icons.keyboard_double_arrow_up,
-          onPressed: widget.onPressedJumpButton,
+          onTogglePressed: (isPressed) {
+            widget.onPressedJumpButton(isPressed);
+          },
           stateNotifier: GameUI._jumpButtonStateNotifier,
-          buttonSize: widget.screenSize.width * 0.07, // 画面幅の7%
-          iconSize: widget.screenSize.width * 0.05, // 画面幅の5%
+          buttonSize: buttonSize,
+          iconSize: iconSize,
         ),
       ],
     );
   }
 
-  Widget _buildHpBarContent() {
-    if (widget.game.player == null) {
-      return Container(); // playerがnullの場合は空のコンテナを返す
-    }
+  Widget _buildHpBarContent(double fontSize) {
     return Container(
+      height: 60, // 高さを固定してレイアウトを安定させる
       padding: EdgeInsets.fromLTRB(
         widget.screenSize.width * 0.01,
         widget.screenSize.height * 0.01,
         widget.screenSize.width * 0.01,
         widget.screenSize.height * 0.005,
-      ), // 画面幅の1%
+      ),
       decoration: BoxDecoration(
         color: Colors.grey[300],
         borderRadius: BorderRadius.circular(5),
@@ -560,16 +712,15 @@ class _GameUIState extends State<GameUI> {
             children: [
               // HPゲージ
               Expanded(
-                // Expandedを追加
                 flex: 1,
                 child: SizedBox(
-                  height: widget.screenSize.height * 0.01, // HPゲージの高さを調整
+                  height: widget.screenSize.height * 0.01,
                   child: ValueListenableBuilder<double>(
-                    valueListenable: widget.game.player!.hpNotifier,
+                    valueListenable: widget.game.player.hpNotifier,
                     builder: (context, currentHp, child) {
                       return FractionallySizedBox(
                         alignment: Alignment.centerLeft,
-                        widthFactor: currentHp / widget.game.player!.maxHp,
+                        widthFactor: currentHp / widget.game.player.maxHp,
                         child: Container(
                           decoration: BoxDecoration(
                             color: Colors.red,
@@ -583,17 +734,16 @@ class _GameUIState extends State<GameUI> {
               ),
               // ストレスゲージ
               Expanded(
-                // Expandedを追加
                 flex: 1,
                 child: SizedBox(
-                  height: widget.screenSize.height * 0.01, // ストレスゲージの高さを調整
+                  height: widget.screenSize.height * 0.01,
                   child: ValueListenableBuilder<double>(
-                    valueListenable: widget.game.player!.stressNotifier,
+                    valueListenable: widget.game.player.stressNotifier,
                     builder: (context, currentStress, child) {
                       return FractionallySizedBox(
                         alignment: Alignment.centerLeft,
                         widthFactor:
-                            currentStress / widget.game.player!.maxStress,
+                            currentStress / widget.game.player.maxStress,
                         child: Container(
                           decoration: BoxDecoration(
                             color: const Color.fromARGB(122, 61, 32, 230),
@@ -607,17 +757,11 @@ class _GameUIState extends State<GameUI> {
               ),
               // HPとStressのテキスト
               Expanded(
-                // Expandedを追加
-                flex: 5, // テキスト部分により多くのスペースを与える
+                flex: 5,
                 child: Row(
                   children: [
                     Container(
-                      padding: EdgeInsets.fromLTRB(
-                        constraints.maxWidth * 0.03, // 親の幅の3%
-                        0,
-                        constraints.maxWidth * 0.03, // 親の幅の3%
-                        0,
-                      ),
+                      padding: EdgeInsets.symmetric(horizontal: constraints.maxWidth * 0.03),
                       decoration: BoxDecoration(
                         color: Colors.red,
                         borderRadius: BorderRadius.circular(20),
@@ -625,7 +769,7 @@ class _GameUIState extends State<GameUI> {
                       child: Text(
                         'Health',
                         style: TextStyle(
-                          fontSize: (widget.screenSize.width * 0.012).clamp(8.0, 16.0),
+                          fontSize: fontSize,
                           fontWeight: FontWeight.bold,
                           fontFamily: 'TRS-Million-Rg',
                           letterSpacing: 2,
@@ -634,19 +778,14 @@ class _GameUIState extends State<GameUI> {
                       ),
                     ),
                     Container(
-                      padding: EdgeInsets.fromLTRB(
-                        constraints.maxWidth * 0.03, // 親の幅の3%
-                        0,
-                        constraints.maxWidth * 0.03, // 親の幅の3%
-                        0,
-                      ),
+                      padding: EdgeInsets.symmetric(horizontal: constraints.maxWidth * 0.03),
                       child: ValueListenableBuilder<double>(
-                        valueListenable: widget.game.player!.hpNotifier,
+                        valueListenable: widget.game.player.hpNotifier,
                         builder: (context, currentHp, child) {
                           return Text(
                             '${currentHp.toInt()}',
                             style: TextStyle(
-                              fontSize: (widget.screenSize.width * 0.012).clamp(8.0, 16.0),
+                              fontSize: fontSize,
                               fontWeight: FontWeight.bold,
                               fontFamily: 'TRS-Million-Rg',
                               letterSpacing: 2,
@@ -660,17 +799,11 @@ class _GameUIState extends State<GameUI> {
                 ),
               ),
               Expanded(
-                // Expandedを追加
-                flex: 5, // テキスト部分により多くのスペースを与える
+                flex: 5,
                 child: Row(
                   children: [
                     Container(
-                      padding: EdgeInsets.fromLTRB(
-                        constraints.maxWidth * 0.03, // 親の幅の3%
-                        0,
-                        constraints.maxWidth * 0.03, // 親の幅の3%
-                        0,
-                      ),
+                      padding: EdgeInsets.symmetric(horizontal: constraints.maxWidth * 0.03),
                       decoration: BoxDecoration(
                         color: const Color.fromARGB(122, 61, 32, 230),
                         borderRadius: BorderRadius.circular(20),
@@ -678,7 +811,7 @@ class _GameUIState extends State<GameUI> {
                       child: Text(
                         'Stress',
                         style: TextStyle(
-                          fontSize: (widget.screenSize.width * 0.012).clamp(8.0, 16.0),
+                          fontSize: fontSize,
                           fontWeight: FontWeight.bold,
                           fontFamily: 'TRS-Million-Rg',
                           letterSpacing: 2,
@@ -687,19 +820,14 @@ class _GameUIState extends State<GameUI> {
                       ),
                     ),
                     Container(
-                      padding: EdgeInsets.fromLTRB(
-                        constraints.maxWidth * 0.03, // 親の幅の3%
-                        0,
-                        constraints.maxWidth * 0.03, // 親の幅の3%
-                        0,
-                      ),
+                      padding: EdgeInsets.symmetric(horizontal: constraints.maxWidth * 0.03),
                       child: ValueListenableBuilder<double>(
-                        valueListenable: widget.game.player!.stressNotifier,
+                        valueListenable: widget.game.player.stressNotifier,
                         builder: (context, currentStress, child) {
                           return Text(
-                            '${currentStress.toInt()} / ${widget.game.player!.maxStress.toInt()}',
+                            '${currentStress.toInt()} / ${widget.game.player.maxStress.toInt()}',
                             style: TextStyle(
-                              fontSize: (widget.screenSize.width * 0.012).clamp(8.0, 16.0),
+                              fontSize: fontSize,
                               fontWeight: FontWeight.bold,
                               fontFamily: 'TRS-Million-Rg',
                               letterSpacing: 2,
@@ -719,11 +847,12 @@ class _GameUIState extends State<GameUI> {
     );
   }
 
-  Widget _buildDigitalClockContent() {
+  Widget _buildDigitalClockContent(double fontSize) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final fontSize = constraints.maxHeight * 0.6;
+        final clockFontSize = fontSize * 1.2; // fontSizeを基準にする
         return Container(
+          padding: const EdgeInsets.symmetric(vertical: 4),
           decoration: BoxDecoration(
             color: Colors.black87,
             borderRadius: BorderRadius.circular(10),
@@ -736,14 +865,12 @@ class _GameUIState extends State<GameUI> {
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
                   Padding(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: constraints.maxWidth * 0.03,
-                    ), // 親の幅の3%
+                    padding: EdgeInsets.symmetric(horizontal: constraints.maxWidth * 0.03),
                     child: FittedBox(
                       child: Text(
                         widget.timeService.getFormattedDay(),
                         style: TextStyle(
-                          fontSize: fontSize,
+                          fontSize: clockFontSize,
                           fontFamily: 'TRS-Million-Rg',
                           letterSpacing: 5,
                           color: Colors.greenAccent.shade700,
@@ -752,14 +879,12 @@ class _GameUIState extends State<GameUI> {
                     ),
                   ),
                   Padding(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: constraints.maxWidth * 0.03,
-                    ), // 親の幅の3%
+                    padding: EdgeInsets.symmetric(horizontal: constraints.maxWidth * 0.03),
                     child: FittedBox(
                       child: Text(
                         widget.timeService.getFormattedTime(),
                         style: TextStyle(
-                          fontSize: fontSize,
+                          fontSize: clockFontSize,
                           fontFamily: 'TRS-Million-Rg',
                           letterSpacing: 5,
                           color: Colors.greenAccent.shade700,
@@ -776,13 +901,14 @@ class _GameUIState extends State<GameUI> {
     );
   }
 
-  Widget _buildPointsContent() {
+  Widget _buildPointsContent(double fontSize) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final iconSize = constraints.maxHeight * 0.8;
-        final fontSize = constraints.maxHeight * 0.4;
+        final iconSize = fontSize * 1.5;
+        final pointFontSize = fontSize;
 
         return Container(
+          padding: const EdgeInsets.symmetric(vertical: 4),
           decoration: BoxDecoration(
             color: Colors.transparent,
             borderRadius: BorderRadius.circular(10),
@@ -792,7 +918,7 @@ class _GameUIState extends State<GameUI> {
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               AnimatedBuilder(
-                animation: widget.game.player!.currencyNotifier,
+                animation: widget.game.player.currencyNotifier,
                 builder: (context, child) {
                   return Row(
                     children: [
@@ -801,11 +927,11 @@ class _GameUIState extends State<GameUI> {
                         width: iconSize,
                         height: iconSize,
                       ),
-                      SizedBox(width: constraints.maxWidth * 0.02), // 親の幅の2%
+                      SizedBox(width: constraints.maxWidth * 0.02),
                       Text(
-                        '${widget.game.player!.currencyNotifier.value}',
+                        '${widget.game.player.currencyNotifier.value}',
                         style: TextStyle(
-                          fontSize: fontSize,
+                          fontSize: pointFontSize,
                           fontFamily: 'TRS-Million-Rg',
                           letterSpacing: 5,
                           color: Colors.white,
@@ -823,7 +949,7 @@ class _GameUIState extends State<GameUI> {
                 },
               ),
               AnimatedBuilder(
-                animation: widget.game.player!.miningPointsNotifier,
+                animation: widget.game.player.miningPointsNotifier,
                 builder: (context, child) {
                   return Row(
                     children: [
@@ -832,11 +958,11 @@ class _GameUIState extends State<GameUI> {
                         width: iconSize,
                         height: iconSize,
                       ),
-                      SizedBox(width: constraints.maxWidth * 0.02), // 親の幅の2%
+                      SizedBox(width: constraints.maxWidth * 0.02),
                       Text(
-                        '${widget.game.player!.currentMiningPoints}',
+                        '${widget.game.player.currentMiningPoints}',
                         style: TextStyle(
-                          fontSize: fontSize,
+                          fontSize: pointFontSize,
                           fontFamily: 'TRS-Million-Rg',
                           letterSpacing: 5,
                           color: Colors.white,
@@ -860,7 +986,7 @@ class _GameUIState extends State<GameUI> {
     );
   }
 
-  Widget _buildPauseButton() {
+  Widget _buildPauseButton(double fontSize) {
     return ElevatedButton(
       onPressed: () {
         widget.windowManager.showWindow(
@@ -874,7 +1000,7 @@ class _GameUIState extends State<GameUI> {
       },
       style: ElevatedButton.styleFrom(
         backgroundColor: Colors.blueAccent,
-        padding: EdgeInsets.all(widget.screenSize.width * 0.02), // 画面幅の2%
+        padding: EdgeInsets.all(widget.screenSize.width * 0.02),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
       child: Icon(
@@ -885,7 +1011,7 @@ class _GameUIState extends State<GameUI> {
     );
   }
 
-  Widget _buildItemBagButton() {
+  Widget _buildItemBagButton(double fontSize) {
     return ElevatedButton(
       onPressed: () {
         widget.windowManager.showWindow(
@@ -898,47 +1024,46 @@ class _GameUIState extends State<GameUI> {
         );
       },
       style: ElevatedButton.styleFrom(
-        backgroundColor: const Color.fromARGB(255, 141, 75, 0), // アイテムバッグの色
-        padding: EdgeInsets.all(widget.screenSize.width * 0.02), // 画面幅の2%
+        backgroundColor: const Color.fromARGB(255, 141, 75, 0),
+        padding: EdgeInsets.all(widget.screenSize.width * 0.02),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
       child: Icon(
-        Icons.backpack, // アイテムバッグのアイコン
+        Icons.backpack,
         color: Colors.white,
         size: widget.screenSize.width * 0.03,
       ),
     );
   }
 
-  // ポーズボタンとアイテムバッグボタンをグループ化する新しいメソッド
-  Widget _buildTopRightButtons() {
+  Widget _buildTopRightButtons(double fontSize) {
     return Positioned(
-      top: widget.screenSize.height * 0.02, // 画面高さの2%
-      right: widget.screenSize.width * 0.02, // 画面幅の2% (右端に配置)
+      top: widget.screenSize.height * 0.02,
+      right: widget.screenSize.width * 0.02,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _buildPauseButton(), // ポーズボタン
-          SizedBox(height: widget.screenSize.height * 0.01), // ボタン間のスペース
-          _buildItemBagButton(), // アイテムバッグボタン
-          SizedBox(height: widget.screenSize.height * 0.01), // ボタン間のスペース
-          _buildTestTextBoxButton(), // テスト用のテキストボックス表示ボタン
+          _buildPauseButton(fontSize),
+          SizedBox(height: widget.screenSize.height * 0.01),
+          _buildItemBagButton(fontSize),
+          SizedBox(height: widget.screenSize.height * 0.01),
+          _buildTestTextBoxButton(fontSize),
         ],
       ),
     );
   }
 
-  Widget _buildTestTextBoxButton() {
+  Widget _buildTestTextBoxButton(double fontSize) {
     return ElevatedButton(
       onPressed: () {
         widget.windowManager.showWindow(
           GameWindowType.message,
           MessageWindow(
             messages: ['開発者の特権を使用します。(アイテムをランダムに生成する)'],
+            fontSize: fontSize,
             onFinish: () {
               widget.windowManager.hideWindow();
-              // テスト用アイテムの生成
-              Item.spawnTestItems(widget.game, widget.game.player!);
+              Item.spawnTestItems(widget.game, widget.game.player);
             },
           ),
         );
@@ -955,6 +1080,7 @@ class _GameUIState extends State<GameUI> {
       ),
     );
   }
+
 }
 
 enum DirectionButtonState { normal, pressed, disabled, notice }

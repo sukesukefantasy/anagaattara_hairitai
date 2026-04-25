@@ -1,14 +1,21 @@
-﻿import 'package:flutter/material.dart';
-import 'package:flame/game.dart';
-import 'package:flame/components.dart';
+﻿import 'dart:async';
+import 'package:flutter/material.dart';
 
 class MessageWindow extends StatefulWidget {
   final List<String> messages;
+  final double fontSize;
   final VoidCallback? onFinish;
   final List<String>? options;
   final Function(int)? onSelect;
 
-  const MessageWindow({super.key, required this.messages, this.onFinish, this.options, this.onSelect});
+  const MessageWindow({
+    super.key,
+    required this.messages,
+    required this.fontSize,
+    this.onFinish,
+    this.options,
+    this.onSelect,
+  });
 
   @override
   State<MessageWindow> createState() => _MessageWindowState();
@@ -16,53 +23,102 @@ class MessageWindow extends StatefulWidget {
 
 class _MessageWindowState extends State<MessageWindow> {
   int _currentMessageIndex = 0;
-  late TextScrollGame _currentGame;
+  String _displayingText = "";
   bool _showOptions = false;
+  bool _isTyping = false;
+  Timer? _typingTimer;
 
   @override
   void initState() {
     super.initState();
-    _currentGame = TextScrollGame(widget.messages[_currentMessageIndex]);
+    _startTyping();
+  }
+
+  @override
+  void dispose() {
+    _typingTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startTyping() {
+    _typingTimer?.cancel();
+    _displayingText = "";
+    _isTyping = true;
+    _showOptions = false;
+
+    // 日本語の改行を助けるために、各文字の間にゼロ幅スペースを挿入
+    final fullText = widget.messages[_currentMessageIndex].split('').join('\u{200B}');
+    int charIndex = 0;
+
+    _typingTimer = Timer.periodic(const Duration(milliseconds: 30), (timer) {
+      if (charIndex < fullText.length) {
+        setState(() {
+          _displayingText += fullText[charIndex];
+          charIndex++;
+          // 次の文字がゼロ幅スペースなら、それも同時に追加して表示リズムを一定にする
+          if (charIndex < fullText.length && fullText[charIndex] == '\u{200B}') {
+            _displayingText += fullText[charIndex];
+            charIndex++;
+          }
+        });
+      } else {
+        setState(() {
+          _isTyping = false;
+          if (_currentMessageIndex == widget.messages.length - 1 && 
+              widget.options != null && widget.options!.isNotEmpty) {
+            _showOptions = true;
+          }
+        });
+        timer.cancel();
+      }
+    });
+  }
+
+  void _skipTyping() {
+    _typingTimer?.cancel();
+    setState(() {
+      _displayingText = widget.messages[_currentMessageIndex].split('').join('\u{200B}');
+      _isTyping = false;
+      if (_currentMessageIndex == widget.messages.length - 1 && 
+          widget.options != null && widget.options!.isNotEmpty) {
+        _showOptions = true;
+      }
+    });
   }
 
   void nextMessage() {
-    if (_showOptions) return; // 選択肢表示中はクリックで次に進ませない
+    if (_isTyping) {
+      _skipTyping();
+      return;
+    }
+    if (_showOptions) return;
 
-    setState(() {
-      if (_currentMessageIndex < widget.messages.length - 1) {
+    if (_currentMessageIndex < widget.messages.length - 1) {
+      setState(() {
         _currentMessageIndex++;
-        // メッセージを更新した新しいゲームインスタンスを作成
-        _currentGame = TextScrollGame(widget.messages[_currentMessageIndex]);
-      } else {
-        if (widget.options != null && widget.options!.isNotEmpty) {
-          _showOptions = true;
-        } else {
-          widget.onFinish?.call();
-        }
-      }
-    });
+        _startTyping();
+      });
+    } else {
+      widget.onFinish?.call();
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
     final screenHeight = MediaQuery.of(context).size.height;
+    final isMobile = screenWidth < 600 || screenHeight < 500;
 
-    // レイアウト用の計算
-    final isMobile = screenWidth < 600;
-    final double horizontalMargin = screenWidth * 0.05; // 左右5%
-    final double boxHeight = screenHeight * (isMobile ? 0.25 : 0.15); // スマホなら25%、PCなら15%
-    final double bottomPadding = screenHeight * 0.05; // 下から5%
+    final double horizontalMargin = screenWidth * 0.05;
+    final double boxHeight = screenHeight * (isMobile ? 0.45 : 0.22);
+    final double bottomPadding = screenHeight * 0.03;
 
-    // PositionedではなくAlignを使うことで、親がStackでなくても動作するようにします
     return GestureDetector(
       onTap: nextMessage,
-      behavior: HitTestBehavior.translucent, // 透明な部分もタップを検知する
+      behavior: HitTestBehavior.opaque,
       child: SizedBox.expand(
-        // GestureDetectorを画面全体に広げる
         child: Stack(
           children: [
-            // メッセージボックス自体はAlignで配置
             Align(
               alignment: Alignment.bottomCenter,
               child: Padding(
@@ -75,16 +131,29 @@ class _MessageWindowState extends State<MessageWindow> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (_showOptions)
-                      _buildOptions(horizontalMargin, isMobile),
+                      _buildOptions(isMobile),
                     Container(
                       width: double.infinity,
                       height: boxHeight,
+                      padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.8),
-                        border: Border.all(color: Colors.grey, width: 2.0),
-                        borderRadius: BorderRadius.circular(10),
+                        color: Colors.black.withOpacity(0.85),
+                        border: Border.all(color: Colors.white70, width: 2.0),
+                        borderRadius: BorderRadius.circular(12),
                       ),
-                      child: GameWidget(game: _currentGame),
+                      child: SingleChildScrollView(
+                        child: Text(
+                          _displayingText,
+                          softWrap: true,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: widget.fontSize,
+                            fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+                            height: 1.5,
+                            decoration: TextDecoration.none,
+                          ),
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -96,77 +165,41 @@ class _MessageWindowState extends State<MessageWindow> {
     );
   }
 
-  Widget _buildOptions(double horizontalMargin, bool isMobile) {
-    if (widget.options == null) return const SizedBox.shrink();
-    
+  Widget _buildOptions(bool isMobile) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Wrap( // 選択肢が多い場合も改行されるように
+        alignment: WrapAlignment.center,
+        spacing: 10,
+        runSpacing: 10,
         children: widget.options!.asMap().entries.map((entry) {
           final index = entry.key;
           final option = entry.value;
-          return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            child: ElevatedButton(
-              onPressed: () {
-                widget.onSelect?.call(index);
-                widget.onFinish?.call();
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blueAccent.withOpacity(0.8),
-                side: const BorderSide(color: Colors.white, width: 1),
-                padding: EdgeInsets.symmetric(
-                  horizontal: isMobile ? 20 : 40,
-                  vertical: 10,
-                ),
+          return ElevatedButton(
+            onPressed: () {
+              widget.onSelect?.call(index);
+              widget.onFinish?.call();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blueAccent.withOpacity(0.9),
+              side: const BorderSide(color: Colors.white, width: 1.5),
+              padding: EdgeInsets.symmetric(
+                horizontal: isMobile ? 20 : 40,
+                vertical: 12,
               ),
-              child: Text(
-                option,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
-                ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+            ),
+            child: Text(
+              option,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: widget.fontSize,
+                fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+                decoration: TextDecoration.none,
               ),
             ),
           );
         }).toList(),
-      ),
-    );
-  }
-}
-
-class TextScrollGame extends FlameGame {
-  final String text;
-  TextScrollGame(this.text);
-
-  @override
-  Future<void> onLoad() async {
-    // 日本語の改行を助けるために、すべての文字の間にゼロ幅スペース(Zero Width Space)を挿入するハック
-    // これにより、単語の区切りがない日本語でも枠内で適切に改行されるようになります。
-    final processedText = text.split('').join('\u{200B}');
-    
-    final textStyle = TextStyle(
-      fontSize: (size.y * 0.15).clamp(12.0, 20.0), // フォントサイズを少し抑える (4〜5行入るように)
-      color: Colors.white,
-      fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
-      decoration: TextDecoration.none,
-      height: 1.5, // 行間を広げる
-    );
-
-    add(
-      ScrollTextBoxComponent(
-        text: processedText,
-        // position と size はコンテナの大きさに合わせる
-        size: size,
-        textRenderer: TextPaint(
-          style: textStyle,
-        ),
-        boxConfig: TextBoxConfig(
-          timePerChar: 0.03, // 1文字ずつの表示速度
-          margins: const EdgeInsets.all(12),
-          maxWidth: size.x - 24, // 左右のマージン分を引く
-        ),
       ),
     );
   }
