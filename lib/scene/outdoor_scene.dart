@@ -31,26 +31,6 @@ class OutdoorScene extends AbstractOutdoorScene {
   Future<void> initializeScene(dynamic data) async {
     await super.initializeScene(data);
 
-    // Stage 6 (Despair) の場合、条件を満たしていなければオートプレイを開始
-    if (sceneId == 'outdoor_despair') {
-      final state = game.gameRuntimeState;
-      // Stage 1-4 すべてでサブルート（能動性スコア30）を達成していれば回避
-      bool allSubRoutesConfirmed = true;
-      for (int i = 1; i <= 4; i++) {
-        if (!state.subRouteConfirmedStages.contains('outdoor_$i')) {
-          allSubRoutesConfirmed = false;
-          break;
-        }
-      }
-
-      if (!allSubRoutesConfirmed) {
-        state.isAutoPlay = true;
-        game.windowManager.showDialog(
-          ["「……個の維持に失敗。オートプレイ・プロトコルを開始します。」"],
-        );
-      }
-    }
-
     // ステージごとの固有設定
     List<double> entrances = [];
     switch (sceneId) {
@@ -89,7 +69,7 @@ class OutdoorScene extends AbstractOutdoorScene {
         }
       }
 
-      final targetItem = isSubScenario ? 'レスポンス' : '掌握された自意識';
+      final targetItem = '中枢演算コア';
       // 地下の3層目（深度3マス目）、x=-250にアイテムを配置
       final item = ItemFactory.createItemByName(targetItem, Vector2(-250, underGround.y + 160));
       if (item != null) {

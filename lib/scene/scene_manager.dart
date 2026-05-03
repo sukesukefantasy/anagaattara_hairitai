@@ -35,16 +35,9 @@ class SceneManager extends Component with HasGameReference<MyGame> {
         final Map<String, dynamic>? sceneData =
             data is Map ? data as Map<String, dynamic> : null;
         
-        final state = game.gameRuntimeState;
-        String outdoorSceneId = sceneData?['sceneId'] as String? ?? state.currentOutdoorSceneId ?? 'outdoor_1';
+        // 明示的に指定がない限り 'outdoor_1' を使用する
+        String outdoorSceneId = sceneData?['sceneId'] as String? ?? 'outdoor_1';
         
-        // 分岐ロジック：特定のステージIDに対する個別の処理（必要があればここに追加）
-        if (outdoorSceneId == 'outdoor_philosophy') {
-          // そのままロード
-        } else if (outdoorSceneId == 'outdoor_despair' || outdoorSceneId == 'outdoor_true') {
-          // そのままロード
-        }
-
         final Vector2? initialPlayerPosition =
             sceneData?['initialPlayerPosition'] as Vector2?;
         return OutdoorScene(
@@ -274,6 +267,9 @@ class SceneManager extends Component with HasGameReference<MyGame> {
 
     debugPrint('--- SceneManager.loadScene ---');
 
+    // シーン切り替え時にオートプレイを解除（必要なシーンでのみ再度有効化される）
+    game.gameRuntimeState.isAutoPlay = false;
+
     // シーン切り替え時にすべてのSoLoud音源を停止
     // game.audioManager.soloud.stopAllSounds();
     // debugPrint('全てのSoLoud音源を停止しました。');
@@ -374,7 +370,7 @@ class SceneManager extends Component with HasGameReference<MyGame> {
     }
 
     // ステージ開始時のミッション設定を更新（メッセージウィンドウは出さない）
-    game.routeManager.showCompassMessage(sceneId, showWindow: false);
+    game.missionManager.showCompassMessage(sceneId, showWindow: false);
 
     // カメラのズームレベルをリセット
     if (sceneId.contains('outdoor')) {

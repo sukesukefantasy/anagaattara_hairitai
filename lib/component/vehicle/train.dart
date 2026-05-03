@@ -2,7 +2,6 @@
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 import '../../main.dart';
-import '../player.dart';
 import 'vehicle.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
 import 'dart:math';
@@ -282,9 +281,10 @@ class Train extends Vehicle {
 
         // インタラクトを解除してシーンロード
         GameUI.setInteractAction(null, null);
-        await game.sceneManager.loadScene(nextStageId);
+        final resetPos = Vector2(-50, game.initialGameCanvasSize.y - game.player.size.y / 2);
+        await game.sceneManager.loadScene(nextStageId, initialPlayerPosition: resetPos);
         // シーンロード後に羅針盤メッセージを表示
-        game.routeManager.showCompassMessage(nextStageId, showWindow: true);
+        game.missionManager.showCompassMessage(nextStageId, showWindow: true);
       }, Icons.directions_transit);
     } else {
       GameUI.setInteractAction(null, null);

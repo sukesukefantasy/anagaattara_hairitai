@@ -1,4 +1,4 @@
-import 'package:flame/components.dart';
+﻿import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 import '../../common/hitboxes/interact_hitbox.dart';
 import 'building.dart';
@@ -35,10 +35,14 @@ class Shop extends Building {
   @override
   Future<void> onLoad() async {
     // オーディオの読み込み
-    _doorOpenAudioSource =
-        await game.audioManager.loadAndCacheSound('assets/audio/buildings/DoorOpen01.ogg');
-    _doorCloseAudioSource =
-        await game.audioManager.loadAndCacheSound('assets/audio/buildings/DoorClose02.ogg');
+    try {
+      _doorOpenAudioSource =
+          await game.audioManager.loadAndCacheSound('assets/audio/buildings/DoorOpen01.ogg');
+      _doorCloseAudioSource =
+          await game.audioManager.loadAndCacheSound('assets/audio/buildings/DoorClose02.ogg');
+    } catch (e) {
+      debugPrint('Shop: Failed to load door sounds: $e');
+    }
 
     // --- スプライトの読み込み ---
 

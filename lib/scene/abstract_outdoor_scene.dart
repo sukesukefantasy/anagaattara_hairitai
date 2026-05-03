@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../main.dart';
 import '../component/npc/npc.dart';
+import '../component/npc/ghost_echo.dart';
 import '../component/player.dart';
 import '../component/game_stage/building/building_data.dart';
 import '../component/game_stage/building/building.dart';
@@ -27,7 +28,7 @@ import '../component/game_stage/building/destructible_object.dart';
 import '../component/common/hitboxes/interact_hitbox.dart';
 import '../component/item/item.dart';
 import '../system/storage/game_runtime_state.dart';
-import '../game_manager/route_manager.dart';
+import '../game_manager/mission_manager.dart';
 import 'dart:math';
 
 abstract class AbstractOutdoorScene extends GameScene {
@@ -35,6 +36,7 @@ abstract class AbstractOutdoorScene extends GameScene {
   UnderGround? _underGround;
   UnderGround get underGround => _underGround!;
   final List<Building> buildings = [];
+  final List<DestructibleObject> destructibles = []; // 破壊可能オブジェクト用リストを追加
   Station? station;
   AbandonedRocket? rocket; // ロケットを追加
   EnemyManager? enemyManager;
@@ -67,12 +69,30 @@ abstract class AbstractOutdoorScene extends GameScene {
     // groundの初期化と追加
     final groundSprite = await Sprite.load('concrete_ground.png');
     debugPrint('AbstractOutdoorScene: groundSprite loaded.');
+    
+    // 地面の色も世界の属性に合わせる
+    final state = game.gameRuntimeState;
+    final worldAttr = state.lastSimulatedAttribute ?? GameRuntimeState.routeNormal;
+    final worldRedundancy = state.attributeRedundancy[worldAttr] ?? 0;
+    final int worldLevel = state.completedRouteIds.contains(worldAttr) ? (2 + worldRedundancy).clamp(0, 3) : 0;
+    
+    Color? groundColor;
+    if (worldLevel >= 1) {
+      switch (worldAttr) {
+        case GameRuntimeState.routeViolence: groundColor = Colors.red.withOpacity(0.3); break;
+        case GameRuntimeState.routeEfficiency: groundColor = Colors.blueGrey.withOpacity(0.5); break;
+        case GameRuntimeState.routeEmpathy: groundColor = Colors.orange.withOpacity(0.2); break;
+        case GameRuntimeState.routePhilosophy: groundColor = Colors.greenAccent.withOpacity(0.2); break;
+      }
+    }
+
     ground = Ground(
       groundWidth: MyGame.worldWidth,
       groundHeight: groundHeight,
       position: Vector2(-MyGame.worldWidth, game.initialGameCanvasSize.y),
       groundSprite: groundSprite,
       loop: true,
+      overlayColor: groundColor,
     )..priority = 3;
     await add(ground!);
     game.sceneManager.currentScene?.groundComponent = ground; // ! を削除
@@ -87,26 +107,75 @@ abstract class AbstractOutdoorScene extends GameScene {
     debugPrint('AbstractOutdoorScene: onLoad finished.');
   }
 
+  void clearWorldObjects() {
+    debugPrint('AbstractOutdoorScene: clearWorldObjects called.');
+    for (final building in buildings) {
+      if (building.isMounted) building.removeFromParent();
+    }
+    buildings.clear();
+
+    for (final obj in destructibles) {
+      if (obj.isMounted) obj.removeFromParent();
+    }
+    destructibles.clear();
+
+    if (station != null && station!.isMounted) station!.removeFromParent();
+    station = null;
+
+    if (rocket != null && rocket!.isMounted) rocket!.removeFromParent();
+    rocket = null;
+  }
+
   @override
   Future<void> initializeScene(dynamic data) async {
     debugPrint('AbstractOutdoorScene: initializeScene started.');
     final state = game.gameRuntimeState;
-    final bool isEfficiencyFlattened = sceneId == 'outdoor_3' && state.activeRouteId == GameRuntimeState.routeEfficiency;
+    
+    // 世界の変容は「最後にシミュレートされた属性（前回クリア時の確定属性）」に基づく
+    // プレイヤー能力（リアルタイム）とは分離する
+    // シナリオ1周目は世界の変容を発生させない
+    final String worldAttr = state.scenarioCount > 1 
+        ? (state.lastSimulatedAttribute ?? GameRuntimeState.routeNormal)
+        : GameRuntimeState.routeNormal;
+    
+    // 属性レベル
+    final worldRedundancy = state.attributeRedundancy[worldAttr] ?? 0;
+    final int worldLevel = state.completedRouteIds.contains(worldAttr) ? (2 + worldRedundancy).clamp(0, 3) : 0;
+
+    // 属性による世界の変容フラグ
+    // 1. 前回クリア時の確定属性による変容 (継続的な世界観)
+    // 2. 今現在のプレイで確定させた属性による変容 (即時的な変化)
+    // シナリオ1では一律 false
+    final bool isEfficiencyFlattened = state.scenarioCount > 1 && (
+        (worldAttr == GameRuntimeState.routeEfficiency && worldLevel >= 2) ||
+        (state.activeRouteId == GameRuntimeState.routeEfficiency && sceneId == 'outdoor_3')
+    );
+    
+    final bool isViolenceAggressive = state.scenarioCount > 1 && worldAttr == GameRuntimeState.routeViolence && worldLevel >= 2;
 
     debugPrint(
-      'AbstractOutdoorScene initializeScene start. game.initialGameCanvasSize.y: ${game.initialGameCanvasSize.y}',
+      'AbstractOutdoorScene initializeScene start. worldAttr: $worldAttr, worldLevel: $worldLevel',
     );
 
     // 背景の初期化
     // 効率化ルート確定時は背景（街並み）を表示しない
-    final outdoorBackgrounds = isEfficiencyFlattened ? null : backgroundDataMap[sceneId];
+    final outdoorBackgrounds =
+        (isEfficiencyFlattened && sceneId != 'outdoor_1')
+            ? null
+            : backgroundDataMap[sceneId];
     if (outdoorBackgrounds != null) {
       for (final bgData in outdoorBackgrounds) {
         final background = GameStageComponent(data: bgData, loop: true)
           ..priority = bgData.priority;
         await add(background);
         background.resetPositions(game.initialGameCanvasSize);
-        debugPrint('AbstractOutdoorScene: GameStageComponent ${bgData.imagePath} added.');
+
+        // プレイヤーの初期位置に合わせて背景座標を同期（パララックスのズレを解消）
+        final playerX = game.player.position.x;
+        background.position.x += -playerX * background.parallaxEffect;
+
+        debugPrint(
+            'AbstractOutdoorScene: GameStageComponent ${bgData.imagePath} added and synced.');
       }
     }
     debugPrint('AbstractOutdoorScene: Backgrounds initialized.');
@@ -128,9 +197,33 @@ abstract class AbstractOutdoorScene extends GameScene {
     }
     debugPrint('AbstractOutdoorScene: Building definitions loaded.');
 
+    // 5. 技術アーキテクチャ（MVCモデル）
+    // ...
+    
     // ステージとルートの対応マップ
-    final currentRouteId = RouteManager.stageToRoute[sceneId];
-    final bool isCleared = currentRouteId != null && state.completedRouteIds.contains(currentRouteId);
+    final currentRouteId = MissionManager.stageToRoute[sceneId];
+    // 「完全に完了（ロケット発射済み）」しているかどうかの判定
+    bool isCompleted = (currentRouteId != null && state.completedRouteIds.contains(currentRouteId));
+    
+    // Stage 1 の特殊判定: パーツ3つと希少な鉱石を持ってトランクにインタラクトするとクリア
+    if (sceneId == 'outdoor_1') {
+      isCompleted = state.completedRouteIds.contains(GameRuntimeState.routeNormal);
+    }
+
+    // Stage 6 (Despair) ではオートプレイを開始 (Efficiency属性のみ)
+    if (sceneId == 'outdoor_despair') {
+      final currentAttr = state.activeRouteId ?? game.missionManager.getCurrentAttribute();
+      if (currentAttr == GameRuntimeState.routeEfficiency && state.scenarioCount > 1) {
+        state.isAutoPlay = true;
+        game.windowManager.showDialog(
+          ["「……個の維持に失敗。オートプレイ・プロトコルを開始します。」"],
+        );
+      } else {
+        state.isAutoPlay = false;
+      }
+    } else if (sceneId == 'outdoor_true') {
+      state.isAutoPlay = false; // 覚醒時は操作奪還
+    }
 
     // Stationの初期化
     if (currentSceneBuildingDefinitions.containsKey('station')) {
@@ -146,12 +239,10 @@ abstract class AbstractOutdoorScene extends GameScene {
         currentStageNum = int.tryParse(sceneId.split('_').last) ?? 1;
       }
 
-      // クリア済みのステージ、かつ despair/true でない場合に駅を表示
-      // 効率化ルート確定時は駅も配置しない
-      bool shouldAddStation = isCleared && 
+      // 帰還（ロケット発射）完了済みのステージ、かつ despair/true でない場合に駅を表示
+      bool shouldAddStation = isCompleted && 
           sceneId != 'outdoor_despair' && 
-          sceneId != 'outdoor_true' &&
-          !isEfficiencyFlattened;
+          sceneId != 'outdoor_true';
       
       // 特殊ケース：全ルートクリア後などは駅を置いても良いかもしれないが、現状は上記に従う
       
@@ -177,6 +268,9 @@ abstract class AbstractOutdoorScene extends GameScene {
           if (nextStageNum == 5) {
             nextStageId = 'outdoor_philosophy';
           } else if (nextStageNum == 6) {
+            // Stage 6 (最終定義ステージ) への移行時に属性を確定させる
+            game.missionManager.finalizeRoute();
+
             // 分岐ロジック（Despair または True）
             bool isSubScenario = true;
             for (int i = 1; i <= 4; i++) {
@@ -190,9 +284,16 @@ abstract class AbstractOutdoorScene extends GameScene {
 
           // 次のステージの配置をリセット（初めて訪れるか、電車移動時のみ）
           state.buildingPlacements.remove(nextStageId);
-          await game.sceneManager.loadScene(nextStageId);
+
+          // シナリオ1の場合は、ステージ移動時にスコアや状態をリセットする
+          if (state.scenarioCount == 1) {
+            state.resetStageState();
+          }
+
+          final resetPos = Vector2(-50, game.initialGameCanvasSize.y - game.player.size.y / 2);
+          await game.sceneManager.loadScene(nextStageId, initialPlayerPosition: resetPos);
           // シーンロード後に羅針盤メッセージを表示
-          game.routeManager.showCompassMessage(nextStageId, showWindow: true);
+          game.missionManager.showCompassMessage(nextStageId, showWindow: true);
         },
           icon: Icons.train,
         ));
@@ -204,8 +305,8 @@ abstract class AbstractOutdoorScene extends GameScene {
     bool shouldAddRocket = false;
     Vector2 rocketPos = Vector2(-MyGame.worldWidth, game.initialGameCanvasSize.y - 256);
 
-    // 未クリアの場合、または despair/true の場合にロケットを表示
-    if (!isCleared || sceneId == 'outdoor_despair' || sceneId == 'outdoor_true') {
+    // まだ帰還（ロケット発射）していない場合、または despair/true の場合にロケットを表示
+    if (!isCompleted || sceneId == 'outdoor_despair' || sceneId == 'outdoor_true') {
       shouldAddRocket = true;
       
       // シーン別の位置調整
@@ -231,25 +332,51 @@ abstract class AbstractOutdoorScene extends GameScene {
     if (sceneId.startsWith('outdoor')) {
       final random = Random();
       final collectionItems = ['バルブ', '点火装置', 'ノズル'];
+      
+      // Stage 1 の場合は「石」を追加
+      if (sceneId == 'outdoor_1') {
+        collectionItems.add('石');
+      }
+      
+      // Stage 3 の場合は「棒」も追加
+      if (sceneId == 'outdoor_2' || sceneId == 'outdoor_3') {
+        collectionItems.add('棒');
+      }
+      
+      // Stage 6 (Despair/True) の場合はそれぞれの属性別キーアイテムも配置
+      if (sceneId == 'outdoor_despair') {
+        final attr = state.activeRouteId ?? game.missionManager.getCurrentAttribute();
+        switch (attr) {
+          case GameRuntimeState.routeNormal: collectionItems.add('最終調査報告書'); break;
+          case GameRuntimeState.routeViolence: collectionItems.add('殲滅完了コード'); break;
+          case GameRuntimeState.routeEmpathy: collectionItems.add('心のバックアップ'); break;
+          case GameRuntimeState.routePhilosophy: collectionItems.add('真実へのアクセスキー'); break;
+          case GameRuntimeState.routeEfficiency: collectionItems.add('最適化完了ログ'); break;
+          default: collectionItems.add('最終調査報告書');
+        }
+      } else if (sceneId == 'outdoor_true') {
+        collectionItems.add('中枢演算コア');
+      }
+
       for (final itemName in collectionItems) {
         // すでに所持している場合はスポーンさせない
         if (game.player.itemBag.getItemCount(itemName) > 0) continue;
 
-        // -1900から50の範囲でランダムなX座標を生成
-        final randomX = (random.nextDouble() * 1950) - 1900;
+        // -1900から0の範囲でランダムなX座標を生成
+        final randomX = (random.nextDouble() * 1900) * -1;
         final item = ItemFactory.createItemByName(
           itemName,
-          Vector2(randomX, game.initialGameCanvasSize.y - 25), // 地面に配置
+          Vector2(randomX, game.initialGameCanvasSize.y - 25),
         );
         if (item != null) {
           await add(item);
-          debugPrint('AbstractOutdoorScene: $itemName spawned at ($randomX, ${game.initialGameCanvasSize.y - 25})');
+          debugPrint('AbstractOutdoorScene: $itemName spawned at ($randomX, ${game.initialGameCanvasSize.y - 100}), priority: ${item.priority}');
         }
       }
     }
 
-    final buildingTypesInScene = isEfficiencyFlattened 
-        ? [] // 効率化ルート確定時は建物を配置しない（平坦な世界）
+    final buildingTypesInScene = (isEfficiencyFlattened && sceneId != 'outdoor_1')
+        ? [] // 効率化ルート確定時は建物を配置しない（平坦な世界）、ただしStage 1は除く
         : currentSceneBuildingDefinitions.keys
             .where((key) => key != 'station')
             .toList();
@@ -336,11 +463,11 @@ abstract class AbstractOutdoorScene extends GameScene {
     debugPrint('AbstractOutdoorScene: All buildings added.');
 
     // 敵の初期化
-    int walkingEnemyCount = isEfficiencyFlattened ? 0 : 10;
-    int carEnemyCount = isEfficiencyFlattened ? 0 : 1;
+    int walkingEnemyCount = (isEfficiencyFlattened && sceneId != 'outdoor_1') ? 0 : 10;
+    int carEnemyCount = (isEfficiencyFlattened && sceneId != 'outdoor_1') ? 0 : 1;
 
-    if (sceneId == 'outdoor_2') {
-      walkingEnemyCount = 20; // Violenceステージは敵を増やす
+    if (sceneId == 'outdoor_2' || isViolenceAggressive) {
+      walkingEnemyCount = 20; // Violence属性が高い、またはStage 2は敵を増やす
       carEnemyCount = 3;
     }
 
@@ -441,34 +568,89 @@ abstract class AbstractOutdoorScene extends GameScene {
   }
 
   void _spawnDestructibles() async {
-    final state = game.gameRuntimeState;
-    // 効率化ルートが既に確定している場合は、破壊可能オブジェクトを配置しない（平坦な世界）
-    if (sceneId == 'outdoor_3' && state.activeRouteId == GameRuntimeState.routeEfficiency) {
-      return;
-    }
+    try {
+      final state = game.gameRuntimeState;
 
-    // 仮の配置（等間隔に配置）
-    for (int i = 0; i < 5; i++) {
-      final x = -400.0 - (i * 300.0);
-      final sprite = await game.loadSprite('CITY_MEGA.png', srcPosition: Vector2(1812, 368), srcSize: Vector2(24, 32));
-      final obj = DestructibleObject(
-        type: DestructibleType.street,
-        itemName: '棒',
-        uniqueId: '${sceneId}_street_$i', // IDを永続化
-        position: Vector2(x, game.initialGameCanvasSize.y),
-        size: Vector2(54, 72),
-        sprite: sprite,
-      );
-      obj.priority = 4;
-      add(obj);
+      final worldAttr =
+          state.lastSimulatedAttribute ?? GameRuntimeState.routeNormal;
+      final worldRedundancy = state.attributeRedundancy[worldAttr] ?? 0;
+      final int worldLevel = state.completedRouteIds.contains(worldAttr)
+          ? (2 + worldRedundancy).clamp(0, 3)
+          : 0;
+
+      // 効率化ルートが既に確定している場合、または前周回で確定している場合は配置しない（平坦な世界）
+      final bool isEfficiencyFlattened =
+          (worldAttr == GameRuntimeState.routeEfficiency && worldLevel >= 2) ||
+              (state.activeRouteId == GameRuntimeState.routeEfficiency &&
+                  sceneId == 'outdoor_3');
+
+      if (isEfficiencyFlattened && sceneId != 'outdoor_1') {
+        return;
+      }
+
+      // 仮の配置（等間隔に配置）
+      for (int i = 0; i < 5; i++) {
+        final x = -400.0 - (i * 300.0);
+        final sprite = await game.loadSprite('CITY_MEGA.png', srcPosition: Vector2(1812, 368), srcSize: Vector2(24, 32));
+        final obj = DestructibleObject(
+          type: DestructibleType.street,
+          itemName: '棒',
+          uniqueId: '${sceneId}_street_$i', // IDを永続化
+          position: Vector2(x, game.initialGameCanvasSize.y),
+          size: Vector2(54, 72),
+          sprite: sprite,
+        );
+        obj.priority = 4;
+        destructibles.add(obj); // リストに追加
+        add(obj);
+      }
+    } catch (e) {
+      debugPrint('AbstractOutdoorScene: ERROR in _spawnDestructibles: $e');
     }
+  }
+
+  void _spawnGhostEchoes() {
+    final state = game.gameRuntimeState;
+    final colors = {
+      GameRuntimeState.routeNormal: Colors.white, // Normal（1周目）も記録として追加
+      GameRuntimeState.routeViolence: Colors.redAccent,
+      GameRuntimeState.routeEfficiency: Colors.blueAccent,
+      GameRuntimeState.routeEmpathy: Colors.orange,
+      GameRuntimeState.routePhilosophy: Colors.greenAccent,
+    };
+
+    int i = 0;
+    colors.forEach((attr, color) {
+      // クリア済みのルート、またはNormal（1周目完了後なら必ずある）のみ表示
+      if (state.completedRouteIds.contains(attr)) {
+        final ghost = GhostEcho(
+          attribute: attr,
+          color: color,
+          position: Vector2(-MyGame.worldWidth + 400 + (i * 100.0), game.initialGameCanvasSize.y - 32),
+          size: Vector2(32, 32),
+        );
+        ghost.priority = 35;
+        add(ghost);
+        i++;
+      }
+    });
   }
 
   void _spawnNpc() {
     final state = game.gameRuntimeState;
+    final worldAttr = state.lastSimulatedAttribute ?? GameRuntimeState.routeNormal;
+    final worldRedundancy = state.attributeRedundancy[worldAttr] ?? 0;
+    final int worldLevel = state.completedRouteIds.contains(worldAttr) ? (2 + worldRedundancy).clamp(0, 3) : 0;
+
     // 効率化ルートが既に確定している場合は、NPCを配置しない（平坦な世界）
-    if (sceneId == 'outdoor_3' && state.activeRouteId == GameRuntimeState.routeEfficiency) {
+    if ((worldAttr == GameRuntimeState.routeEfficiency && worldLevel >= 2 && sceneId != 'outdoor_1') ||
+        (state.activeRouteId == GameRuntimeState.routeEfficiency && sceneId == 'outdoor_3')) {
       return;
+    }
+
+    // シナリオ2以降のStage 1開始時に「過去の自分の残影（Ghost Echoes）」を表示
+    if (state.scenarioCount >= 2 && sceneId == 'outdoor_1') {
+      _spawnGhostEchoes();
     }
 
     if (sceneId == 'outdoor_4') {
@@ -476,7 +658,7 @@ abstract class AbstractOutdoorScene extends GameScene {
       for (int i = 0; i < 3; i++) {
         final npc = Npc(
           name: '住民${i + 1}',
-          talkMessages: ["「石ころ……石ころがあれば……」"],
+          talkMessages: ["「希少な鉱石……希少な鉱石があれば……」"],
           giftResponse: "",
           uniqueId: 'stage4_npc_$i',
           position: Vector2(-400 - (i * 400.0), game.initialGameCanvasSize.y),

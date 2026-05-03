@@ -24,7 +24,7 @@ import 'scene/scene_manager.dart';
 import 'scene/abstract_outdoor_scene.dart';
 import 'component/common/underground/underground.dart';
 import 'game_manager/audio_manager.dart';
-import 'game_manager/route_manager.dart';
+import 'game_manager/mission_manager.dart';
 import 'scene/game_scene.dart';
 import 'component/camera_conponent.dart';
 import 'component/game_stage/lighting/light_shader.dart';
@@ -66,7 +66,6 @@ void main() async {
   ]);
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
 
-  await Future.delayed(const Duration(seconds: 2));
   runApp(MaterialApp(home: Scaffold(body: GameScreen())));
 }
 
@@ -154,6 +153,9 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
 
     // 3. MyGameインスタンスを作成し、onLoadの完了を待機
     // MyGameのonLoad完了時に呼ばれるコールバックを渡す
+    if (!mounted) return;
+    final screenSize = MediaQuery.of(context).size;
+
     game = MyGame(
       timeService: timeService,
       saveDataManager: saveDataManager,
@@ -167,7 +169,7 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
           'MyGame: _gameReadyForSceneLoadCompleter completed.',
         ); // コールバックの完了ログ
       },
-      screenSize: MediaQuery.of(context).size, // ここでscreenSizeを渡す
+      screenSize: screenSize, // 取得したscreenSizeを渡す
       windowManager: windowManager, // ここで初期化されたwindowManagerを渡す
     );
     debugPrint(
@@ -345,19 +347,9 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
               }
             });
             // gameがnullでないことを確認してからGameWidgetをレンダリング
-            if (game == null) {
-              return const Scaffold(
-                body: Center(
-                  child: Text(
-                    'Error: Game not initialized.',
-                    style: TextStyle(color: Colors.red),
-                  ),
-                ), // 閉じ括弧を追加
-              ); // エラーハンドリング
-            }
             return Stack(
               children: [
-                GameWidget(key: UniqueKey(), game: game!), // Keyを追加
+                GameWidget(key: UniqueKey(), game: game), // Keyを追加
                 GameUI(
                   screenSize: screenSize,
                   game: game,
@@ -404,7 +396,6 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
   }
 
   void _onPressedJumpButton(bool isPressed) {
-    if (game.player == null) return;
     if (isPressed) {
       game.player.jump();
     } else {
@@ -461,7 +452,7 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
             // ゲーム開始時に羅針盤メッセージを表示（クリア済みルートならスキップされる）
             final state = game.gameRuntimeState;
             final currentSceneId = state.currentOutdoorSceneId ?? 'outdoor_1';
-            game.routeManager.showCompassMessage(currentSceneId);
+            game.missionManager.showCompassMessage(currentSceneId);
           },
         ),
       );
@@ -501,7 +492,7 @@ class MyGame extends FlameGame
   final ItemBag itemBag;
   late final SceneManager sceneManager;
   late final AudioManager audioManager; // AudioManagerを追加
-  late final RouteManager routeManager; // RouteManagerを追加
+  late final MissionManager missionManager; // MissionManagerを追加
   late final CameraController cameraController; // CameraControllerを追加
   final Random random = Random(); // Randomインスタンスを追加
   final Size screenSize;
@@ -544,8 +535,8 @@ class MyGame extends FlameGame
     sceneManager = SceneManager(game: this);
     // ここでAudioManagerを初期化
     audioManager = AudioManager(game: this, soloud: SoLoud.instance);
-    // ここでRouteManagerを初期化
-    routeManager = RouteManager(this);
+    // ここでMissionManagerを初期化
+    missionManager = MissionManager(this);
     // ここでCameraControllerを初期化
     cameraController = CameraController();
     // playerをここで初期化する
@@ -566,11 +557,11 @@ class MyGame extends FlameGame
     debugPrint('MyGame: Before adding player to world.');
     await world.add(player); // ! を削除
     debugPrint(
-      'MyGame: Player added to world. player is null: ${player == null}, player object: $player',
+      'MyGame: Player added to world. player object: $player',
     );
     debugPrint('MyGame: After adding player to world.');
     debugPrint(
-      'MyGame: player before DigEffectComponent init: ${player == null ? "null" : "not null"}',
+      'MyGame: player before DigEffectComponent init: not null',
     );
 
     // AudioManagerの初期化 (_GameScreenStateで初期化済みなのでここでは不要)
@@ -597,9 +588,7 @@ class MyGame extends FlameGame
     // カメラの初期化（CameraControllerに委譲）
     // CameraControllerをワールドに追加
     await world.add(cameraController); // cameraControllerを先にworldに追加
-    if (player != null) {
-      cameraController.initializeCamera(player);
-    }
+    cameraController.initializeCamera(player);
 
     // シーンマネージャーをゲームワールドに追加
     await world.add(sceneManager); // これをplayerなどより後にする
@@ -630,7 +619,7 @@ class MyGame extends FlameGame
 
     // ゲームがロードされたことを通知
     debugPrint(
-      'MyGame: Before onGameLoaded callback, game.player is: ${player != null}',
+      'MyGame: Before onGameLoaded callback, game.player is: true',
     );
     onGameLoaded.call();
   }
@@ -649,17 +638,14 @@ class MyGame extends FlameGame
     audioManager.update(dt);
     timeService.update(dt);
 
-    // 30分ごとに電車をスポーンさせる
+    // 10分ごとに電車をスポーンさせる
     final currentMinute = timeService.minute;
-    if ((currentMinute % 30 == 0) && currentMinute != _lastTrainSpawnMinute) {
+    if ((currentMinute % 10 == 0) && currentMinute != _lastTrainSpawnMinute) {
       if (sceneManager.currentScene is AbstractOutdoorScene) {
         (sceneManager.currentScene as dynamic).spawnTrain();
         _lastTrainSpawnMinute = currentMinute;
       }
     }
-
-    // playerが初期化されていない場合は更新をスキップ
-    if (player == null) return;
 
     // 掘りエフェクトの表示/非表示を制御
     if (player.isDigging) {
@@ -674,9 +660,7 @@ class MyGame extends FlameGame
     }
 
     // プレイヤーが落ちたときは元に戻す
-    // playerがnullでないことを確認
-    if (player != null &&
-        sceneManager.currentScene
+    if (sceneManager.currentScene
             is AbstractOutdoorScene && // シーンがAbstractOutdoorSceneであることを確認
         (sceneManager.currentScene as AbstractOutdoorScene).ground !=
             null && // groundがnullでないことを確認
@@ -848,69 +832,114 @@ class MyGame extends FlameGame
   Future<void> routeClear() async {
     player.unbeatable = true;
     isGameClear = true;
+    final state = gameRuntimeState;
+    final currentSceneId = state.currentOutdoorSceneId ?? 'outdoor_1';
+    final bool isFinalStage = currentSceneId == 'outdoor_despair' || currentSceneId == 'outdoor_true';
 
-    // 1. 1秒かけて画面を暗くする (フェードイン)
-    debugPrint('Starting 1s fade in');
-    _fadeOverlay.add(
-      OpacityEffect.to(
-        1.0, // 暗転時の不透明度 (0.0 - 1.0)
-        EffectController(duration: 1),
-        onComplete: () {
-          player.updateHp(player.maxHp);
-          player.updateStress(0);
-          player.addMaxStress(10);
-          timeService.advanceTime(420);
-          // エフェクトが完了したら自身を削除
-          _fadeOverlay.children.whereType<OpacityEffect>().forEach((effect) {
-            effect.removeFromParent();
-          });
-        },
-      ),
-    );
-    await Future.delayed(const Duration(seconds: 1)); // エフェクトの完了を待つ
-    debugPrint('1s fade in complete');
-
-    // 2. 2秒待機
-    debugPrint('Starting 2s hold');
-    await Future.delayed(const Duration(seconds: 1));
-    debugPrint('2s hold complete');
-
-    // 3. player.position をリセットし、200 money 取得
-    player.teleportTo(Vector2(-50, initialGameCanvasSize.y - player.size.y / 2));
-    player.updateMoneyPoints(200);
-    debugPrint('Player position reset');
-
-    // ルートクリア後は常に最初のステージ（outdoor_1）から始まるように戻す
-    // ただし、その週の最大ステージ数（unlockedStageCount）までは電車で移動可能
+    // 現在の属性を確定し、クリア済みリストに追加
+    final currentAttr = missionManager.getCurrentAttribute();
     
-    debugPrint('Switching to initial stage after route clear: outdoor_1');
-    final resetPosition = Vector2(
-        -500,
-        initialGameCanvasSize.y - player.size.y / 2,
-      );
-    player.teleportTo(resetPosition);
-    await sceneManager.loadScene(
-      'outdoor_1',
-      initialPlayerPosition: resetPosition,
-    );
+    // 重複チェックと冗長性の記録
+    if (state.completedRouteIds.contains(currentAttr)) {
+      state.attributeRedundancy[currentAttr] = (state.attributeRedundancy[currentAttr] ?? 0) + 1;
+      final count = state.attributeRedundancy[currentAttr]!;
+      missionManager.unlockRedundancyAchievement(currentAttr, count);
+    } else if (currentAttr != GameRuntimeState.routeNormal) {
+      state.completedRouteIds.add(currentAttr);
+      state.unlockAchievement('clear_$currentAttr', 'ルート初踏破: ${missionManager.getRouteName(currentAttr)}');
+    }
+    state.lastSimulatedAttribute = currentAttr;
 
-    // 4. 1秒かけて画面を元の明るさに戻す (フェードアウト)
-    debugPrint('Starting 1s fade out');
-    _fadeOverlay.add(
-      OpacityEffect.to(
-        0.0, // 透明に戻す
-        EffectController(duration: 1.0),
-      ),
-    );
-    await Future.delayed(const Duration(seconds: 1)); // エフェクトの完了を待つ
-    debugPrint('1s fade out complete');
-    debugPrint('gameClear sequence complete');
+    // 報酬適用
+    _applyScenarioClearRewards(currentAttr);
 
-    gameRuntimeState.currentPlayerPositionX = player.position.x;
-    gameRuntimeState.currentPlayerPositionY = player.position.y;
-    gameRuntimeState.saveGame();
+    // 1. フェードアウト
+    _fadeOverlay.add(OpacityEffect.to(1.0, EffectController(duration: 1.0)));
+    await Future.delayed(const Duration(seconds: 1));
+
+    // 2. 状態更新
+    String nextStageId = 'outdoor_1';
+    if (!isFinalStage) {
+      // 次のステージ番号を計算
+      int nextNum = (currentSceneId == 'outdoor_philosophy') ? 6 : (int.tryParse(currentSceneId.split('_').last) ?? 1) + 1;
+      
+      if (nextNum == 5) nextStageId = 'outdoor_philosophy';
+      else if (nextNum == 6) {
+        bool isTrue = true;
+        for (int i = 1; i <= 4; i++) {
+          if (!state.subRouteConfirmedStages.contains('outdoor_$i')) { isTrue = false; break; }
+        }
+        nextStageId = isTrue ? 'outdoor_true' : 'outdoor_despair';
+      } else {
+        nextStageId = 'outdoor_$nextNum';
+      }
+    } else {
+      // シナリオ完了時
+      state.scenarioCount++;
+      state.attributeScores.forEach((k, v) => state.attributeScores[k] = 0.0);
+      state.activeRouteId = null;
+      state.triggeredRouteIds.clear();
+      state.triggeredMidRouteIds.clear();
+      state.subRouteConfirmedStages.clear();
+      
+      // 明示的に屋外シーンIDをリセット
+      state.currentOutdoorSceneId = 'outdoor_1';
+      nextStageId = 'outdoor_1';
+      debugPrint('Scenario completed. Starting Scenario ${state.scenarioCount} from Stage 1.');
+    }
+
+    // 3. テレポートとリセット
+    // 常に x = -50 から開始
+    final resetPos = Vector2(-50, initialGameCanvasSize.y - player.size.y / 2);
+    player.teleportTo(resetPos);
+    cameraController.resetBackgroundParallax();
+    cameraController.setOutdoorSceneCamera();
+
+    debugPrint('Transitioning to: $nextStageId (Scenario: ${state.scenarioCount})');
+    await sceneManager.loadScene(nextStageId, initialPlayerPosition: resetPos);
+
+    // 4. フェードイン
+    _fadeOverlay.add(OpacityEffect.to(0.0, EffectController(duration: 1.0)));
+    player.updateHp(player.maxHp);
+    player.updateStress(0);
+    timeService.advanceTime(420);
+    
     isGameClear = false;
     player.unbeatable = false;
+  }
+
+  /// シナリオクリア時の報酬適用
+  void _applyScenarioClearRewards(String attribute) {
+    final state = gameRuntimeState;
+    
+    // 基本報酬
+    state.currency += 500;
+    state.miningPoints += 100;
+    
+    // 属性に応じたステータス永続強化
+    switch (attribute) {
+      case GameRuntimeState.routeViolence:
+        state.hpBonus += 100.0; // HP最大値アップ
+        player.maxHp += 100.0;
+        break;
+      case GameRuntimeState.routeEfficiency:
+        state.movementSpeedBonus += 0.1; // 速度アップ
+        break;
+      case GameRuntimeState.routeEmpathy:
+        state.stressBonus += 20.0; // ストレス耐性アップ
+        state.maxStress += 20.0;
+        break;
+      case GameRuntimeState.routePhilosophy:
+        state.throwPowerBonus += 0.2; // 投擲・干渉力アップ
+        break;
+    }
+
+    // 特定の周回数で能力解禁
+    if (state.scenarioCount >= 2) {
+      state.canRun = true; // ダッシュ解禁
+    }
+
+    debugPrint('Applied Rewards for $attribute clear. Scenario: ${state.scenarioCount}');
   }
 
   @override

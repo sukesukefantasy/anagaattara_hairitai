@@ -4,6 +4,7 @@ import 'dart:math';
 import '../../../main.dart';
 import '../common/hitboxes/interact_hitbox.dart';
 import '../../../system/storage/game_runtime_state.dart';
+import '../item/item.dart';
 
 class Npc extends SpriteComponent with HasGameReference<MyGame> {
   final String name;
@@ -45,8 +46,9 @@ class Npc extends SpriteComponent with HasGameReference<MyGame> {
 
     // 吹き出しアイコン（簡易版としてSpriteで実装、必要に応じて画像を用意）
     _speechBubble = SpriteComponent(
-      sprite: await Sprite.load('CITY_MEGA.png', srcPosition: Vector2(220, 18), srcSize: Vector2(16, 16)), // 適当なアイコン
-      position: Vector2(0, -size.y - 10),
+      sprite: await Sprite.load('CITY_MEGA.png',
+          srcPosition: Vector2(1381, 403), srcSize: Vector2(16, 16)), // 白い吹き出し
+      position: Vector2(0, -size.y + 12),
       size: Vector2(16, 16),
       anchor: Anchor.bottomCenter,
       priority: 10, // 親（NPC）より前面に
@@ -68,9 +70,9 @@ class Npc extends SpriteComponent with HasGameReference<MyGame> {
     // 満足したNPCやミッションがない場合は吹き出しを消す
     _speechBubble.opacity = _hasMission ? 1.0 : 0.0;
     
-    // 吹き出しをふわふわさせる
+    // 吹き出しをふわふわさせる (base: -size.y + 12)
     if (_hasMission) {
-      _speechBubble.position.y = -size.y - 10 + sin(game.timeService.totalPlayTime * 3) * 2;
+      _speechBubble.position.y = -size.y + 12 + sin(game.timeService.totalPlayTime * 3) * 2;
     }
   }
 
@@ -80,15 +82,15 @@ class Npc extends SpriteComponent with HasGameReference<MyGame> {
     // ステージ4の特殊処理
     if (state.currentOutdoorSceneId == 'outdoor_4') {
       if (isSatisfied) {
-        game.windowManager.showDialog(["[$name]", "「石ころのおかげで助かったよ、ありがとう。」"]);
+        game.windowManager.showDialog(["[$name]", "「希少な鉱石のおかげで助かったよ、ありがとう。」"]);
         return;
       }
 
-      final hasStone = game.player.itemBag.getItemCount('石') > 0;
+      final hasStone = game.player.itemBag.getItemCount('希少な鉱石') > 0 || game.player.itemBag.getItemCount('石') > 0;
       
       if (hasStone) {
         game.windowManager.showDialog(
-          ["[$name]", "「おや、君。もしかして『石ころ』を持っていないかい？」", "「このあたりでは貴重な資源なんだ。1つ分けてくれないか？」"],
+          ["[$name]", "「おや、君。もしかして『希少な鉱石』を持っていないかい？」", "「このあたりでは貴重な資源なんだ。1つ分けてくれないか？」"],
           options: ["あげる", "あげない"],
           onSelect: (index) {
             if (index == 0) {
@@ -97,7 +99,7 @@ class Npc extends SpriteComponent with HasGameReference<MyGame> {
           }
         );
       } else {
-        game.windowManager.showDialog(["[$name]", "「この世界は荒廃してしまった……。『石ころ』一つ見つからないよ。」"]);
+        game.windowManager.showDialog(["[$name]", "「この世界は荒廃してしまった……。『希少な鉱石』一つ見つからないよ。」"]);
       }
       return;
     }
@@ -111,7 +113,7 @@ class Npc extends SpriteComponent with HasGameReference<MyGame> {
       onFinish: () {
         // 汎用的な共感ルートの進行（以前の仕様）
         if (state.currentOutdoorSceneId == 'outdoor_4' && !isSatisfied) {
-          game.routeManager.onAction(GameRuntimeState.routeEmpathy);
+          game.missionManager.onAction(GameRuntimeState.routeEmpathy);
         }
       },
     );
@@ -119,15 +121,35 @@ class Npc extends SpriteComponent with HasGameReference<MyGame> {
 
   void _onGiveStone() {
     final state = game.gameRuntimeState;
-    game.player.itemBag.removeItem('石');
+    if (game.player.itemBag.getItemCount('希少な鉱石') > 0) {
+      game.player.itemBag.removeItem('希少な鉱石');
+    } else {
+      game.player.itemBag.removeItem('石');
+    }
     isSatisfied = true;
     state.satisfiedNpcIds.add(uniqueId);
     
-    // ルートマネージャーを通じてアクションを通知（giftCountが増加し、必要数に達すればルート確定）
-    game.routeManager.onAction(GameRuntimeState.routeEmpathy);
+    // ルートマネージャーを通じてアクションを通知（scoreが増加し、必要数に達すればルート確定）
+    game.missionManager.onAction(GameRuntimeState.routeEmpathy, 5.0);
     
     game.windowManager.showDialog(
       ["[$name]", "「おお、ありがとう！ これで少しはマシな生活ができそうだ。」"],
     );
+  }
+
+  void dieAndDropItem() {
+    // 即死 + アイテムドロップ
+    final dropItem = ItemFactory.createItemByName('希少な鉱石', absolutePosition.clone());
+    if (dropItem != null) {
+      game.world.add(dropItem);
+      dropItem.physicsBehavior.setEnabled(true);
+      dropItem.physicsBehavior.velocity = Vector2(0, -100);
+    }
+    
+    // NPCを消去
+    removeFromParent();
+    
+    // Violenceスコアを大幅に加算（禁忌を犯した）
+    game.missionManager.onAction(GameRuntimeState.routeViolence, 10.0);
   }
 }

@@ -7,6 +7,7 @@ import 'package:flame/particles.dart';
 
 import '../../../../main.dart';
 import '../../item/item.dart';
+import '../../../system/storage/game_runtime_state.dart';
 
 
 class UnderGround extends RectangleComponent
@@ -166,6 +167,37 @@ class UnderGround extends RectangleComponent
       game.initialGameCanvasSize.y + _groundHeight,
     );
     updateHitboxes();
+
+    // 聖域のアンカー：「意味を忘れないためのメモ」を配置（未所持の場合）
+    _spawnAnchorItem();
+
+    _playSoundEffectWithSoloud();
+    _spawnDiggingParticles(Vector2.zero()); // 初期化用（表示されない）
+  }
+
+  void _spawnAnchorItem() {
+    final state = game.gameRuntimeState;
+    // すでに所持しているか、ワールドに存在する場合はスキップ
+    if ((state.itemCounts['意味を忘れないためのメモ'] ?? 0) > 0) return;
+    
+    // 最初の掘削地点付近、または入口付近に配置
+    final anchorItem = ItemFactory.createItemByName(
+      '意味を忘れないためのメモ',
+      position + Vector2(UnderGround.digAreaSize * 2, UnderGround.digAreaSize * 2),
+    );
+    if (anchorItem != null) {
+      game.world.add(anchorItem);
+      debugPrint('UnderGround: Anchor item spawned at ${anchorItem.position}');
+    }
+
+    // おじさんの手書きノート（アーカイブ）を配置
+    final noteItem = ItemFactory.createItemByName(
+      'おじさんの手書きノート',
+      position + Vector2(UnderGround.digAreaSize * 4, UnderGround.digAreaSize * 2),
+    );
+    if (noteItem != null) {
+      game.world.add(noteItem);
+    }
   }
 
   void addDugArea(Vector2 position) {
@@ -181,12 +213,15 @@ class UnderGround extends RectangleComponent
       game.gameRuntimeState.dugAreas[sceneId] ??= [];
       game.gameRuntimeState.dugAreas[sceneId]!.add('${dugAreaWorldPos.x},${dugAreaWorldPos.y}');
       
+      // 哲学ルート進行：地下を掘る行為は好奇心・探求心とみなす
+      game.missionManager.onAction(GameRuntimeState.routePhilosophy, 0.5);
+      
       //debugPrint('addDugArea: $position');
       updateHitboxes();
       _playSoundEffectWithSoloud();
       _spawnDiggingParticles(dugAreaWorldPos); // dugAreaWorldPos を渡す
 
-      // "石"アイテムを2~4個ランダムに生成
+      // "希少な鉱石"アイテムを2~4個ランダムに生成
       final int stoneCount = _random.nextInt(3) + 2; // (0~2) + 2 = 2~4
       for (int i = 0; i < stoneCount; i++) {
         // 掘ったエリア内のランダムな位置に配置
@@ -210,9 +245,6 @@ class UnderGround extends RectangleComponent
       debugPrint(
         "Passed SoLoud.instance not ready or sound not loaded, skipping sound effect.",
       );
-      return;
-    }
-    if (game.player == null) {
       return;
     }
 
@@ -309,10 +341,6 @@ class UnderGround extends RectangleComponent
   }
 
   bool isDug(Vector2 position) {
-    if (position == null) {
-      debugPrint('isDug: position is null');
-      return false;
-    }
     // _getGridCellTopLeftWorldでグリッドセルのワールド座標を取得し、それがdugAreasに含まれるか確認
     return dugAreas.contains(getGridCellTopLeftWorld(position));
   }
@@ -323,12 +351,12 @@ class UnderGround extends RectangleComponent
     final double playerX = playerWorldPosition.x;
     final double underGroundTopY = position.y; // UnderGroundのワールドY座標
 
-    if (game.player!.inUnderGround) {
+    if (game.player.inUnderGround) {
       return false; // プレイヤーが地下にいる場合は判定しない
     }
 
     // プレイヤーの足元のY座標を使用
-    final double playerFeetY = playerWorldPosition.y + game.player!.size.y / 2;
+    final double playerFeetY = playerWorldPosition.y + game.player.size.y / 2;
     final double groundSurfaceY = game.initialGameCanvasSize.y;
 
     // プレイヤーの足元が地面と地下の境界付近にいるかを確認
@@ -404,11 +432,8 @@ class UnderGround extends RectangleComponent
 
   @override
   void render(Canvas canvas) {
-    if (game.player == null) {
-      return;
-    }
-
-    if (game.player!.inUnderGround) {
+    if (game.player.inUnderGround) {
+      // 背景描画
       final repeatCount = (size.x / _underGroundSprite.srcSize.x).ceil();
       for (int i = 0; i < repeatCount; i++) {
         _underGroundSprite.render(
@@ -416,13 +441,11 @@ class UnderGround extends RectangleComponent
           position: Vector2(i * _underGroundSprite.srcSize.x, 0),
           size: Vector2(_underGroundSprite.srcSize.x + 1, size.y),
         );
-        canvas.drawRect(
-          Rect.fromPoints(
-            Offset(i * 1024.0, 0),
-            Offset((i + 1) * 1024.0, size.y),
-          ),
-          overlayPaint,
-        );
+      }
+
+      // 真実のログアーカイブの存在を示唆（デバッグ用・将来的にコンポーネント化）
+      if (game.gameRuntimeState.missionTrueLogs.isNotEmpty) {
+        // 地下のどこかにアーカイブが存在するという演出
       }
 
       // 掘削済みエリアを描画

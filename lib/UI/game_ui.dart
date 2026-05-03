@@ -1,11 +1,13 @@
 ﻿import 'package:flutter/material.dart';
 import '../main.dart';
 import '../game_manager/time_service.dart';
+import '../game_manager/mission_manager.dart';
+import '../system/storage/game_runtime_state.dart';
 import 'window_manager.dart';
 import 'windows/pause_window.dart';
 import 'windows/message_window.dart';
 import 'windows/item_bag_window.dart';
-import 'package:flame/components.dart';
+import 'windows/calibration_window.dart';
 import '../component/item/item.dart';
 
 class GameUI extends StatefulWidget {
@@ -43,6 +45,9 @@ class GameUI extends StatefulWidget {
 
   // Mission Glitch Notifier
   static final ValueNotifier<int> missionGlitchNotifier = ValueNotifier<int>(0);
+
+  // Attribute PIPs Pulse Notifier (通知したい属性IDを渡す)
+  static final ValueNotifier<String?> attributePulseNotifier = ValueNotifier<String?>(null);
 
   // Action button state notifiers
   static final ValueNotifier<ActionButtonState> _jumpButtonStateNotifier =
@@ -141,6 +146,75 @@ class GameUI extends StatefulWidget {
 
   @override
   State<GameUI> createState() => _GameUIState();
+}
+
+/// 侵食走査線エフェクト
+class _ScanningLineEffect extends StatefulWidget {
+  final double erosionLevel;
+  const _ScanningLineEffect({required this.erosionLevel});
+
+  @override
+  State<_ScanningLineEffect> createState() => _ScanningLineEffectState();
+}
+
+class _ScanningLineEffectState extends State<_ScanningLineEffect> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return CustomPaint(
+          painter: _ScanningLinePainter(
+            progress: _controller.value,
+            erosionLevel: widget.erosionLevel,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ScanningLinePainter extends CustomPainter {
+  final double progress;
+  final double erosionLevel;
+  _ScanningLinePainter({required this.progress, required this.erosionLevel});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.white.withOpacity(0.05 + (erosionLevel * 0.1))
+      ..strokeWidth = 1.0;
+
+    // メインの走査線
+    final double y = size.height * progress;
+    canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+
+    // 侵食度に応じた不規則なノイズ線
+    if (erosionLevel > 0.3) {
+      final random = (progress * 100).toInt();
+      if (random % 10 < (erosionLevel * 5)) {
+        final double noiseY = size.height * ((progress + 0.2) % 1.0);
+        canvas.drawLine(Offset(0, noiseY), Offset(size.width, noiseY), paint..color = Colors.white.withOpacity(0.02));
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_ScanningLinePainter oldDelegate) => true;
 }
 
 class _GameUIState extends State<GameUI> {
@@ -317,85 +391,213 @@ class _GameUIState extends State<GameUI> {
             const SizedBox(height: 4),
             _buildPointsContent(effectiveFontSize),
             const SizedBox(height: 4),
-            _buildMissionContent(effectiveFontSize),
+            _buildAttributePips(effectiveFontSize),
+            const SizedBox(height: 4),
+            _buildCalibrationDisplay(effectiveFontSize),
+            const SizedBox(height: 4),
+            _buildUndergroundHint(effectiveFontSize),
+            const SizedBox(height: 4),
+            _buildCommunicationWindow(effectiveFontSize),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildMissionContent(double fontSize) {
+  Widget _buildUndergroundHint(double fontSize) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: widget.game.player.inUnderGroundNotifier,
+      builder: (context, inUnderground, child) {
+        if (!inUnderground) return const SizedBox.shrink();
+        
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: Colors.green.withOpacity(0.2),
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: Colors.greenAccent.withOpacity(0.5), width: 0.5),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.security, size: fontSize * 0.8, color: Colors.greenAccent),
+              const SizedBox(width: 4),
+              Text(
+                'STATUS: RAW_DATA_ACCESS (SANCTUARY)',
+                style: TextStyle(
+                  color: Colors.greenAccent,
+                  fontSize: fontSize * 0.6,
+                  fontFamily: 'TRS-Million-Rg',
+                  letterSpacing: 1.0,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildCalibrationDisplay(double fontSize) {
+    return AnimatedBuilder(
+      animation: widget.game.gameRuntimeState,
+      builder: (context, child) {
+        final state = widget.game.gameRuntimeState;
+        if (state.scenarioCount <= 1) return const SizedBox.shrink();
+        
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: Colors.blueGrey.withOpacity(0.3),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.tune, size: fontSize * 0.8, color: Colors.white70),
+              const SizedBox(width: 4),
+              Text(
+                'CALIBRATED: ${(state.speedCalibrationScale * 100).toInt()}%',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: fontSize * 0.7,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildAttributePips(double fontSize) {
+    return AnimatedBuilder(
+      animation: Listenable.merge([widget.game.gameRuntimeState, GameUI.attributePulseNotifier]),
+      builder: (context, child) {
+        final scores = widget.game.gameRuntimeState.attributeScores;
+        final currentAttr = widget.game.missionManager.getCurrentAttribute();
+        final pulseAttr = GameUI.attributePulseNotifier.value;
+        
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildPip(GameRuntimeState.routeViolence, Colors.redAccent, scores[GameRuntimeState.routeViolence] ?? 0, currentAttr == GameRuntimeState.routeViolence, pulseAttr == GameRuntimeState.routeViolence),
+            const SizedBox(width: 4),
+            _buildPip(GameRuntimeState.routeEfficiency, Colors.blueAccent, scores[GameRuntimeState.routeEfficiency] ?? 0, currentAttr == GameRuntimeState.routeEfficiency, pulseAttr == GameRuntimeState.routeEfficiency),
+            const SizedBox(width: 4),
+            _buildPip(GameRuntimeState.routeEmpathy, Colors.orange, scores[GameRuntimeState.routeEmpathy] ?? 0, currentAttr == GameRuntimeState.routeEmpathy, pulseAttr == GameRuntimeState.routeEmpathy),
+            const SizedBox(width: 4),
+            _buildPip(GameRuntimeState.routePhilosophy, Colors.greenAccent, scores[GameRuntimeState.routePhilosophy] ?? 0, currentAttr == GameRuntimeState.routePhilosophy, pulseAttr == GameRuntimeState.routePhilosophy),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildPip(String attr, Color color, double score, bool isActive, bool isPulsing) {
+    final double size = isPulsing ? 14.0 : (isActive ? 10.0 : 6.0);
+    final double opacity = isPulsing ? 1.0 : (score > 0 ? (isActive ? 1.0 : 0.5) : 0.1);
+    
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 100),
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: color.withOpacity(opacity),
+        shape: BoxShape.circle,
+        boxShadow: (isActive || isPulsing) ? [
+          BoxShadow(color: color.withOpacity(0.5), blurRadius: isPulsing ? 8 : 4, spreadRadius: isPulsing ? 2 : 1)
+        ] : null,
+      ),
+    );
+  }
+
+  Widget _buildCommunicationWindow(double fontSize) {
     final isMobile = widget.screenSize.width < 600 || widget.screenSize.height < 500;
+    final double responsiveFontSize = isMobile ? fontSize * 0.8 : fontSize;
+    final double windowWidthScale = isMobile ? 0.7 : 0.4;
+    
     return AnimatedBuilder(
       animation: Listenable.merge([widget.game.gameRuntimeState, GameUI.missionGlitchNotifier]),
       builder: (context, child) {
         final state = widget.game.gameRuntimeState;
         final mission = state.currentMission;
-        if (mission == null) return const SizedBox.shrink();
+        if (mission == null || mission.isEmpty) return const SizedBox.shrink();
 
-        final stageId = state.currentOutdoorSceneId ?? 'outdoor_1';
-        final isConfirmed = state.subRouteConfirmedStages.contains(stageId);
+        final MissionStyle style = widget.game.missionManager.getMissionStyle();
         
         // グリッチ演出用のオフセット
         final glitchValue = GameUI.missionGlitchNotifier.value;
-        final double offsetX = glitchValue > 0 ? (glitchValue % 2 == 0 ? 2 : -2) : 0;
-        final double offsetY = glitchValue > 0 ? (glitchValue % 3 == 0 ? 1 : -1) : 0;
+        final double noise = glitchValue > 0 ? (glitchValue.toDouble() * style.noiseIntensity) : 0;
+        final double offsetX = noise > 0 ? (glitchValue % 2 == 0 ? noise : -noise) : 0;
+        final double offsetY = noise > 0 ? (glitchValue % 3 == 0 ? noise / 2 : -noise / 2) : 0;
 
         // 日本語の改行を助けるためにゼロ幅スペースを挿入
-        final String rawText = glitchValue > 5 ? "ERROR: UNKNOWN_ACTION" : mission;
+        final String rawText = glitchValue > 15 ? "SYSTEM_ERROR" : mission;
         final String missionText = rawText.split('').join('\u{200B}');
         
         return Transform.translate(
           offset: Offset(offsetX, offsetY),
           child: Container(
-            constraints: BoxConstraints(maxWidth: widget.screenSize.width * (isMobile ? 0.6 : 0.4)), // 幅を制限して改行を促す
+            constraints: BoxConstraints(maxWidth: widget.screenSize.width * windowWidthScale),
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             decoration: BoxDecoration(
-              color: isConfirmed 
-                  ? Colors.purple.withOpacity(0.8)
-                  : Colors.orangeAccent.withOpacity(0.7),
-              borderRadius: BorderRadius.circular(5),
+              color: style.bgColor.withOpacity(0.8),
+              borderRadius: BorderRadius.circular(style.isOperator ? 12 : 2),
               border: Border.all(
-                color: glitchValue > 0 ? Colors.red : Colors.white, 
-                width: glitchValue > 0 ? 2 : 1
+                color: (glitchValue > 0 && style.hasGlitch) ? Colors.red : (style.isOperator ? Colors.white70 : Colors.white), 
+                width: (glitchValue > 0 && style.hasGlitch) ? 2 : (style.isOperator ? 1.5 : 1)
               ),
-              boxShadow: isConfirmed ? [
-                BoxShadow(color: Colors.purpleAccent.withOpacity(0.5), blurRadius: 4, spreadRadius: 1)
-              ] : null,
+              boxShadow: style.hasGlitch ? [
+                BoxShadow(color: style.bgColor.withOpacity(0.5), blurRadius: 4, spreadRadius: 1)
+              ] : (style.isOperator ? [
+                BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 4, offset: const Offset(2, 2))
+              ] : null),
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min, // コンテナが幅を使い切らないように
-              crossAxisAlignment: CrossAxisAlignment.center,
+            child: Stack(
               children: [
-                // プレイヤーの顔アイコン
-                Container(
-                  width: fontSize * 2.5, // アイコンを大きく
-                  height: fontSize * 2.5,
-                  margin: const EdgeInsets.only(right: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.5),
-                    shape: BoxShape.circle,
-                  ),
-                  child: ClipOval(
-                    child: Image.asset(
-                      'assets/images/player_icon.png',
-                      errorBuilder: (context, error, stackTrace) => 
-                        Icon(Icons.face, size: fontSize * 1.8, color: Colors.black54),
+                // 走査線エフェクト (地上かつ非オペレーター時のみ)
+                if (!style.isOperator && !widget.game.player.inUnderGround)
+                  Positioned.fill(child: _ScanningLineEffect(erosionLevel: widget.game.missionManager.getErosionRate())),
+                
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    // アイコンの表示
+                    Container(
+                      width: responsiveFontSize * 2.2,
+                      height: responsiveFontSize * 2.2,
+                      margin: const EdgeInsets.only(right: 6),
+                      decoration: BoxDecoration(
+                        color: style.isOperator ? Colors.white.withOpacity(0.8) : Colors.black.withOpacity(0.3),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 1),
+                      ),
+                      child: ClipOval(
+                        child: Image.asset(
+                          'assets/images/${style.iconPath}',
+                          errorBuilder: (context, error, stackTrace) => 
+                            Icon(style.isOperator ? Icons.face : Icons.terminal, size: responsiveFontSize * 1.5, color: Colors.white70),
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-                Expanded(
-                  child: Text(
-                    missionText,
-                    style: TextStyle(
-                      fontSize: fontSize,
-                      fontWeight: FontWeight.bold,
-                      color: isConfirmed ? Colors.white : Colors.black,
-                      fontFamily: isConfirmed ? 'TRS-Million-Rg' : null,
-                      height: 1.1,
+                    Expanded(
+                      child: Text(
+                        missionText,
+                        style: TextStyle(
+                          fontSize: responsiveFontSize * style.fontSizeScale,
+                          fontWeight: FontWeight.bold,
+                          color: style.color,
+                          fontFamily: 'TRS-Million-Rg',
+                          height: 1.1,
+                          decoration: TextDecoration.none,
+                        ),
+                        softWrap: true,
+                      ),
                     ),
-                    softWrap: true,
-                  ),
+                  ],
                 ),
               ],
             ),
@@ -404,8 +606,6 @@ class _GameUIState extends State<GameUI> {
       },
     );
   }
-
-
 
   Widget _buildDirectionalButtons() {
     final dpadSize = widget.screenSize.width * 0.25;
@@ -541,7 +741,6 @@ class _GameUIState extends State<GameUI> {
       GameUI._rightButtonStateNotifier.value = DirectionButtonState.normal;
     }
     // _updateUpButtonStateなどはPlayer側で定期的に呼ばれるか、listenerで同期される
-    // ここでは単純に押下状態を解除する
   }
 
   Widget _buildActionButtons(double fontSize) {
@@ -667,7 +866,8 @@ class _GameUIState extends State<GameUI> {
             if (widget.game.player.carriedItem != null) {
               final carriedItem = widget.game.player.carriedItem!;
               final player = widget.game.player;
-              player.velocity != Vector2.zero()
+              // プレイヤーの移動速度（velocity.x）が一定以上なら投げる、そうでなければ置く
+              player.velocity.x.abs() > 10.0
                   ? player.throwWorldObject(carriedItem)
                   : player.placeWorldObject(carriedItem);
             }
@@ -1036,6 +1236,31 @@ class _GameUIState extends State<GameUI> {
     );
   }
 
+  Widget _buildCalibrationButton(double fontSize) {
+    return ElevatedButton(
+      onPressed: () {
+        widget.windowManager.showWindow(
+          GameWindowType.calibration,
+          CalibrationWindow(
+            windowManager: widget.windowManager,
+            state: widget.game.gameRuntimeState,
+          ),
+        );
+      },
+      style: ElevatedButton.styleFrom(
+        backgroundColor: Colors.blueGrey[800],
+        padding: EdgeInsets.all(widget.screenSize.width * 0.02),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        side: const BorderSide(color: Colors.blueAccent, width: 1),
+      ),
+      child: Icon(
+        Icons.tune,
+        color: Colors.white,
+        size: widget.screenSize.width * 0.03,
+      ),
+    );
+  }
+
   Widget _buildTopRightButtons(double fontSize) {
     return Positioned(
       top: widget.screenSize.height * 0.02,
@@ -1046,6 +1271,8 @@ class _GameUIState extends State<GameUI> {
           _buildPauseButton(fontSize),
           SizedBox(height: widget.screenSize.height * 0.01),
           _buildItemBagButton(fontSize),
+          SizedBox(height: widget.screenSize.height * 0.01),
+          _buildCalibrationButton(fontSize),
           SizedBox(height: widget.screenSize.height * 0.01),
           _buildTestTextBoxButton(fontSize),
         ],
@@ -1063,7 +1290,7 @@ class _GameUIState extends State<GameUI> {
             fontSize: fontSize,
             onFinish: () {
               widget.windowManager.hideWindow();
-              Item.spawnTestItems(widget.game, widget.game.player);
+              ItemFactory.spawnTestItems(widget.game, widget.game.player);
             },
           ),
         );
@@ -1080,7 +1307,6 @@ class _GameUIState extends State<GameUI> {
       ),
     );
   }
-
 }
 
 enum DirectionButtonState { normal, pressed, disabled, notice }

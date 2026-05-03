@@ -1,7 +1,6 @@
 ﻿import 'dart:math';
 import 'package:flame/collisions.dart';
 import 'package:flame/components.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flame/sprite.dart';
 import '../../main.dart';
 import '../player.dart';
@@ -9,10 +8,10 @@ import 'enemy_base.dart'; // EnemyBaseをインポート
 import '../game_stage/building/station.dart'; // Stationをインポート
 
 class WalkingEnemy extends EnemyBase {
-  late double _initialY;
   double _walkCycleTime = 0.0;
   static const double _bounceHeight = 5.0; // 上下運動の高さ
   final double _walkCycleSpeed; // finalに変更
+  late double _groundY; // 地面の高さ（ノックバックからの復帰用）
   bool _readyToPlaySound = true; // 新しいフラグ
   bool _isOnSolidPlatform = false; // 新しいフラグ
   double _footstepSoundCooldown = 0.0; // クールダウンタイマー
@@ -24,6 +23,7 @@ class WalkingEnemy extends EnemyBase {
     required super.direction, // directionを受け取る
     double walkCycleSpeed = 5.0, // パラメータ名からアンダースコアを削除
     super.priority = 45, // 優先度を45に設定してリンターエラーを解消
+    super.mass = 1.0, // 質量を指定
   })  : _walkCycleSpeed = walkCycleSpeed {
     anchor = Anchor.bottomCenter; // アンカーを底辺中央に設定
   }
@@ -37,7 +37,7 @@ class WalkingEnemy extends EnemyBase {
   @override
   Future<void> onLoad() async {
     await super.onLoad();
-    _initialY = position.y; // onLoadで初期Y座標を設定
+    _groundY = position.y;
 
     final enemyImage = await game.images.load('enemy.png');
 
@@ -81,8 +81,18 @@ class WalkingEnemy extends EnemyBase {
 
     // 固体プラットフォームの上にいる場合は上下運動を停止
     if (!_isOnSolidPlatform) {
-      final newY = _initialY - sin(_walkCycleTime) * _bounceHeight;
-      position.y = newY;
+      // position.y を直接書き換えるのではなく、変化量だけを適用する
+      final oldCycleY = sin(_walkCycleTime - dt * _walkCycleSpeed) * _bounceHeight;
+      final newCycleY = sin(_walkCycleTime) * _bounceHeight;
+      position.y -= (newCycleY - oldCycleY); // サイン波による上下移動を適用
+
+      // 簡易的な重力: 本来の地面位置 (_groundY) より浮いている場合は下に引き戻す
+      if (position.y < _groundY) {
+        position.y += 150 * dt; // 秒間150ピクセルで落下
+        if (position.y > _groundY) {
+          position.y = _groundY;
+        }
+      }
     }
 
     // 移動範囲の制限: directionに応じて判定を修正

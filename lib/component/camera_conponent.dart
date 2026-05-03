@@ -16,8 +16,9 @@ class CameraController extends Component with HasGameReference<MyGame> {
 
   // OutdoorSceneのカメラ設定
   void setOutdoorSceneCamera() {
-    game.camera.viewfinder.anchor = Anchor(Anchor.bottomCenter.x, Anchor.bottomCenter.y - 0.2); // OutdoorSceneはbottomCenter
-    game.camera.viewfinder.zoom = game.minZoomToFit;
+    game.camera.viewfinder.anchor =
+        Anchor(Anchor.bottomCenter.x, Anchor.bottomCenter.y - 0.2);
+    game.camera.viewfinder.zoom = game.minZoomToFit * 1.5; // 1.5倍に拡大
     game.camera.follow(_player!); // 全方向追従
   }
 
@@ -76,7 +77,7 @@ class CameraController extends Component with HasGameReference<MyGame> {
 
     // 掘削中は、プレイヤーが中心に来るように
     game.camera.viewfinder.anchor = Anchor.center;
-    //game.camera.follow(_player!);
+    game.camera.viewfinder.zoom = game.minZoomToFit * 1.5; // 地下でもズームを維持
   }
 
   // カメラの目標Y座標を計算するヘルパーメソッド (もはや不要、上記メソッドで直接計算)

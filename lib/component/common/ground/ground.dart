@@ -1,4 +1,4 @@
-import 'package:flame/collisions.dart';
+﻿import 'package:flame/collisions.dart';
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 
@@ -11,6 +11,7 @@ class Ground extends RectangleComponent
   final double groundHeight;
   final bool isScrollForward;
   final bool loop;
+  final Color? overlayColor;
 
   Ground({
     required this.groundWidth,
@@ -19,6 +20,7 @@ class Ground extends RectangleComponent
     this.isScrollForward = false,
     this.loop = false,
     Sprite? groundSprite,
+    this.overlayColor,
   }) : super(size: Vector2(groundWidth, groundHeight)) {
     _groundSprite = groundSprite;
   }
@@ -68,6 +70,11 @@ class Ground extends RectangleComponent
           position: isScrollForward ? Vector2.zero() : Vector2(-_groundSprite!.srcSize.x, 0),
           size: size,
         );
+      }
+
+      if (overlayColor != null) {
+        final paint = Paint()..color = overlayColor!..blendMode = BlendMode.srcATop;
+        canvas.drawRect(Rect.fromLTWH(isScrollForward ? 0 : -size.x, 0, size.x, size.y), paint);
       }
     } catch (e) {
       debugPrint('Error rendering ground: $e');

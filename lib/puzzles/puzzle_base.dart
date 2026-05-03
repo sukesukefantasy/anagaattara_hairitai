@@ -4,8 +4,8 @@ import '../../main.dart';
 /// パズルゲームの基底クラス
 abstract class PuzzleBase {
   final String id;
-  final String title;
-  final String description;
+  String title;
+  String description;
 
   PuzzleBase({
     required this.id,

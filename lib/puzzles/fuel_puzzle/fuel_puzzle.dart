@@ -65,6 +65,12 @@ class _FuelPuzzleWidgetState extends State<_FuelPuzzleWidget> {
     _timer?.cancel();
     _timer = null;
     _checkWin();
+    setState(() {
+      while (widget.puzzle.currentFuel > 5) {
+        widget.puzzle.currentFuel -= 1.0;
+        debugPrint('fuel decrease: ${widget.puzzle.currentFuel}');
+      }
+    });
   }
 
   void _checkWin() {

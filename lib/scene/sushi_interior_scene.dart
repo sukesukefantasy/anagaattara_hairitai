@@ -118,7 +118,7 @@ class SushiInteriorScene extends GameScene {
       for (int i = 0; i < 5; i++) {
         await add(DestructibleObject(
           type: DestructibleType.street, // 3回ヒット
-          itemName: '高密度エネルギーキューブ',
+          itemName: '高出力電源',
           uniqueId: 'sushi_interior_furniture_$i',
           position: Vector2(200 + (i * 100), _backgroundComponent!.position.y + _backgroundComponent!.size.y - 5),
           size: Vector2(32, 32),

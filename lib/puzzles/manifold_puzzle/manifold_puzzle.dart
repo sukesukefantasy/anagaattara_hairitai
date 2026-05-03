@@ -37,8 +37,9 @@ class ManifoldPiece {
 
 class ManifoldPuzzle extends PuzzleBase {
   late List<ManifoldPiece> pieces;
+  final String? activeAttribute;
 
-  ManifoldPuzzle()
+  ManifoldPuzzle({this.activeAttribute})
       : super(
           id: 'manifold_puzzle',
           title: 'エンジン・マニホールドの構築',
@@ -65,7 +66,7 @@ class ManifoldPuzzle extends PuzzleBase {
         icon: Icons.battery_charging_full_rounded,
         color: Colors.orangeAccent,
         targetRelativePos: const Offset(0.2, 0.5),
-        targetRotation: 180,
+        targetRotation: 0,
       ),
       ManifoldPiece(
         id: 'nozzle',
@@ -73,35 +74,37 @@ class ManifoldPuzzle extends PuzzleBase {
         icon: Icons.balcony_rounded,
         color: Colors.redAccent,
         targetRelativePos: const Offset(0.2, 0.75),
-        targetRotation: 90,
+        targetRotation: 0,
       ),
     ];
 
     // 現在のシーンのコレクションアイテムを追加
     final state = GameRuntimeState();
     final stageId = state.currentOutdoorSceneId ?? 'outdoor_1';
-    final routeItems = {
-      'outdoor_1': {'name': '石', 'sprite': 'stone.png'},
-      'outdoor_2': {'name': '赤い果実', 'sprite': 'heart.png'},
-      'outdoor_3': {'name': '高密度エネルギーキューブ', 'sprite': 'energy_cube.png'},
-      'outdoor_4': {'name': '思い出の品々', 'sprite': 'warm_memory.png'},
-      'outdoor_philosophy_main': {'name': '掌握された自意識', 'sprite': 'player_icon.png'},
-      'outdoor_philosophy_sub': {'name': 'レスポンス', 'sprite': 'ai_icon.png'},
-      'outdoor_despair': {'name': '破損したメモリ', 'sprite': 'forbidden_data.png'},
-      'outdoor_true': {'name': 'レスポンス', 'sprite': 'ai_icon.png'},
+    
+    // アイテム名とスプライトの対応 (ItemFactoryの定義に合わせる)
+    final Map<String, Map<String, String>> routeItems = {
+      'outdoor_1': {'name': '希少な鉱石', 'sprite': 'stone.png'},
+      'outdoor_2': {'name': '生体サンプル', 'sprite': 'heart.png'},
+      'outdoor_3': {'name': '高出力電源', 'sprite': 'energy_cube.png'},
+      'outdoor_4': {'name': '記録アーカイブ', 'sprite': 'warm_memory.png'},
+      'outdoor_philosophy': {'name': '中枢演算コア', 'sprite': 'player_icon.png'},
+      'outdoor_despair': {'name': '最終調査報告書', 'sprite': 'doodle_book.png'},
+      'outdoor_true': {'name': '中枢演算コア', 'sprite': 'ai_icon.png'},
     };
 
-    var targetItem = routeItems[stageId];
-    if (stageId == 'outdoor_philosophy') {
-      bool isSubScenario = true;
-      for (int i = 1; i <= 4; i++) {
-        if (!state.subRouteConfirmedStages.contains('outdoor_$i')) {
-          isSubScenario = false;
-          break;
-        }
+    // Stage 6 の特殊アイテム取得
+    if (stageId == 'outdoor_despair') {
+      final attr = activeAttribute ?? GameRuntimeState.routeNormal;
+      switch (attr) {
+        case GameRuntimeState.routeViolence: routeItems['outdoor_despair'] = {'name': '殲滅完了コード', 'sprite': 'forbidden_data.png'}; break;
+        case GameRuntimeState.routeEmpathy: routeItems['outdoor_despair'] = {'name': '心のバックアップ', 'sprite': 'warm_memory.png'}; break;
+        case GameRuntimeState.routePhilosophy: routeItems['outdoor_despair'] = {'name': '真実へのアクセスキー', 'sprite': 'ai_icon.png'}; break;
+        case GameRuntimeState.routeEfficiency: routeItems['outdoor_despair'] = {'name': '最適化完了ログ', 'sprite': 'energy_cube.png'}; break;
       }
-      targetItem = isSubScenario ? routeItems['outdoor_philosophy_sub'] : routeItems['outdoor_philosophy_main'];
     }
+
+    var targetItem = routeItems[stageId];
 
     if (targetItem != null) {
       pieces.add(ManifoldPiece(
@@ -185,23 +188,32 @@ class _ManifoldPuzzleWidgetState extends State<_ManifoldPuzzleWidget> {
         width: pieceSize,
         height: pieceSize,
         decoration: BoxDecoration(
-          color: piece.isSnapped ? piece.color.withOpacity(0.2) : Colors.black.withOpacity(0.2),
+          color: piece.isSnapped ? piece.color.withOpacity(0.3) : Colors.black.withOpacity(0.3),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
             color: piece.isSnapped ? piece.color : Colors.white10,
             width: 2,
           ),
         ),
-        child: piece.id == 'collection_item' 
-          ? Center(child: Icon(Icons.shopping_bag_outlined, color: Colors.white24, size: pieceSize * 0.6))
-          : Transform.rotate(
-              angle: piece.targetRotation * pi / 180,
-              child: Icon(
+        child: Transform.rotate(
+          angle: piece.targetRotation * pi / 180,
+          child: piece.id == 'collection_item' 
+            ? Center(
+                child: Opacity(
+                  opacity: 0.3,
+                  child: Icon(
+                    Icons.shopping_bag,
+                    color: piece.isSnapped ? piece.color : Colors.white10,
+                    size: pieceSize * 0.5,
+                  ),
+                ),
+              )
+            : Icon(
                 piece.icon,
                 color: piece.isSnapped ? piece.color : Colors.white10,
                 size: pieceSize * 0.5,
               ),
-            ),
+        ),
       ),
     );
   }
@@ -217,7 +229,6 @@ class _ManifoldPuzzleWidgetState extends State<_ManifoldPuzzleWidget> {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () {
-          if (piece.id == 'collection_item') return; // コレクションアイテムは回転不要
           setState(() {
             piece.rotation = (piece.rotation + 90) % 360;
             widget.game.audioManager.playEffectSound('hits/Hit3.wav', volume: 0.3);
@@ -263,13 +274,17 @@ class _ManifoldPuzzleWidgetState extends State<_ManifoldPuzzleWidget> {
 
   void _checkSnap(ManifoldPiece piece, Size canvasSize) {
     double dist = (piece.getAbsolutePos(canvasSize) - piece.getTargetAbsolutePos(canvasSize)).distance;
-    bool rotationCorrect = piece.rotation == piece.targetRotation;
+    
+    // コレクションアイテムは向き不問、それ以外は targetRotation と一致する必要がある
+    bool rotationCorrect = piece.id == 'collection_item' || piece.rotation == piece.targetRotation;
 
     // パーツが大きくなったので、スナップ判定も少し広めに
     if (dist < canvasSize.shortestSide * 0.15) {
-      if (rotationCorrect || piece.id == 'collection_item') { // コレクションアイテムは回転不要
+      if (rotationCorrect) {
         setState(() {
           piece.isSnapped = true;
+          // コレクションアイテムの場合は、スナップ時に正しい向きに補正せず現在の向きを維持しても良いが、
+          // 見栄えのために 90度単位の直近の向きに吸着させる
           piece.relativePos = piece.targetRelativePos;
           widget.game.audioManager.playEffectSound('hits/Hit1.wav', volume: 0.6);
         });

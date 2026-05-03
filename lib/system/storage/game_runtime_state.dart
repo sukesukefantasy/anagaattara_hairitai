@@ -39,7 +39,7 @@ class GameRuntimeState extends ChangeNotifier {
 
   // デバッグ用：初期ステージを上書きしたい場合（例：'outdoor_4'）
   // 開発時以外は null にしておく
-  String? debugInitialStage = 'outdoor_3';
+  String? debugInitialStage;
 
   // ルート進行用のカウンターとフラグ
   int hitCount = 0;             // Violence: NPCにぶつけた回数
@@ -76,12 +76,28 @@ class GameRuntimeState extends ChangeNotifier {
   }
 
   Set<String> triggeredRouteIds = {}; // 入口を通過したルートID
+  Set<String> triggeredMidRouteIds = {}; // 中間イベントを通過したルートID
   bool hasShownCompassToday = false; // 今日の羅針盤を表示したか
 
   // 能動性（余計な行動）システム
   Map<String, int> extraActionCounts = {};
   Set<String> subRouteConfirmedStages = {};
   bool isAutoPlay = false; // オートプレイ中フラグ
+
+  // シミュレーション・サイクル関連
+  int scenarioCount = 1; // 1-5のシナリオ周回数
+  Map<String, double> attributeScores = {
+    routeViolence: 0.0,
+    routeEfficiency: 0.0,
+    routeEmpathy: 0.0,
+    routePhilosophy: 0.0,
+  };
+  bool isAttributeFixed = false; // Stage 6で属性が確定したか
+  String? lastSimulatedAttribute; // 最後にプレイした属性（固定用）
+  Map<String, int> attributeRedundancy = {}; // 同じ属性を繰り返した回数
+  
+  // 真実のログ（地下アーカイブ用）
+  Map<String, String> missionTrueLogs = {}; 
 
   int dayCount = 1;
   List<String> completedRouteIds = [];
@@ -106,6 +122,12 @@ class GameRuntimeState extends ChangeNotifier {
   double throwPowerBonus = 1.0;
   double movementSpeedBonus = 1.0;
   bool canRun = false;
+
+  // キャリブレーション（自己調整）パラメータ (0.0 - 1.0)
+  double hpCalibrationScale = 1.0;
+  double speedCalibrationScale = 1.0;
+  double powerCalibrationScale = 1.0;
+  double stressCalibrationScale = 1.0;
 
   // アチーブメント
   Set<String> unlockedAchievements = {};
@@ -138,8 +160,8 @@ class GameRuntimeState extends ChangeNotifier {
     extraActionCounts[stageId] = (extraActionCounts[stageId] ?? 0) + 1;
     final count = extraActionCounts[stageId]!;
 
-    // RouteManagerを通じてエフェクトや状態更新を行う
-    game.routeManager.onExtraAction(stageId, count);
+    // MissionManagerを通じてエフェクトや状態更新を行う
+    game.missionManager.onExtraAction(stageId, count);
 
     if (count >= 30 && !subRouteConfirmedStages.contains(stageId)) {
       subRouteConfirmedStages.add(stageId);
@@ -174,8 +196,14 @@ class GameRuntimeState extends ChangeNotifier {
     readLogCount = data.readLogCount;
     currentMission = data.currentMission;
     triggeredRouteIds = Set<String>.from(data.triggeredRouteIds);
+    triggeredMidRouteIds = Set<String>.from(data.triggeredMidRouteIds);
     extraActionCounts = Map<String, int>.from(data.extraActionCounts);
     subRouteConfirmedStages = Set<String>.from(data.subRouteConfirmedStages);
+    scenarioCount = data.scenarioCount;
+    attributeScores = Map<String, double>.from(data.attributeScores);
+    attributeRedundancy = Map<String, int>.from(data.attributeRedundancy);
+    isAttributeFixed = data.isAttributeFixed;
+    lastSimulatedAttribute = data.lastSimulatedAttribute;
 
     dayCount = data.dayCount;
     completedRouteIds = List<String>.from(data.completedRouteIds);
@@ -189,9 +217,34 @@ class GameRuntimeState extends ChangeNotifier {
     destructibleHealths = Map<String, int>.from(data.destructibleHealths);
     satisfiedNpcIds = Set<String>.from(data.satisfiedNpcIds);
     unlockedAchievements = Set<String>.from(data.unlockedAchievements);
+    missionTrueLogs = Map<String, String>.from(data.missionTrueLogs);
+
+    hpCalibrationScale = data.hpCalibrationScale;
+    speedCalibrationScale = data.speedCalibrationScale;
+    powerCalibrationScale = data.powerCalibrationScale;
+    stressCalibrationScale = data.stressCalibrationScale;
 
     debugPrint('--- GameRuntimeState loaded from SaveData. ---');
     printState();
+  }
+
+  // 属性確定状態のリセット（主にシナリオ1のステージ間で使用）
+  void resetStageState() {
+    activeRouteId = null;
+    triggeredRouteIds.clear();
+    triggeredMidRouteIds.clear();
+    scrappedObjectCount = 0;
+    hitCount = 0;
+    giftCount = 0;
+    readLogCount = 0;
+    
+    // スコアのリセット
+    attributeScores.forEach((key, value) {
+      attributeScores[key] = 0.0;
+    });
+
+    saveGame();
+    notifyListeners();
   }
 
   // ランタイムセーブデータを恒久セーブデータに保存
@@ -225,8 +278,14 @@ class GameRuntimeState extends ChangeNotifier {
       readLogCount: readLogCount,
       currentMission: currentMission,
       triggeredRouteIds: triggeredRouteIds.toList(),
+      triggeredMidRouteIds: triggeredMidRouteIds.toList(),
       extraActionCounts: extraActionCounts,
       subRouteConfirmedStages: subRouteConfirmedStages.toList(),
+      scenarioCount: scenarioCount,
+      attributeScores: attributeScores,
+      attributeRedundancy: attributeRedundancy,
+      isAttributeFixed: isAttributeFixed,
+      lastSimulatedAttribute: lastSimulatedAttribute,
       dayCount: dayCount,
       completedRouteIds: completedRouteIds,
       activeRouteId: activeRouteId,
@@ -239,6 +298,11 @@ class GameRuntimeState extends ChangeNotifier {
       destructibleHealths: Map<String, int>.from(destructibleHealths),
       satisfiedNpcIds: satisfiedNpcIds.toList(),
       unlockedAchievements: unlockedAchievements.toList(),
+      missionTrueLogs: Map<String, String>.from(missionTrueLogs),
+      hpCalibrationScale: hpCalibrationScale,
+      speedCalibrationScale: speedCalibrationScale,
+      powerCalibrationScale: powerCalibrationScale,
+      stressCalibrationScale: stressCalibrationScale,
     );
   }
 

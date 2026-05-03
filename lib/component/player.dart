@@ -61,6 +61,73 @@ class Player extends SpriteAnimationComponent
   static const double jumpForce = -250.0; // 少し弱める
   static const double maxJumpTime = 0.25; // ジャンプ持続時間の最大値
 
+  // 属性による能力強化の計算
+  double get effectiveSpeed {
+    final state = game.gameRuntimeState;
+    final attr = game.missionManager.getCurrentAttribute();
+    final level = game.missionManager.getAttributeLevel();
+    
+    double base = speed;
+    
+    // 周回ボーナス（キャリブレーション適用）
+    base *= (1.0 + (state.movementSpeedBonus - 1.0) * state.speedCalibrationScale);
+
+    // 属性レベルボーナス（リアルタイム）
+    if (attr == GameRuntimeState.routeEfficiency) {
+      base *= (1.0 + (level * 0.2)); // Level 3 で 1.6倍
+    }
+    return base;
+  }
+
+  double get effectiveGravity {
+    final state = game.gameRuntimeState;
+    final attr = game.missionManager.getCurrentAttribute();
+    final level = game.missionManager.getAttributeLevel();
+    
+    double base = gravity;
+    
+    // 哲学ボーナス（キャリブレーション適用：投擲力の一部を重力軽減に転用するイメージ）
+    double philosophyEffect = (state.throwPowerBonus - 1.0) * state.powerCalibrationScale;
+    base *= (1.0 - (philosophyEffect * 0.5));
+
+    // 属性レベルボーナス（リアルタイム）
+    if (attr == GameRuntimeState.routePhilosophy) {
+      base *= (1.0 - (level * 0.2)); // Level 3 で 0.4倍
+    }
+    return base;
+  }
+
+  double get effectiveMeleeSizeScale {
+    final state = game.gameRuntimeState;
+    final attr = game.missionManager.getCurrentAttribute();
+    final level = game.missionManager.getAttributeLevel();
+    
+    double bonusScale = 1.0;
+    // HPボーナスの一部を体格（攻撃範囲）に反映
+    bonusScale += (state.hpBonus / 1000.0) * state.hpCalibrationScale;
+
+    if (attr == GameRuntimeState.routeViolence) {
+      bonusScale += (level * 0.5); // Level 3 で +1.5
+    }
+    return bonusScale;
+  }
+
+  double get vacuumRange {
+    final state = game.gameRuntimeState;
+    final attr = game.missionManager.getCurrentAttribute();
+    final level = game.missionManager.getAttributeLevel();
+    
+    double range = 0.0;
+    if (attr == GameRuntimeState.routeEfficiency && level >= 1) {
+      range = 50.0 + (level * 50.0); // Level 3 で 200px
+    }
+    
+    // キャリブレーションによる調整（効率ボーナスが溜まっている場合）
+    range += (state.movementSpeedBonus - 1.0) * 200 * state.speedCalibrationScale;
+    
+    return range;
+  }
+
   bool isJumpButtonPressed = false;
   double _jumpTime = 0.0;
   bool _isJumping = false;
@@ -115,7 +182,15 @@ class Player extends SpriteAnimationComponent
   bool iscrouching = false;
   bool isTouchingEnemy = false;
   bool inUnderGround = false;
+  final ValueNotifier<bool> inUnderGroundNotifier = ValueNotifier<bool>(false);
   bool inUnderGroundFlag = false;
+  
+  // ダッシュ（Run）関連
+  bool _isRunning = false;
+  double _lastTapTime = 0.0;
+  int _lastTapDirection = 0; // 1: Right, -1: Left
+  static const double _doubleTapThreshold = 0.3; // 0.3秒以内の再入力でダッシュ
+  
   Vector2 _lastMoveDirection = Vector2(-1.0, 0.0); // 最後に移動した方向(初期値は左)
   bool canDig = false; // 採掘可能かどうかを示すプロパティを追加
 
@@ -425,6 +500,10 @@ class Player extends SpriteAnimationComponent
       return;
     }
 
+    // 属性レベルの取得
+    final attr = game.missionManager.getCurrentAttribute();
+    final level = game.missionManager.getAttributeLevel();
+
     // 背景パララックスの更新
     final double currentPlayerX = position.x;
     final double playerDx = currentPlayerX - _lastPlayerX;
@@ -438,6 +517,22 @@ class Player extends SpriteAnimationComponent
     updateStress(currentStress - 10 * dt);
     if (currentStress >= 25 && !unbeatable) {
       updateHp(currentHp - (currentStress / maxStress));
+    }
+
+    // Empathy Lv3: NPCの近くで回復
+    if (attr == GameRuntimeState.routeEmpathy && level >= 3) {
+      final npcs = game.world.children.whereType<Npc>();
+      bool isNearNpc = false;
+      for (final npc in npcs) {
+        if ((absolutePosition - npc.absolutePosition).length < 100) {
+          isNearNpc = true;
+          break;
+        }
+      }
+      if (isNearNpc) {
+        recoveryHp(100 * dt); // 毎秒100回復
+        updateStress(currentStress - 200 * dt); // 毎秒200ストレス軽減
+      }
     }
 
     // 地下でのベース処理
@@ -491,6 +586,9 @@ class Player extends SpriteAnimationComponent
       inUnderGround = (position.y + 20) >= currentScene.underGround.position.y;
     } else {
       inUnderGround = false; // 屋外シーン以外では地下にいない
+    }
+    if (inUnderGroundNotifier.value != inUnderGround) {
+      inUnderGroundNotifier.value = inUnderGround;
     }
 
     // エフェクトの更新
@@ -550,7 +648,7 @@ class Player extends SpriteAnimationComponent
         // 掘削中の水平移動速度
         if (inUnderGround) {
           velocity.x =
-              (isMovingRight ? speed * 0.5 : (isMovingLeft ? -speed * 0.5 : 0));
+              (isMovingRight ? effectiveSpeed * 0.5 : (isMovingLeft ? -effectiveSpeed * 0.5 : 0));
         } else {
           // 地上での掘削中の水平移動は無効
           velocity.x = 0;
@@ -566,8 +664,12 @@ class Player extends SpriteAnimationComponent
         }
         animation = crouchingAnimation;
       } else {
-        // 通常の水平移動速度
-        velocity.x = (isMovingRight ? speed : (isMovingLeft ? -speed : 0));
+    // 通常の水平移動速度
+    double currentBaseSpeed = effectiveSpeed;
+    if (isRunning) {
+      currentBaseSpeed *= 1.5; // ダッシュ時は1.5倍
+    }
+    velocity.x = (isMovingRight ? currentBaseSpeed : (isMovingLeft ? -currentBaseSpeed : 0));
 
         if (isMovingRight) {
           animation = movingRightAnimation;
@@ -595,7 +697,7 @@ class Player extends SpriteAnimationComponent
       if (isDigging) {
         // 掘削中は重力は通常無視され、垂直速度は直接制御される
         if (isMovingDown) {
-          velocity.y = speed * 0.25; // 下に掘る
+          velocity.y = effectiveSpeed * 0.25; // 下に掘る
         } else if (isMovingUp) {
           if (position.y >
               game.initialGameCanvasSize.y +
@@ -605,7 +707,7 @@ class Player extends SpriteAnimationComponent
                       .groundComponent!
                       .groundHeight) {
             // 地面より上に掘りすぎないようにする
-            velocity.y = -speed * 0.25; // 上に掘る
+            velocity.y = -effectiveSpeed * 0.25; // 上に掘る
           }
         } else {
           velocity.y = 0; // 掘削中に上下に移動していない場合、垂直速度はゼロ
@@ -614,9 +716,9 @@ class Player extends SpriteAnimationComponent
       } else if (isOnLadder) {
         // はしご移動
         if (isMovingUp) {
-          velocity.y = -speed;
+          velocity.y = -effectiveSpeed;
         } else if (isMovingDown) {
-          velocity.y = speed;
+          velocity.y = effectiveSpeed;
         } else {
           velocity.y = 0;
         }
@@ -657,7 +759,16 @@ class Player extends SpriteAnimationComponent
 
         // まずは重力による影響を計算
         if (_applyGravity && !_isJumping) {
-          velocity.y += gravity * dt;
+          double gravityForce = effectiveGravity;
+          
+          // 哲学能力：空中浮遊 (Levitation)
+          final attr = game.missionManager.getCurrentAttribute();
+          final level = game.missionManager.getAttributeLevel();
+          if (attr == GameRuntimeState.routePhilosophy && level >= 2 && isJumpButtonPressed && velocity.y > 0) {
+            gravityForce *= 0.1; // 落下速度を大幅に軽減
+          }
+          
+          velocity.y += gravityForce * dt;
         }
 
         // isOnGroundの判定は、_solidCollisionsと現在の垂直速度に基づく
@@ -767,17 +878,27 @@ class Player extends SpriteAnimationComponent
 
   // オートプレイ用のロジック
   void _performAutoPlay(double dt) {
-    // Stage 6 のオートプレイ：右へ移動し続ける、あるいは目標へ移動
-    // 今回は単純に右へ移動
-    velocity.x = speed;
+    // Stage 6 (Despair) で右に向かって自動で歩き続ける
+    isMovingRight = true;
+    isMovingLeft = false;
+    isMovingUp = false;
+    isMovingDown = false;
+
+    // 通常の移動処理
+    velocity.x = effectiveSpeed * 0.7; // 少しゆっくり歩く
     animation = movingRightAnimation;
-    _lastMoveDirection.x = 1.0;
     position.x += velocity.x * dt;
 
-    if (_applyGravity) {
-      velocity.y += gravity * dt;
+    // パララックス更新
+    final double playerDx = velocity.x * dt;
+    game.cameraController.updateBackgroundParallax(playerDx);
+    _lastPlayerX = position.x;
+
+    // 崖（世界の右端）に到達したらリセット（飛び降り または 帰還）
+    if (position.x > 1000) { 
+      debugPrint('AutoPlay: Reached the edge. Returning to Stage 1...');
+      game.routeClear(); // 周回クリア処理
     }
-    position.y += velocity.y * dt;
   }
 
   void jump() {
@@ -854,13 +975,30 @@ class Player extends SpriteAnimationComponent
   void performMeleeAttack() {
     // 1. 攻撃範囲の計算（ワールド座標系）
     final playerCenter = absolutePosition;
-    final meleeSize = Vector2(60, 60); 
+    final scale = effectiveMeleeSizeScale;
+    final meleeSize = Vector2(60 * scale, 60 * scale); 
+    
+    // 属性とレベルの取得
+    final attr = game.missionManager.getCurrentAttribute();
+    final level = game.missionManager.getAttributeLevel();
+    final isViolenceLv3 = attr == GameRuntimeState.routeViolence && level >= 3;
+
+    // 攻撃音（属性レベルに応じてピッチや音質をリアルタイム変化させる）
+    double playbackRate = 1.1;
+    double volume = 1.0;
+    
+    if (attr == GameRuntimeState.routeViolence) {
+      playbackRate -= (level * 0.1); // 重厚な音へ
+      volume += (level * 0.2);
+    } else if (attr == GameRuntimeState.routeEfficiency) {
+      playbackRate += (level * 0.1); // 鋭い音へ
+    }
     
     // ご要望のオフセット調整 (+25)
     // 向きに応じてXの位置を決定し、さらに+25
     final double meleeX = facingDirection.x > 0 
         ? playerCenter.x + 10 + 25
-        : playerCenter.x - 70 + 25; 
+        : playerCenter.x - (meleeSize.x + 10) + 25; 
     
     // Y軸も+25
     final double meleeY = playerCenter.y - (meleeSize.y / 2) + 25;
@@ -868,11 +1006,11 @@ class Player extends SpriteAnimationComponent
     final attackRect = Rect.fromLTWH(meleeX, meleeY, meleeSize.x, meleeSize.y);
 
     // 2. 攻撃エフェクトの表示（視覚的な確認用）
-    final effectX = facingDirection.x > 0 ? 35.0 : -45.0; // 計算済みXオフセット
+    final effectX = facingDirection.x > 0 ? 35.0 : -45.0 - (meleeSize.x - 60); 
     final attackEffect = RectangleComponent(
       position: Vector2(effectX, -(meleeSize.y / 2) + 25),
       size: meleeSize,
-      paint: Paint()..color = Colors.white.withOpacity(0.4),
+      paint: Paint()..color = (isViolenceLv3 ? Colors.redAccent : Colors.white).withOpacity(0.4),
     );
     add(attackEffect);
     
@@ -886,7 +1024,7 @@ class Player extends SpriteAnimationComponent
     ));
 
     // 攻撃音
-    requestPlayPlayerSound('swing', volume: 1.0, playbackRate: 1.1);
+    requestPlayPlayerSound('swing', volume: volume, playbackRate: playbackRate);
 
     // 3. ヒット判定（現在のシーンの子コンポーネントを検索）
     final currentScene = game.sceneManager.currentScene;
@@ -897,7 +1035,13 @@ class Player extends SpriteAnimationComponent
     for (final obj in destructibles) {
       if (obj.toAbsoluteRect().overlaps(attackRect)) {
         debugPrint('Melee Hit: DestructibleObject at ${obj.position}');
-        obj.onHit();
+        if (isViolenceLv3) {
+          // 即死級ダメージ（healthを0にするなど）
+          obj.onHit();
+          obj.onHit(); // 2回呼んで確実に壊すか、DestructibleObject側の調整が必要
+        } else {
+          obj.onHit();
+        }
       }
     }
 
@@ -907,9 +1051,17 @@ class Player extends SpriteAnimationComponent
       if (enemy.toAbsoluteRect().overlaps(attackRect)) {
         debugPrint('Melee Hit: Enemy at ${enemy.position}');
         if (game.gameRuntimeState.currentOutdoorSceneId == 'outdoor_2') {
-          game.routeManager.onAction(GameRuntimeState.routeViolence);
+          game.missionManager.onAction(GameRuntimeState.routeViolence);
         }
-        enemy.hitByMelee();
+        
+        if (isViolenceLv3) {
+          // Violence Lv3: 即死 + アイテム化
+          enemy.dieAndDropItem();
+        } else {
+          // ノックバックの計算: 向きと威力(scale)に基づく
+          final impulse = Vector2(facingDirection.x * 300 * scale, -50 * scale);
+          enemy.hitByMelee(impulse);
+        }
       }
     }
     
@@ -918,6 +1070,10 @@ class Player extends SpriteAnimationComponent
     for (final npc in npcs) {
       if (npc.toAbsoluteRect().overlaps(attackRect)) {
         debugPrint('Melee Hit: NPC at ${npc.position}');
+        if (isViolenceLv3) {
+          // Violence Lv3: NPCも殺害してアイテム化
+          npc.dieAndDropItem();
+        }
       }
     }
   }
@@ -972,12 +1128,51 @@ class Player extends SpriteAnimationComponent
     isMovingDown = GameUI.downButtonPressedNotifier.value;
   }
 
+  bool get isRunning => _isRunning;
+
   void _updateIsMovingLeft() {
-    isMovingLeft = GameUI.leftButtonPressedNotifier.value;
+    final bool newValue = GameUI.leftButtonPressedNotifier.value;
+    if (newValue && !isMovingLeft) {
+      _handleMoveInputStart(-1);
+    }
+    isMovingLeft = newValue;
+    _checkRunStop();
   }
 
   void _updateIsMovingRight() {
-    isMovingRight = GameUI.rightButtonPressedNotifier.value;
+    final bool newValue = GameUI.rightButtonPressedNotifier.value;
+    if (newValue && !isMovingRight) {
+      _handleMoveInputStart(1);
+    }
+    isMovingRight = newValue;
+    _checkRunStop();
+  }
+
+  void _handleMoveInputStart(int direction) {
+    // Efficiency Lv3 または canRun フラグが真の場合にダッシュ可能
+    final attr = game.missionManager.getCurrentAttribute();
+    final level = game.missionManager.getAttributeLevel();
+    final isEfficiencyLv3 = attr == GameRuntimeState.routeEfficiency && level >= 3;
+
+    if (!gameRuntimeState.canRun && !isEfficiencyLv3) return;
+    
+    final currentTime = game.timeService.totalPlayTime;
+    if (direction == _lastTapDirection && (currentTime - _lastTapTime) < _doubleTapThreshold) {
+      _isRunning = true;
+      debugPrint('Dash Started: Direction $direction');
+    }
+    
+    _lastTapTime = currentTime;
+    _lastTapDirection = direction;
+  }
+
+  void _checkRunStop() {
+    if (!isMovingLeft && !isMovingRight) {
+      if (_isRunning) {
+        debugPrint('Dash Stopped');
+      }
+      _isRunning = false;
+    }
   }
 
   void _updateIscrouching() {
@@ -988,7 +1183,9 @@ class Player extends SpriteAnimationComponent
 
   // HPを更新するメソッド
   void updateHp(double newHp) {
-    hpNotifier.value = newHp.clamp(0.0, maxHp);
+    final state = game.gameRuntimeState;
+    double effectiveMaxHp = maxHp + (state.hpBonus * state.hpCalibrationScale);
+    hpNotifier.value = newHp.clamp(0.0, effectiveMaxHp);
   }
 
   // 自然回復
@@ -998,7 +1195,9 @@ class Player extends SpriteAnimationComponent
 
   // ストレス値を更新するメソッド
   void updateStress(double newStress) {
-    stressNotifier.value = newStress.clamp(0.0, maxStress);
+    final state = game.gameRuntimeState;
+    double effectiveMaxStress = maxStress + (state.stressBonus * state.stressCalibrationScale);
+    stressNotifier.value = newStress.clamp(0.0, effectiveMaxStress);
   }
 
   // 最大ストレス値を増やすメソッド
@@ -1032,18 +1231,20 @@ class Player extends SpriteAnimationComponent
       
       // Stage 1の石拾いミッション更新
       if (item.name == '石') {
-        game.routeManager.onPickupStone(itemBag.getItemCount('石'));
+        game.missionManager.onPickupStone(itemBag.getItemCount('石'));
       }
     }
 
     // ロケットパーツの拾得時のミッション更新 (Stage 1)
     if (item.name == 'バルブ' || item.name == '点火装置' || item.name == 'ノズル' || item.name == '石') {
-      game.routeManager.onPickupRocketPart();
+      game.missionManager.onPickupRocketPart();
     }
 
-    // Stage 5 コレクションアイテム拾得時のルート進行
-    if (item.name == '掌握された自意識' || item.name == 'レスポンス') {
-      game.routeManager.onPickupPhilosophyItem();
+    // コレクションアイテム拾得時のルート進行 (Stage 2-6)
+    if (item.type == ItemType.collection && 
+        item.name != 'バルブ' && item.name != '点火装置' && item.name != 'ノズル' && 
+        item.name != '石') {
+      game.missionManager.onPickupPhilosophyItem(); // 汎用的な進行トリガーとして使用
     }
   }
 
@@ -1142,7 +1343,7 @@ class Player extends SpriteAnimationComponent
 
   Future<void> throwWorldObject(Item object) async {
     final offset = facingDirection * 25;
-    final newPosition = Vector2(position.x + offset.x, position.y);
+    final newPosition = Vector2(position.x + offset.x, position.y - (size.y / 2));
 
     // Stage 2 の追尾ギミック：近くの敵に吸い付く
     Vector2 finalPosition = newPosition;
@@ -1166,6 +1367,11 @@ class Player extends SpriteAnimationComponent
       }
     }
 
+    // await item.loaded の間に複数フレームが進み velocity が 0 に戻るため、
+    // 投げ操作時点の水平速度・向きを先に確定させる。
+    final double snapshotSpeedX = velocity.x;
+    final double snapshotFacingX = facingDirection.x;
+
     // 運搬を終了
     stopCarrying();
 
@@ -1178,8 +1384,8 @@ class Player extends SpriteAnimationComponent
 
       // プレイヤーの向きに応じて水平方向の力を設定
       final horizontalThrowForce =
-          currentSpeed.x.abs() * powerOfPlayer * facingDirection.x;
-      item.physicsBehavior.setVelocity(Vector2(horizontalThrowForce, -20));
+          snapshotSpeedX.abs() * powerOfPlayer * snapshotFacingX;
+      item.physicsBehavior.setVelocity(Vector2(horizontalThrowForce, -30));
       item.physicsBehavior.setEnabled(true);
     }
 
@@ -1214,7 +1420,7 @@ class Player extends SpriteAnimationComponent
     );
     itemBag.removeItem(item.name, count: 0);
     if (game.gameRuntimeState.currentOutdoorSceneId == 'outdoor_3') {
-      game.routeManager.onAction(GameRuntimeState.routeEfficiency); // ルート進行
+      game.missionManager.onAction(GameRuntimeState.routeEfficiency); // ルート進行
     }
   }
 
@@ -1341,6 +1547,22 @@ class Player extends SpriteAnimationComponent
       final groundBottomY = ground.position.y + ground.groundHeight;
       position.y = groundBottomY;
     }
+
+    // アイテム吸引 (Efficiency能力)
+    if (vacuumRange > 0) {
+      final items = game.world.children.whereType<Item>().where((i) => !i.isCollected);
+      for (final item in items) {
+        final dist = (absoluteCenter - item.absolutePosition).length;
+        if (dist < vacuumRange) {
+          // プレイヤーの方へ引き寄せる
+          final dir = (absoluteCenter - item.absolutePosition).normalized();
+          item.position += dir * 200 * dt;
+          if (dist < 20) {
+            collectItem(item);
+          }
+        }
+      }
+    }
   }
 
   // エフェクト管理 メソッド ==============================================================================
@@ -1383,14 +1605,26 @@ class Player extends SpriteAnimationComponent
     if (other is EnemyBase) {
       _collidingEnemies.add(other);
       isTouchingEnemy = true;
-      requestPlayPlayerSound('hits', volume: 0.8, playbackRate: 1.0);
+      
+      final attr = game.missionManager.getCurrentAttribute();
+      final level = game.missionManager.getAttributeLevel();
+      final isEmpathyLv3 = attr == GameRuntimeState.routeEmpathy && level >= 3;
+
+      if (isEmpathyLv3) {
+        // Empathy Lv3: 硬い音を再生
+        requestPlayPlayerSound('hits', volume: 0.5, playbackRate: 0.5); // 低ピッチで硬い音
+      } else {
+        requestPlayPlayerSound('hits', volume: 0.8, playbackRate: 1.0);
+      }
 
       // ストレス値とHPの更新
       // 衝突している敵からのストレス増加
       if (!unbeatable && _collidingEnemies.isNotEmpty) {
         double totalAttackStress = 0.0;
         for (final enemy in _collidingEnemies) {
-          totalAttackStress += enemy.attackStress;
+          double stress = enemy.attackStress;
+          if (isEmpathyLv3) stress *= 0.2; // ダメージ80%軽減
+          totalAttackStress += stress;
         }
         updateStress(currentStress + totalAttackStress);
       }
@@ -1400,7 +1634,7 @@ class Player extends SpriteAnimationComponent
         _isTintedRed = true;
         _tintTimer = 0.2; // 0.2秒間赤くする
         paint.colorFilter = ColorFilter.mode(
-          const Color.fromARGB(200, 255, 0, 0), // 赤色
+          isEmpathyLv3 ? Colors.white.withOpacity(0.5) : const Color.fromARGB(200, 255, 0, 0), // Empathy Lv3は白っぽく光る
           BlendMode.srcATop, // レイヤーを重ねるモード
         );
       }

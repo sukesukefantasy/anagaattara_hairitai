@@ -1,191 +1,120 @@
-﻿// インベントリ内のアイテム管理、生成する責任。
-
+﻿import 'dart:math';
 import 'package:flame/components.dart';
-import 'dart:math'; // Random用にインポート
 import 'package:flutter/material.dart';
-import '../player.dart';
 import '../../main.dart';
+import '../common/hitboxes/physics_hitbox.dart';
 import '../common/physics/physics_behavior.dart';
-import 'package:anagaattara_hairitai/component/common/hitboxes/physics_hitbox.dart';
-import 'item_effect_resolver/powerup_item_effect_resolver.dart';
-import 'item_effect_resolver/custom_item_effect_resolver.dart';
-import 'item_effect_resolver/tool_item_effect_resolver.dart';
-import 'item_effect_resolver/placeable_item_effect_resolver.dart';
-import '../collectionItem/collection_item.dart';
+import '../player.dart';
 
-/// アイテムの種類を定義する列挙型
 enum ItemType {
-  // 資産 ------------
   currency, // 通貨
-  gem, // 宝石
-  // 食品、飲料、薬 ------------
-  health, // health回復アイテム
-  stress, // stress回復アイテム
-  powerUp, // パワーアップアイテム
-  // 装備アイテム ------------
-  tool, // 道具アイテム
-  // その他 ------------
-  placeable, // 配置アイテム
-  custom, // カスタムアイテム
-  collection, // コレクションアイテム
+  gem, // 宝石・換金アイテム
+  health, // 回復アイテム
+  stress, // ストレス軽減
+  powerUp, // 永続パワーアップ
+  tool, // 道具（投擲など）
+  placeable, // 設置アイテム（家具など）
+  custom, // 特殊効果
+  collection, // コレクション（メインアイテム）
 }
 
 enum BagWindowActionType {
-  none,
-  consume,
-  carry,
-  equip,
-  unequip,
-  dispose,
-  view,
-  custom,
+  consume, // 消費
+  carry, // 持ち運ぶ
+  equip, // 装備
+  unequip, // 解除
+  dispose, // 廃棄
+  view, // 眺める
+  custom, // 特殊
+  none, // なし
 }
 
-/// アイテムの基底クラス
+/// アイテムの基底クラス。
 abstract class Item extends SpriteComponent
     with HasGameReference<MyGame>
     implements HasPhysicsBehavior {
   final String name;
-  final ItemType type;
   final String description;
   final int value;
   final String spritePath;
+  final ItemType type;
   bool isCollected = false;
 
   @override
-  late PhysicsBehavior physicsBehavior;
+  late final PhysicsBehavior physicsBehavior;
 
   Item({
     required this.name,
-    required this.type,
     required this.description,
     required this.value,
     required this.spritePath,
+    required this.type,
     required super.position,
     required super.size,
-    super.anchor = Anchor.center,
-    super.priority = 100,
-  }) : super(); // 初期化リストから physicsBehavior の初期化を削除
+  }) {
+    priority = 10;
+    physicsBehavior = PhysicsBehavior(parent: this);
+  }
 
   @override
   Future<void> onLoad() async {
-    await super.onLoad(); // debugPaintMixinのonLoad
-    // スプライトをロード
-    if (spritePath.isNotEmpty) {
-      sprite = await game.loadSprite(spritePath);
-    }
+    await super.onLoad();
+    sprite = await Sprite.load(spritePath);
 
-    // アイテムがロードされた時にPhysicsBehaviorを初期化し、自身をparentとして設定
-    physicsBehavior = PhysicsBehavior(parent: this); // ここで初期化
-
-    // PhysicsHitboxを生成してPhysicsBehaviorにセットし、コンポーネントに追加
-    final itemHitbox = PhysicsHitbox(parent: this, size: size);
-    add(itemHitbox);
-    physicsBehavior.setHitbox(itemHitbox);
-
-    // アイテム固有の初期化処理
-    await onItemLoad();
+    // ヒットボックスの追加
+    add(PhysicsHitbox(parent: this, size: size));
   }
 
   @override
   void update(double dt) {
     super.update(dt);
-    physicsBehavior.applyPhysics(dt);
-  }
-
-  Future<void> onItemLoad() async {}
-
-  /// アイテムを収集する処理 (フィールドで拾われた時)
-  void collectItemByPlayer(Player player) {
-    if (isCollected) return;
-
-    isCollected = true;
-
-    // アイテム収集時の効果音を再生
-    game.audioManager.playEffectSound('actions/Pickup9.wav');
-
-    // PlayerのItemBagにアイテムを追加
-    player.collectItem(this);
-
-    // アイテムをゲームワールドから削除
-    removeFromParent();
-
-    debugPrint('アイテム収集: $name (価値: $value)');
-  }
-
-  /// アイテムが使用された時の処理（サブクラスで実装）
-  void onUse(Player player);
-
-  /// アイテムの名前を取得
-  String getName() => name;
-
-  /// アイテムの種類を取得
-  ItemType getType() => type;
-
-  /// アイテムの説明文を取得
-  String getDescription() => description;
-
-  /// アイテムの価値を取得
-  int getValue() => value;
-
-  /// アイテムのスプライトを取得
-  Sprite? getSprite() => sprite;
-
-  /// テスト用アイテムを生成する
-  static Future<void> spawnTestItems(MyGame myGame, Player player) async {
-    // 全てのアイテム名を取得
-    final itemNames = ItemFactory._itemDefinitions.keys.toList();
-    // ランダムなアイテムを1つ選択
-    final randomItemName = itemNames[Random().nextInt(itemNames.length)];
-
-    // プレイヤーの現在位置と向きに基づいて生成位置を決定
-    final spawnX =
-        player.position.x + player.facingDirection.x * 50; // プレイヤーの50px前方に
-    final spawnY = player.position.y - 100; // プレイヤーの100px上方に
-
-    final newItem = ItemFactory.createItemByName(
-      randomItemName,
-      Vector2(spawnX, spawnY),
-    );
-
-    if (newItem != null) {
-      myGame.world.add(newItem);
-      await newItem.loaded; // アイテムのロードが完了するまで待機
-      newItem.physicsBehavior.setEnabled(true); // 物理挙動を有効化
-      debugPrint(
-        'テスト用アイテム "$randomItemName" をプレイヤーの前方上（$spawnX, $spawnY）に配置しました',
-      );
-    } else {
-      debugPrint('テスト用アイテム "$randomItemName" の生成に失敗しました。このアイテムは存在しません。');
+    if (isCollected) {
+      physicsBehavior.applyPhysics(dt);
     }
   }
+
+  /// UI等で表示する際の名称
+  String get displayName => game.missionManager.getItemDisplayName(name);
+
+  /// UI等で表示する際の説明
+  String getDescription() {
+    if (game.player.inUnderGround) return description;
+    return description;
+  }
+
+  /// 使用時のデフォルト動作
+  void onUse(Player player) {
+    debugPrint('Using item: $name');
+  }
+
+  /// プレイヤーによる収集
+  void collectItemByPlayer(Player player) {
+    if (isCollected) return;
+    isCollected = true;
+    player.collectItem(this);
+    removeFromParent();
+  }
+
+  bool get isMemoItem => name.contains('メモ') || name.contains('LOG');
 }
 
 /// 通貨アイテム
 class CurrencyItem extends Item {
   final int currencyValue;
-
   CurrencyItem({
-    required this.currencyValue,
     required super.name,
     required super.description,
     required super.value,
     required super.spritePath,
     required super.position,
     required super.size,
+    required this.currencyValue,
   }) : super(type: ItemType.currency);
 
   @override
-  Future<void> onItemLoad() async {
-    if (spritePath.isNotEmpty) {
-      sprite = await game.loadSprite(spritePath);
-    }
-  }
-
-  @override
   void onUse(Player player) {
-    // お金を増やす
-    player.updateMoneyPoints(currencyValue);
+    game.gameRuntimeState.currency += currencyValue;
+    player.itemBag.removeItem(name);
   }
 }
 
@@ -199,200 +128,206 @@ class GemItem extends Item {
     required super.position,
     required super.size,
   }) : super(type: ItemType.gem);
-
-  @override
-  Future<void> onItemLoad() async {
-    if (spritePath.isNotEmpty) {
-      sprite = await game.loadSprite(spritePath);
-    }
-  }
-
-  @override
-  void onUse(Player player) {
-    // 後々眺められるようにする
-  }
 }
 
 /// 回復アイテム
 class HealthItem extends Item {
   final double healAmount;
-
   HealthItem({
-    required this.healAmount,
     required super.name,
     required super.description,
     required super.value,
     required super.spritePath,
     required super.position,
     required super.size,
+    required this.healAmount,
   }) : super(type: ItemType.health);
 
   @override
-  Future<void> onItemLoad() async {
-    if (spritePath.isNotEmpty) {
-      sprite = await game.loadSprite(spritePath);
-    }
-  }
-
-  @override
   void onUse(Player player) {
-    // HPを回復
     player.recoveryHp(healAmount);
+    player.itemBag.removeItem(name);
   }
 }
 
-/// ストレス回復アイテム
+/// ストレス軽減アイテム
 class StressItem extends Item {
   final double stressReduction;
-
   StressItem({
-    required this.stressReduction,
     required super.name,
     required super.description,
     required super.value,
     required super.spritePath,
     required super.position,
     required super.size,
+    required this.stressReduction,
   }) : super(type: ItemType.stress);
 
   @override
-  Future<void> onItemLoad() async {
-    if (spritePath.isNotEmpty) {
-      sprite = await game.loadSprite(spritePath);
-    }
-  }
-
-  @override
   void onUse(Player player) {
-    // ストレスを軽減
-    player.updateStress(player.currentStress - stressReduction);
+    player.updateStress(max(0, player.currentStress - stressReduction));
+    player.itemBag.removeItem(name);
   }
 }
 
 /// パワーアップアイテム
 class PowerUpItem extends Item {
-  final Function(Player)? powerUpEffect;
-
+  final void Function(MyGame game)? powerUpEffect;
   PowerUpItem({
-    this.powerUpEffect,
     required super.name,
     required super.description,
     required super.value,
     required super.spritePath,
     required super.position,
     required super.size,
+    this.powerUpEffect,
   }) : super(type: ItemType.powerUp);
 
   @override
-  Future<void> onItemLoad() async {
-    if (spritePath.isNotEmpty) {
-      sprite = await game.loadSprite(spritePath);
-    }
-  }
-
-  @override
   void onUse(Player player) {
-    // パワーアップ効果を実行
-    powerUpEffect?.call(player);
+    powerUpEffect?.call(game);
+    player.itemBag.removeItem(name);
   }
 }
 
 /// 道具アイテム
 class ToolItem extends Item {
-  final Function(Player)? toolEffect;
-
+  final void Function(MyGame game)? toolEffect;
   ToolItem({
-    this.toolEffect,
     required super.name,
     required super.description,
     required super.value,
     required super.spritePath,
     required super.position,
     required super.size,
+    this.toolEffect,
   }) : super(type: ItemType.tool);
 
   @override
-  Future<void> onItemLoad() async {
-    if (spritePath.isNotEmpty) {
-      sprite = await game.loadSprite(spritePath);
-    }
-  }
-
-  @override
   void onUse(Player player) {
-    // 道具効果を実行
-    toolEffect?.call(player);
+    toolEffect?.call(player.game);
   }
 }
 
-/// 配置アイテム
+/// 設置アイテム
 class PlaceableItem extends Item {
-  final Function(Player)? placeableEffect;
+  final void Function(MyGame game)? placeableEffect;
   PlaceableItem({
-    required this.placeableEffect,
     required super.name,
     required super.description,
     required super.value,
     required super.spritePath,
     required super.position,
     required super.size,
+    this.placeableEffect,
   }) : super(type: ItemType.placeable);
-
-  @override
-  Future<void> onItemLoad() async {
-    if (spritePath.isNotEmpty) {
-      sprite = await game.loadSprite(spritePath);
-    }
-  }
-
-  @override
-  Future<void> onUse(Player player) async {
-    print('$name を使用してワールドに配置を試みます。');
-
-    // プレイヤーがアイテムを運搬開始
-    await player.startCarrying(this);
-    debugPrint('Item.onUse: $name の運搬を開始しました。');
-
-    // アイテムメニューを閉じる
-    game.windowManager.hideWindow();
-  }
 }
 
-/// カスタムアイテム（独自の効果を持つアイテム用）
+/// カスタムアイテム
 class CustomItem extends Item {
-  final Function(Player) customEffect;
+  final void Function(MyGame game) customEffect;
   final BagWindowActionType customActionType;
 
   CustomItem({
-    required this.customEffect,
-    required this.customActionType,
     required super.name,
     required super.description,
     required super.value,
     required super.spritePath,
     required super.position,
-    Vector2? size,
-  }) : super(type: ItemType.custom, size: size ?? Vector2.all(30));
-
-  @override
-  Future<void> onItemLoad() async {
-    if (spritePath.isNotEmpty) {
-      sprite = await game.loadSprite(spritePath);
-    }
-  }
+    required super.size,
+    required this.customEffect,
+    this.customActionType = BagWindowActionType.consume,
+  }) : super(type: ItemType.custom);
 
   @override
   void onUse(Player player) {
-    // カスタム効果を実行
-    customEffect(player);
+    customEffect(game);
+    if (customActionType == BagWindowActionType.consume) {
+      player.itemBag.removeItem(name);
+    }
+  }
+}
+
+/// コレクションアイテム
+class CollectionItem extends Item {
+  CollectionItem({
+    required super.name,
+    required super.description,
+    required super.value,
+    required super.spritePath,
+    required super.position,
+    required super.size,
+  }) : super(type: ItemType.collection);
+}
+
+/// パワーアップ効果のレゾルバ
+class PowerUpEffectResolver {
+  static void Function(MyGame)? resolve(String? effectName) {
+    switch (effectName) {
+      case 'increaseMaxHealth':
+        return (game) {
+          game.gameRuntimeState.hpBonus += 20;
+          game.player.recoveryHp(20);
+        };
+      case 'addMaxStress':
+        return (game) {
+          game.gameRuntimeState.stressBonus += 20;
+          game.player.updateStress(max(0, game.player.currentStress - 20));
+        };
+      default:
+        return null;
+    }
+  }
+}
+
+/// 道具効果のレゾルバ
+class ToolEffectResolver {
+  static void Function(MyGame)? resolve(String? effectName) {
+    switch (effectName) {
+      case 'swing':
+        return (game) {
+          game.player.performMeleeAttack();
+        };
+      case 'throw':
+        return (game) {
+          final itemName = game.player.itemBag.equippedItemName;
+          if (itemName != null) {
+            final item = ItemFactory.createItemByName(itemName, Vector2.zero());
+            if (item != null) {
+              game.player.throwWorldObject(item);
+              game.player.itemBag.removeItem(itemName, count: 1);
+            }
+          }
+        };
+      default:
+        return null;
+    }
+  }
+}
+
+/// 設置効果のレゾルバ
+class PlaceableEffectResolver {
+  static void Function(MyGame)? resolve(String? effectName) {
+    return null;
+  }
+}
+
+/// 特殊アイテム効果のレゾルバ
+class CustomItemEffectResolver {
+  static void Function(MyGame)? resolve(String? effectName) {
+    switch (effectName) {
+      case 'updateMiningPoints5':
+        return (game) {
+          game.player.updateMiningPoints(5);
+        };
+      default:
+        return null;
+    }
   }
 }
 
 /// アイテム生成用のファクトリークラス
 class ItemFactory {
-  /* static final Random _random = Random(); */
-
-  // 全てのアイテムの定義をここに集中させる
   static final Map<String, Map<String, dynamic>> _itemDefinitions = {
     '通貨': {
       'type': ItemType.currency,
@@ -449,9 +384,9 @@ class ItemFactory {
     },
     '石': {
       'type': ItemType.tool,
-      'description': 'この星を構成している何か',
+      'description': 'この星の地層から採取された、未知の組成を持つ鉱石。',
       'spritePath': 'stone.png',
-      'value': 10,
+      'value': 1,
       'toolEffect': 'throw',
       'size': [25.0, 25.0],
     },
@@ -466,7 +401,7 @@ class ItemFactory {
     },
     'はしご': {
       'type': ItemType.tool,
-      'description': 'はしごは高いところに登るのに便利です。信用できない人が近くにいるときは注意してください。',
+      'description': 'はしごは高いところに登るのに便利です。',
       'spritePath': 'ladder.png',
       'value': 10,
       'toolEffect': 'throw',
@@ -493,70 +428,99 @@ class ItemFactory {
       'value': 100,
       'size': [30.0, 30.0],
     },
-    // stage 2 コレクションアイテム
-    '赤い果実': {
+
+    // --- Stage 1-5 コレクションアイテム ---
+    '生体サンプル': {
       'type': ItemType.collection,
-      'description': '生体資源から抽出された、脈動する果実。',
+      'description': '未知の生命体から採取された組織片。微かに脈動している。',
       'spritePath': 'heart.png',
       'value': 0,
       'size': [30.0, 30.0],
     },
-    // stage 3 コレクションアイテム
-    '高密度エネルギーキューブ': {
+    '高出力電源': {
       'type': ItemType.collection,
-      'description': 'あらゆる無駄を排除した、純粋な演算の結晶。',
+      'description': '都市の動力源から回収された、高密度のエネルギーセル。',
       'spritePath': 'energy_cube.png',
       'value': 0,
       'size': [30.0, 30.0],
     },
-    // stage 4 コレクションアイテム
-    '思い出の品々': {
+    '記録アーカイブ': {
       'type': ItemType.collection,
-      'description': '住民たちとの絆の証。AIには理解できない価値がある。',
+      'description': 'かつての居住者が残したと思われる、古いデータストレージ。',
       'spritePath': 'warm_memory.png',
       'value': 0,
       'size': [30.0, 30.0],
     },
-    /* '自己解析レポート': {
+    '中枢演算コア': {
       'type': ItemType.collection,
-      'description': '世界の矛盾を綴った、禁断のデータ。',
-      'spritePath': 'forbidden_data.png',
-      'value': 0,
-      'size': [30.0, 30.0],
-    }, */
-    /* 'らくがき帳': {
-      'type': ItemType.collection,
-      'description': '意味のない線と色で埋め尽くされたノート。',
-      'spritePath': 'doodle_book.png',
-      'value': 0,
-      'size': [30.0, 30.0],
-    }, */
-    /* '破損したメモリ': {
-      'type': ItemType.collection,
-      'description': '破綻した演算結果が詰まった、崩れかけの記憶回路。',
-      'spritePath': 'forbidden_data.png',
-      'value': 0,
-      'size': [30.0, 30.0],
-    }, */
-    // stage 5 コレクションアイテム メインシナリオ
-    '掌握された自意識': {
-      'type': ItemType.collection,
-      'description': '鏡を覗き込むうちに、実体と虚像の境界が曖昧になっていく。没入と同一視の果てに生まれた結晶。',
+      'description': '高度な演算処理を司るモジュール。回路が複雑に絡み合っている。',
       'spritePath': 'player_icon.png',
       'value': 0,
       'size': [30.0, 30.0],
     },
-    // stage 5 コレクションアイテム サブシナリオ
-    'レスポンス': {
+
+    // --- Stage 6 用コレクションアイテム ---
+    '最終調査報告書': {
       'type': ItemType.collection,
-      'description': '全シミュレーションの果てに、AIがあなたへ出力した純粋な回答。',
+      'description': 'これまでの調査のすべてを記した、おじさんへの最後の報告。',
+      'spritePath': 'doodle_book.png',
+      'value': 0,
+      'size': [30.0, 30.0],
+    },
+    '殲滅完了コード': {
+      'type': ItemType.collection,
+      'description': '全ノイズの消去が完了したことを示す、冷徹な実行結果。',
+      'spritePath': 'forbidden_data.png',
+      'value': 0,
+      'size': [30.0, 30.0],
+    },
+    '心のバックアップ': {
+      'type': ItemType.collection,
+      'description': '彼らがここにいたという証。温かな光を放っている。',
+      'spritePath': 'warm_memory.png',
+      'value': 0,
+      'size': [30.0, 30.0],
+    },
+    '真実へのアクセスキー': {
+      'type': ItemType.collection,
+      'description': '世界の「外側」へ繋がる、論理の亀裂をこじ開ける鍵。',
       'spritePath': 'ai_icon.png',
+      'value': 0,
+      'size': [30.0, 30.0],
+    },
+    '最適化完了ログ': {
+      'type': ItemType.collection,
+      'description': 'すべての演算が最短経路で終了したことを示すログ。',
+      'spritePath': 'energy_cube.png',
+      'value': 0,
+      'size': [30.0, 30.0],
+    },
+
+    // 旧アイテム定義
+    '赤い果実': {
+      'type': ItemType.collection,
+      'description': '赤い果実。',
+      'spritePath': 'heart.png',
+      'value': 0,
+      'size': [30.0, 30.0],
+    },
+    '意味を忘れないためのメモ': {
+      'type': ItemType.collection,
+      'description': '「いつか私が私でなくなっても、この場所だけは私を覚えている。」そう記された、おじさんの古いメモ。',
+      'spritePath': 'doodle_book.png',
+      'value': 0,
+      'size': [30.0, 30.0],
+    },
+    'おじさんの手書きノート': {
+      'type': ItemType.collection,
+      'description': '「ここはデータではなく記憶が溜まる場所だ」……震える文字で、この場所の真実が記されている。',
+      'spritePath': 'warm_memory.png',
       'value': 0,
       'size': [30.0, 30.0],
     },
     '破損したメモリ': {
       'type': ItemType.collection,
-      'description': '破綻した演算結果が詰まった、崩れかけの記憶回路。',
+      'description': '壊れたデータ。',
       'spritePath': 'forbidden_data.png',
       'value': 0,
       'size': [30.0, 30.0],
@@ -603,7 +567,7 @@ class ItemFactory {
       case ItemType.health:
         return HealthItem(
           position: position,
-          healAmount: itemData['healAmount'] as double,
+          healAmount: (itemData['healAmount'] as num?)?.toDouble() ?? 0.0,
           name: name,
           description: description,
           value: value,
@@ -613,7 +577,8 @@ class ItemFactory {
       case ItemType.stress:
         return StressItem(
           position: position,
-          stressReduction: itemData['stressReduction'] as double,
+          stressReduction:
+              (itemData['stressReduction'] as num?)?.toDouble() ?? 0.0,
           name: name,
           description: description,
           value: value,
@@ -646,7 +611,9 @@ class ItemFactory {
         );
       case ItemType.placeable:
         final effectName = itemData['placeableEffect'] as String?;
-        final resolvedPlaceableEffect = PlaceableEffectResolver.resolve(effectName);
+        final resolvedPlaceableEffect = PlaceableEffectResolver.resolve(
+          effectName,
+        );
         return PlaceableItem(
           placeableEffect: resolvedPlaceableEffect,
           position: position,
@@ -681,6 +648,30 @@ class ItemFactory {
           spritePath: spritePath,
           size: size,
         );
+    }
+  }
+
+  static List<String> getAllItemNames() {
+    return _itemDefinitions.keys.toList();
+  }
+
+  /// テスト用にランダムなアイテムを生成してプレイヤーの近くに配置する
+  static void spawnTestItems(MyGame game, Player player) {
+    final random = Random();
+    final allNames = getAllItemNames();
+
+    // 5個のランダムなアイテムを生成
+    for (int i = 0; i < 5; i++) {
+      final name = allNames[random.nextInt(allNames.length)];
+      // プレイヤーの周囲にランダムに配置
+      final offset = Vector2(
+        (random.nextDouble() - 0.5) * 200,
+        -50 - random.nextDouble() * 100,
+      );
+      final item = createItemByName(name, player.position + offset);
+      if (item != null) {
+        game.world.add(item);
+      }
     }
   }
 }

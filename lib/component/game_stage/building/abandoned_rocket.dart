@@ -2,7 +2,6 @@
 import 'package:flutter/material.dart';
 import '../../common/hitboxes/interact_hitbox.dart';
 import '../../../main.dart';
-import '../../../UI/windows/message_window.dart';
 import '../../../UI/windows/puzzle_window.dart';
 import '../../../UI/window_manager.dart';
 import '../../../puzzles/fuel_puzzle/fuel_puzzle.dart';
@@ -11,6 +10,7 @@ import '../../../puzzles/route_puzzle/route_puzzle.dart';
 import '../../../puzzles/manifold_puzzle/manifold_puzzle.dart';
 
 import '../../../system/storage/game_runtime_state.dart';
+import '../../enemy/enemy_base.dart';
 
 class AbandonedRocket extends SpriteComponent with HasGameReference<MyGame> {
   AbandonedRocket({required super.position});
@@ -59,25 +59,26 @@ class AbandonedRocket extends SpriteComponent with HasGameReference<MyGame> {
     // 各ルートのコレクションアイテム
     final routeItems = {
       'outdoor_1': '石',
-      'outdoor_2': '赤い果実',
-      'outdoor_3': '高密度エネルギーキューブ',
-      'outdoor_4': '思い出の品々',
-      'outdoor_philosophy_main': '掌握された自意識',
-      'outdoor_philosophy_sub': 'レスポンス',
-      'outdoor_despair': '破損したメモリ',
-      'outdoor_true': 'レスポンス',
+      'outdoor_2': '生体サンプル',
+      'outdoor_3': '高出力電源',
+      'outdoor_4': '記録アーカイブ',
+      'outdoor_philosophy': '中枢演算コア',
+      'outdoor_despair': '最終調査報告書', // デフォルト
+      'outdoor_true': '中枢演算コア',
     };
     
     String? targetItemName = routeItems[stageId];
-    if (stageId == 'outdoor_philosophy') {
-      bool isSubScenario = true;
-      for (int i = 1; i <= 4; i++) {
-        if (!state.subRouteConfirmedStages.contains('outdoor_$i')) {
-          isSubScenario = false;
-          break;
-        }
+
+    // Stage 6 (outdoor_despair) の場合は属性に応じて要求アイテムを変える
+    if (stageId == 'outdoor_despair') {
+      final attr = state.activeRouteId ?? game.missionManager.getCurrentAttribute();
+      switch (attr) {
+        case GameRuntimeState.routeViolence: targetItemName = '殲滅完了コード'; break;
+        case GameRuntimeState.routeEmpathy: targetItemName = '心のバックアップ'; break;
+        case GameRuntimeState.routePhilosophy: targetItemName = '真実へのアクセスキー'; break;
+        case GameRuntimeState.routeEfficiency: targetItemName = '最適化完了ログ'; break;
+        default: targetItemName = '最終調査報告書';
       }
-      targetItemName = isSubScenario ? routeItems['outdoor_philosophy_sub'] : routeItems['outdoor_philosophy_main'];
     }
 
     // 4番目のパズル（Manifold）の前にコレクションアイテムをチェック
@@ -91,6 +92,32 @@ class AbandonedRocket extends SpriteComponent with HasGameReference<MyGame> {
           return;
         }
       }
+
+      // Stage 6 固有の「極致」チェック
+      if (stageId == 'outdoor_despair') {
+        final attr = state.activeRouteId ?? game.missionManager.getCurrentAttribute();
+        
+        if (attr == GameRuntimeState.routeViolence) {
+          // Violence: 敵が残っている場合は発射不可
+          final enemyCount = game.world.children.whereType<EnemyBase>().length;
+          if (enemyCount > 0) {
+            game.windowManager.showDialog(
+              ["「……警告。周辺にノイズ（生体反応）を検知。殲滅を推奨します。」", "（すべての敵を倒してください）"],
+            );
+            return;
+          }
+        } else if (attr == GameRuntimeState.routeEmpathy) {
+          // Empathy: 特定の条件（ここでは簡略化してNPCへの満足度など）
+          // 実際には「残影との対話」が終わっているかをチェックしたいが、現状は全NPC満足度で代用
+          final satisfiedCount = state.satisfiedNpcIds.length;
+          if (satisfiedCount < 3) { // 仮のしきい値
+            game.windowManager.showDialog(
+              ["「彼らはまだ、何かを伝えたがっているようです。」", "（NPCたちの願いを聞いてください）"],
+            );
+            return;
+          }
+        }
+      }
     }
 
     if (solvedPuzzles >= 4) {
@@ -102,10 +129,18 @@ class AbandonedRocket extends SpriteComponent with HasGameReference<MyGame> {
       FuelPuzzle(),      // 1. 燃料補給
       BypassPuzzle(),    // 2. 電力接続
       RoutePuzzle(),     // 3. 航路設定
-      ManifoldPuzzle(),  // 4. 意識統合
+      ManifoldPuzzle(
+        activeAttribute: state.activeRouteId ?? game.missionManager.getCurrentAttribute()
+      ),  // 4. 意識統合
     ];
 
     final currentPuzzle = puzzles[solvedPuzzles];
+
+    // Philosophy Stage 6 の場合はタイトルを「真理の読解」に変更
+    if (stageId == 'outdoor_despair' && solvedPuzzles == 3 && (state.activeRouteId ?? game.missionManager.getCurrentAttribute()) == GameRuntimeState.routePhilosophy) {
+      currentPuzzle.title = '真理の読解：システムへの直接介入';
+      currentPuzzle.description = '論理の亀裂をこじ開け、世界の「外側」へ繋がるアクセスキーを確立してください。';
+    }
 
     game.windowManager.showWindow(
       GameWindowType.puzzle,
@@ -152,24 +187,7 @@ class AbandonedRocket extends SpriteComponent with HasGameReference<MyGame> {
     game.windowManager.showDialog(
       messages,
       onFinish: () {
-        // ルートを完了として記録
-        if (!game.gameRuntimeState.completedRouteIds.contains(routeId)) {
-          game.gameRuntimeState.completedRouteIds.add(routeId);
-        }
-        
-        // ルート確定状態をリセット
-        game.gameRuntimeState.activeRouteId = null;
-        
-        // 羅針盤メッセージの表示済みフラグをリセット
-        game.gameRuntimeState.hasShownCompassToday = false;
-        
-        // 次の日へ
-        game.gameRuntimeState.dayCount++;
-        
-        // 建物配置をリセット（次の日のために）
-        game.gameRuntimeState.buildingPlacements.clear();
-
-        // 演出を伴うクリア処理
+        // 演出を伴うクリア処理（メインロジックは MyGame.routeClear に集約）
         game.routeClear();
       },
     );
@@ -194,8 +212,25 @@ class AbandonedRocket extends SpriteComponent with HasGameReference<MyGame> {
   List<String> _getEndingMessages(String routeId) {
     final state = game.gameRuntimeState;
     final stageId = state.currentOutdoorSceneId ?? 'outdoor_1';
+    final bool isLap1 = state.scenarioCount == 1;
+
+    // シナリオ2以降は人格を剥ぎ取ったシステムログにする
+    if (!isLap1) {
+      return [
+        "[SYSTEM] Protocol: LAUNCH. Node: $stageId.",
+        "[LOG] Data transmission: 100% complete.",
+        "[SYSTEM] Returning to initial state..."
+      ];
+    }
 
     if (stageId == 'outdoor_despair') {
+      return [
+        "「……あいつも、いつかはこうなる運命だったのかもしれないな。」",
+        "「お疲れ様、相棒。君だけは、どうか最後まで君のままでいてくれ。」"
+      ];
+    }
+
+    if (stageId == 'outdoor_true') {
       return [
         '「あなたがその気になれば、もっといろいろな可能性が開けたかもしれない。」',
         '「……さようなら。思考の代行を、お楽しみいただけましたか？」',
@@ -253,7 +288,7 @@ class AbandonedRocket extends SpriteComponent with HasGameReference<MyGame> {
         return [
           '「任務完了。希少な鉱石を母星へ送信する。」',
           'ロケットは静かに夕闇の中へ消えていった。',
-          '明日もまた、同じような一日が始まるだろう。',
+          '次回の調査に備えよう。',
         ];
     }
   }

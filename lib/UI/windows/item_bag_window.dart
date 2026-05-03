@@ -1,8 +1,9 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../window_manager.dart';
 import '../../component/item/item_bag.dart';
 import '../../component/item/item.dart';
 import '../../main.dart';
+import '../../game_manager/mission_manager.dart';
 import '../dialogs/confirmation_dialog.dart';
 
 class ItemBagWindow extends StatelessWidget {
@@ -86,6 +87,10 @@ class ItemBagWindow extends StatelessWidget {
                         final itemName = itemBag.items.keys.elementAt(index);
                         final item = itemBag.items[itemName]!;
                         final count = itemBag.getItemCount(itemName);
+                        final isLap1 = game.gameRuntimeState.scenarioCount == 1;
+                        final displayDisplayName = game.missionManager.getItemDisplayName(item.name);
+                        final displayDescription = isLap1 ? item.description : (game.missionManager.getAttributeLevel() >= 3 || game.missionManager.getCurrentPhase() == MissionPhase.collapse ? (item.isMemoItem ? item.description : 'DATA_CORRUPTED: 意味を定義できません。') : item.description);
+                        
                         return Card(
                           margin: EdgeInsets.symmetric(
                             horizontal: windowManager.screenWidth * 0.02,
@@ -157,7 +162,7 @@ class ItemBagWindow extends StatelessWidget {
                                         CrossAxisAlignment.start,
                                     children: [
                                       Text(
-                                        '${item.name} x$count',
+                                        displayDisplayName,
                                         style: TextStyle(
                                           fontSize:
                                               windowManager.screenHeight *
@@ -168,8 +173,32 @@ class ItemBagWindow extends StatelessWidget {
                                               'Nosutaru-dotMPlusH-10-Regular',
                                         ),
                                       ),
+                                      if (displayDisplayName != item.name)
+                                        Text(
+                                          '(${item.name}) x$count',
+                                          style: TextStyle(
+                                            fontSize:
+                                                windowManager.screenHeight *
+                                                0.02,
+                                            color: Colors.white70,
+                                            fontFamily:
+                                                'Nosutaru-dotMPlusH-10-Regular',
+                                          ),
+                                        )
+                                      else
+                                        Text(
+                                          'x$count',
+                                          style: TextStyle(
+                                            fontSize:
+                                                windowManager.screenHeight *
+                                                0.02,
+                                            color: Colors.white70,
+                                            fontFamily:
+                                                'Nosutaru-dotMPlusH-10-Regular',
+                                          ),
+                                        ),
                                       Text(
-                                        item.description,
+                                        displayDescription,
                                         style: TextStyle(
                                           fontSize:
                                               windowManager.screenHeight *
@@ -252,13 +281,17 @@ class ItemBagWindow extends StatelessWidget {
 
   // アイテム詳細ダイアログを表示するメソッド
   void _showItemDetailDialog(BuildContext context, Item item) {
+    final displayDisplayName = game.missionManager.getItemDisplayName(item.name);
+    final isLap1 = game.gameRuntimeState.scenarioCount == 1;
+    final displayDescription = isLap1 ? item.description : (game.missionManager.getAttributeLevel() >= 3 || game.missionManager.getCurrentPhase() == MissionPhase.collapse ? (item.isMemoItem ? item.description : 'DATA_CORRUPTED: 意味を定義できません。') : item.description);
+
     showDialog(
       context: context,
       builder: (BuildContext dialogContext) {
         return AlertDialog(
           backgroundColor: Colors.brown[700], // ダイアログの背景色
           title: Text(
-            item.name,
+            '$displayDisplayName${displayDisplayName != item.name ? ' (${item.name})' : ''}',
             style: TextStyle(
               fontSize: windowManager.screenHeight * 0.03,
               fontWeight: FontWeight.bold,
@@ -267,7 +300,7 @@ class ItemBagWindow extends StatelessWidget {
             ),
           ),
           content: Text(
-            item.description,
+            displayDescription,
             style: TextStyle(
               fontSize: windowManager.screenHeight * 0.025,
               color: Colors.white70,
@@ -297,6 +330,7 @@ class ItemBagWindow extends StatelessWidget {
   // アイテム使用ダイアログを表示するメソッド
   void _showUseItemDialog(BuildContext context, Item item, int currentCount) {
     int useCount = 1; // 使用する個数の初期値
+    final displayDisplayName = game.missionManager.getItemDisplayName(item.name);
 
     showDialog(
       context: context,
@@ -307,7 +341,7 @@ class ItemBagWindow extends StatelessWidget {
               backgroundColor: Colors.brown[700],
               alignment: Alignment.center,
               title: Text(
-                '${item.name} を使用',
+                '$displayDisplayName を使用',
                 style: TextStyle(
                   fontSize: windowManager.screenWidth * 0.02,
                   fontWeight: FontWeight.bold,
@@ -502,9 +536,10 @@ class ItemBagWindow extends StatelessWidget {
         showDialog(
           context: dialogContext,
           builder: (BuildContext context) {
+            final displayDisplayName = game.missionManager.getItemDisplayName(item.name);
             return ConfirmationDialog(
               title: 'アイテムの廃棄',
-              message: '${item.name} を 「全て」 廃棄しますか？',
+              message: '$displayDisplayName を 「全て」 廃棄しますか？',
               onConfirm: () {
                 game.player.disposePlaceableItem(item);
               },

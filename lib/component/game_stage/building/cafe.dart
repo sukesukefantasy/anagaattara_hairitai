@@ -1,4 +1,4 @@
-import 'package:flame/components.dart';
+﻿import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 import '../../common/hitboxes/interact_hitbox.dart';
 import 'building.dart';
@@ -26,12 +26,16 @@ class Cafe extends Building {
   @override
   Future<void> onLoad() async {
     await super.onLoad();
-    _doorOpenAudioSource = await game.audioManager.loadAndCacheSound(
-      'assets/audio/buildings/DoorOpen01.ogg',
-    );
-    _doorCloseAudioSource = await game.audioManager.loadAndCacheSound(
-      'assets/audio/buildings/DoorClose02.ogg',
-    );
+    try {
+      _doorOpenAudioSource = await game.audioManager.loadAndCacheSound(
+        'assets/audio/buildings/DoorOpen01.ogg',
+      );
+      _doorCloseAudioSource = await game.audioManager.loadAndCacheSound(
+        'assets/audio/buildings/DoorClose02.ogg',
+      );
+    } catch (e) {
+      debugPrint('Cafe: Failed to load door sounds: $e');
+    }
 
     final buildingBodySprite = await Sprite.load(
       'CITY_MEGA.png',

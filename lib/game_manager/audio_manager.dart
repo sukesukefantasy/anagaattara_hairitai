@@ -2,8 +2,8 @@
 import 'package:flame_audio/flame_audio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
-import 'package:flutter_soloud/src/enums.dart'; // DistanceModel, AttenuationModel のために追加
 import 'dart:math'; // Randomのために追加
+import 'dart:async';
 import '../main.dart'; // MyGameをインポート
 
 class ActiveSound {
@@ -31,9 +31,7 @@ class AudioManager {
   String? _currentBgm;
   bool _isBgmPlaying = false;
   // BGM独立制御用の変数
-  bool _wasInUnderGround = false;
   double _timeInUnderGround = 0.0;
-  static const double _bgmPlayThresholdSeconds = 2.0;
 
   // 効果音関連の変数
   final Map<String, Future<AudioSource>> _loadingSounds = {};
@@ -45,14 +43,23 @@ class AudioManager {
 
   /// SoLoudとFlameAudioの初期化
   Future<void> initialize() async {
-    if (!soloud.isInitialized) {
-      //debugPrint('SoLoud初期化中...');
-      await soloud.init(); // 3Dオーディオの設定は別途行う
-      soloud.set3dSoundSpeed(maxDistance); // 3Dオーディオの最大距離を設定
-      //debugPrint('SoLoud初期化完了。');
+    try {
+      if (!soloud.isInitialized) {
+        //debugPrint('SoLoud初期化中...');
+        await soloud.init(); // 3Dオーディオの設定は別途行う
+        soloud.set3dSoundSpeed(maxDistance); // 3Dオーディオの最大距離を設定
+        //debugPrint('SoLoud初期化完了。');
+      }
+    } catch (e) {
+      debugPrint('AudioManager: SoLoud initialization failed: $e');
     }
-    await FlameAudio.bgm.initialize();
-    debugPrint('MyGame: FlameAudio initialized.');
+
+    try {
+      await FlameAudio.bgm.initialize();
+      debugPrint('MyGame: FlameAudio initialized.');
+    } catch (e) {
+      debugPrint('AudioManager: FlameAudio initialization failed: $e');
+    }
   }
 
   /// 毎フレーム更新されるメソッド
@@ -67,32 +74,26 @@ class AudioManager {
     );
 
     // BGMの制御
-    final bool currentlyInUnderGround = game.player!.inUnderGround;
+    final bool currentlyInUnderGround = game.player.inUnderGround;
 
     if (currentlyInUnderGround) {
-      if (!_wasInUnderGround) {
-        // 地下に入った瞬間
-        _timeInUnderGround = 0.0;
-      } else {
-        // 地下継続中
-        if (!_isBgmPlaying) {
-          // BGMが再生されていない間だけ時間を加算
-          _timeInUnderGround += dt;
-        }
-      }
-
-      // 地下に入ってから閾値秒経過し、かつBGMがまだ再生されていなければ再生
-      if (_timeInUnderGround >= _bgmPlayThresholdSeconds && !_isBgmPlaying) {
-        playRandomBgm();
-      }
-    } else {
-      // 地上にいる
+      // 地下にいる間は「静寂」にする
       if (_isBgmPlaying) {
-        stopBgm(); // 非同期停止メソッドを呼び出す
+        stopBgm();
       }
-      _timeInUnderGround = 0.0; // 地上に出たらリセット
+      _timeInUnderGround = 0.0;
+    } else {
+      // 地上にいる間はBGM（環境音的な役割）を流す
+      if (!_isBgmPlaying) {
+        // 地上に出てから少し待って再生（演出上の余韻）
+        _timeInUnderGround += dt;
+        if (_timeInUnderGround >= 1.0) {
+          playRandomBgm();
+        }
+      } else {
+        _timeInUnderGround = 0.0;
+      }
     }
-    _wasInUnderGround = currentlyInUnderGround;
   }
 
   /// 音源をロードしキャッシュする
@@ -112,13 +113,30 @@ class AudioManager {
     
     debugPrint('AudioManager: loading sound from $fullPath (original: $path)');
 
-    final futureSound = soloud.loadAsset(fullPath);
-    _loadingSounds[path] = futureSound;
+    final completer = Completer<AudioSource>();
+    _loadingSounds[path] = completer.future;
 
-    final sound = await futureSound;
-    _soundCache[path] = sound;
-    _loadingSounds.remove(path); // ロード完了後、Futureを削除
-    return sound;
+    try {
+      // タイムアウトを設定してロードを試みる
+      final sound = await soloud.loadAsset(fullPath).timeout(
+        const Duration(seconds: 5),
+        onTimeout: () {
+          throw TimeoutException('Sound loading timeout: $fullPath');
+        },
+      );
+      _soundCache[path] = sound;
+      completer.complete(sound);
+      return sound;
+    } catch (e) {
+      debugPrint('AudioManager ERROR: Failed to load sound $fullPath: $e');
+      _loadingSounds.remove(path);
+      // エラー時はダミーのAudioSourceを返すか、例外を投げる
+      // ここでは呼び出し側で適切に処理されるよう、例外を再スローするが、
+      // 呼び出し側（onLoad等）で必ず catch する必要がある
+      rethrow;
+    } finally {
+      _loadingSounds.remove(path);
+    }
   }
 
   /// ボリュームを計算する（距離減衰）
@@ -194,7 +212,7 @@ class AudioManager {
       double maxCurrentDistance = 0.0;
       ActiveSound? soundToReplace;
       for (var s in _activeFootstepSounds) {
-        final currentDistance = (s.position - game.player!.position).length;
+        final currentDistance = (s.position - game.player.position).length;
         if (currentDistance > maxCurrentDistance) {
           maxCurrentDistance = currentDistance;
           soundToReplace = s;

@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../window_manager.dart';
 import '../../component/item/item_bag.dart'; // ItemBagをインポート
 import 'item_bag_window.dart'; // ItemBagWindowをインポート
@@ -79,7 +79,7 @@ class PauseWindow extends StatelessWidget {
                         // タイトルから戻った時も羅針盤メッセージを表示（クリア済みならスキップ）
                         final state = game.gameRuntimeState;
                         final currentSceneId = state.currentOutdoorSceneId ?? 'outdoor_1';
-                        game.routeManager.showCompassMessage(currentSceneId);
+                        game.missionManager.showCompassMessage(currentSceneId);
                       },
                     ),
                   );

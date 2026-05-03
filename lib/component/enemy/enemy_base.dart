@@ -1,7 +1,6 @@
 ﻿import 'dart:math';
 import 'package:flame/collisions.dart';
 import 'package:flame/components.dart';
-import 'package:flutter/foundation.dart';
 import '../../main.dart';
 import '../player.dart';
 import '../../system/storage/game_runtime_state.dart';
@@ -19,13 +18,23 @@ abstract class EnemyBase extends SpriteAnimationComponent
     required super.size,
     this.direction = -1.0, // デフォルトは左向き
     super.priority = 49,
+    this.mass = 1.0, // デフォルトの質量
   });
 
   double get speed;
   double get attackStress;
+  final double mass;
+
+  // ノックバック用の速度
+  final Vector2 _knockbackVelocity = Vector2.zero();
 
   // ターゲットマーカー用のコンポーネント
   CircleComponent? _targetMarker;
+
+  /// ノックバックを適用する
+  void applyKnockback(Vector2 impulse) {
+    _knockbackVelocity.add(impulse / mass);
+  }
 
   void showTargetMarker(bool show) {
     if (show) {
@@ -51,10 +60,20 @@ abstract class EnemyBase extends SpriteAnimationComponent
   void update(double dt) {
     super.update(dt);
 
+    // ノックバックの適用
+    if (!_knockbackVelocity.isZero()) {
+      position += _knockbackVelocity * dt;
+      // 摩擦による減衰
+      _knockbackVelocity.multiply(Vector2.all(max(0, 1 - 5 * dt)));
+      if (_knockbackVelocity.length < 5) {
+        _knockbackVelocity.setZero();
+      }
+    }
+
     // Stage 2 でプレイヤーが近くにいる場合にマーカーを表示
     if (game.gameRuntimeState.currentOutdoorSceneId == 'outdoor_2') {
       final player = game.player;
-      if (player != null && !player.isHiding) {
+      if (!player.isHiding) {
         final distance = (player.absolutePosition - absolutePosition).length;
         showTargetMarker(distance < 150);
       } else {
@@ -89,18 +108,46 @@ abstract class EnemyBase extends SpriteAnimationComponent
         debugPrint('Enemy hit by item: ${item.name} with velocity: ${item.physicsBehavior.velocity.length}');
 
         if (game.gameRuntimeState.currentOutdoorSceneId == 'outdoor_2') {
-          game.routeManager.onAction(GameRuntimeState.routeViolence); // ルート進行
+          game.missionManager.onAction(GameRuntimeState.routeViolence); // ルート進行
         }
         
+        // アイテムの速度と質量に応じたノックバックを適用
+        final impulse = item.physicsBehavior.velocity.clone()..multiply(Vector2.all(item.physicsBehavior.mass * 0.5));
+        applyKnockback(impulse);
+
         // 当たった時の演出（赤く光るなど）
         _showHitEffect();
       }
     }
   }
 
-  void hitByMelee() {
+  void hitByMelee(Vector2 impulse) {
     // 近接攻撃を受けた時の処理
+    applyKnockback(impulse);
     _showHitEffect();
+  }
+
+  void dieAndDropItem() {
+    // 即死 + アイテムドロップ
+    _showHitEffect();
+    
+    // アイテムを生成（とりあえず通貨かランダムな宝石）
+    final random = Random();
+    final itemNames = ['通貨', 'クオーツ', 'エメラルド'];
+    final dropItemName = itemNames[random.nextInt(itemNames.length)];
+    
+    final dropItem = ItemFactory.createItemByName(dropItemName, absolutePosition.clone());
+    if (dropItem != null) {
+      game.world.add(dropItem);
+      dropItem.physicsBehavior.setEnabled(true);
+      dropItem.physicsBehavior.velocity = Vector2(0, -100);
+    }
+    
+    // 敵を消去
+    removeFromParent();
+    
+    // Violenceスコアを加算
+    game.missionManager.onAction(GameRuntimeState.routeViolence, 2.0);
   }
 
   void _showHitEffect() {

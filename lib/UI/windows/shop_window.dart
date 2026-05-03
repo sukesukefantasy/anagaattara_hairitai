@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flame/components.dart';
 import '../window_manager.dart';
 import '../../component/item/item_bag.dart';
@@ -36,7 +36,7 @@ class _ShopWindowContentState extends State<ShopWindow> {
     {
       'name': '紅茶の力',
       'description': 'ストレスを20軽減し、最大ストレス値を増加します',
-      'spritePath': 'tea.png',
+      'spritePath': 'green_cha.png',
       'price': 70,
       'itemType': ItemType.stress,
       'stressReduction': 20.0,
@@ -64,13 +64,13 @@ class _ShopWindowContentState extends State<ShopWindow> {
       'value': 1,
     },
     {
-      'name': '石',
-      'description': 'この星を構成している何か',
+      'name': '希少な鉱石',
+      'description': 'この星の地層から採取された、未知の組成を持つ鉱石。',
       'spritePath': 'stone.png',
       'price': 1,
-      'itemType': ItemType.custom,
+      'itemType': ItemType.collection,
       'effect': (Player player) {
-        debugPrint('石を買った！');
+        debugPrint('希少な鉱石を買った！');
       },
       'value': 1,
     },
@@ -134,7 +134,7 @@ class _ShopWindowContentState extends State<ShopWindow> {
                   horizontal: widget.windowManager.screenWidth * 0.03,
                 ), // 画面幅の3%
                 child: AnimatedBuilder(
-                  animation: widget.game.player!.currencyNotifier, // お金の変化を監視
+                  animation: widget.game.player.currencyNotifier, // お金の変化を監視
                   builder: (context, child) {
                     return Row(
                       mainAxisAlignment: MainAxisAlignment.end,
@@ -149,7 +149,7 @@ class _ShopWindowContentState extends State<ShopWindow> {
                           width: widget.windowManager.screenWidth * 0.01,
                         ), // 画面幅の1%
                         Text(
-                          '${widget.game.player!.moneyPoints}',
+                          '${widget.game.player.moneyPoints}',
                           style: TextStyle(
                             fontSize:
                                 widget.windowManager.screenHeight *
@@ -172,7 +172,7 @@ class _ShopWindowContentState extends State<ShopWindow> {
                     final itemPrice = shopItem['price'];
                     final itemSpritePath = shopItem['spritePath'];
                     final isAffordable =
-                        widget.game.player!.moneyPoints >= itemPrice;
+                        widget.game.player.moneyPoints >= itemPrice;
 
                     return Card(
                       margin: EdgeInsets.symmetric(
@@ -336,7 +336,7 @@ class _ShopWindowContentState extends State<ShopWindow> {
 
   // アイテム購入処理
   void _purchaseItem(Map<String, dynamic> shopItem) {
-    final player = widget.game.player!;
+    final player = widget.game.player;
     final int price = shopItem['price'] as int;
     if (player.moneyPoints < price) {
       debugPrint('お金が足りません！');

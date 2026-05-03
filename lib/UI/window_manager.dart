@@ -19,6 +19,7 @@ enum GameWindowType {
   shop,
   message,
   puzzle,
+  calibration,
 }
 
 /// ウィンドウ表示の状態と内容を管理するChangeNotifier

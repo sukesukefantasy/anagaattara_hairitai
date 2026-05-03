@@ -1,8 +1,5 @@
 ﻿import 'package:flame/components.dart';
-import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart'; // TextStyleとColorsのために追加
 import '../../main.dart';
-import '../player.dart';
 import 'enemy_base.dart'; // EnemyBaseクラスをインポート
 import '../../game_manager/audio_manager.dart'; // AudioManagerをインポート
 import 'package:flutter_soloud/flutter_soloud.dart'; // SoundHandleのために追加
@@ -16,6 +13,7 @@ class CarEnemy extends EnemyBase {
     required super.size,
     required super.direction, // directionを受け取る
     super.priority = 60, // 建物、プレイヤー、歩行者より手前
+    super.mass = 5.0, // 車は重い
   }) {
     anchor = Anchor.bottomCenter; // アンカーを底辺中央に設定
   }
@@ -65,7 +63,7 @@ class CarEnemy extends EnemyBase {
     // 水平移動
     position.x += speed * dt * direction;
 
-    final playerDistance = game.player != null ? (position - game.player!.position).length : double.infinity;
+    final playerDistance = (position - game.player.position).length;
 
     if (playerDistance < AudioManager.maxDistance) {
       // 音が再生中であれば音源の位置を更新

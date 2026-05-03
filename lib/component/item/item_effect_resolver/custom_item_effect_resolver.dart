@@ -1,4 +1,4 @@
-﻿import 'package:anagaattara_hairitai/component/player.dart';
+import 'package:anagaattara_hairitai/component/player.dart';
 import 'package:anagaattara_hairitai/system/storage/game_runtime_state.dart';
 
 class CustomItemEffectResolver {
@@ -11,7 +11,7 @@ class CustomItemEffectResolver {
       /* case 'addMetaScore':
         return (player) => {
           if (player.game.gameRuntimeState.currentOutdoorSceneId == 'outdoor_philosophy') {
-            player.game.routeManager.onAction(GameRuntimeState.routePhilosophy)
+            player.game.missionManager.onAction(GameRuntimeState.routePhilosophy)
           }
         }; */
         
