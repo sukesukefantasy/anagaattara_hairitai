@@ -1,5 +1,6 @@
-import 'package:flame/collisions.dart';
+﻿import 'package:flame/collisions.dart';
 import 'package:flame/components.dart';
+import 'package:anagaattara_hairitai/component/common/collision/collision_family.dart';
 import 'package:anagaattara_hairitai/component/common/physics/physics_behavior.dart';
 import 'package:anagaattara_hairitai/component/player.dart';
 import 'package:anagaattara_hairitai/component/item/item.dart';
@@ -9,7 +10,9 @@ import 'package:anagaattara_hairitai/UI/game_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:anagaattara_hairitai/component/common/hitboxes/interact_hitbox.dart';
 
-class PhysicsHitbox extends RectangleHitbox with HasGameReference {
+class PhysicsHitbox extends RectangleHitbox
+    with HasGameReference
+    implements HitboxCollisionTag {
   double restitution; // 跳ね返り係数 (0.0: 跳ね返らない, 1.0: 完全に跳ね返る)
   double friction; // 摩擦係数 (0.0: 摩擦なし, 1.0: 完全に摩擦)
   bool _isColliding = false; // 衝突中かどうかを示すフラグ
@@ -19,9 +22,13 @@ class PhysicsHitbox extends RectangleHitbox with HasGameReference {
   @override
   final PositionComponent parent;
 
+  @override
+  final CollisionFamily collisionFamily;
+
   PhysicsHitbox({
     required this.parent,
     required super.size, // size を引数として追加
+    this.collisionFamily = CollisionFamily.item,
     super.collisionType = CollisionType.active, // 物理的な衝突のためにactiveに設定
     this.restitution = 0.3, // デフォルト値
     this.friction = 0.7, // デフォルト値

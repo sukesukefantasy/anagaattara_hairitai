@@ -1,4 +1,4 @@
-import 'package:flame/components.dart';
+﻿import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 import '../../main.dart'; // MyGameをインポート
 import 'building/building_data.dart'; // BackgroundDataをインポート
@@ -20,13 +20,7 @@ class GameStageComponent extends RectangleComponent
     required this.data,
     this.isScrollForward = false,
     this.loop = false,
-  })
-    : super(
-        size: Vector2(
-          data.baseSize * (data.srcSize.x / data.srcSize.y),
-          data.baseSize,
-        ),
-      );
+  }) : super(size: data.srcSize.clone());
 
   double get parallaxEffect => data.parallaxEffect;
 
@@ -68,7 +62,7 @@ class GameStageComponent extends RectangleComponent
 
     // 画面全体を暗くするオーバーレイを描画
     // game.player が null でないことを確認
-    if (game.player != null && game.player!.inUnderGround && priority == 200) {
+    if (game.player.inUnderGround && priority == 200) {
       final worldOriginInLocal = Vector2.zero() - absoluteTopLeftPosition;
       canvas.drawRect(
         Rect.fromLTWH(

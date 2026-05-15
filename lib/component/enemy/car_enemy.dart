@@ -10,7 +10,6 @@ class CarEnemy extends EnemyBase {
 
   CarEnemy({
     required super.position,
-    required super.size,
     required super.direction, // directionを受け取る
     super.priority = 60, // 建物、プレイヤー、歩行者より手前
     super.mass = 5.0, // 車は重い
@@ -26,8 +25,7 @@ class CarEnemy extends EnemyBase {
 
   @override
   Future<void> onLoad() async {
-    await super.onLoad();
-
+    // TODO: 画像挿入 (車の敵本体)
     // スプライトシートからアニメーションを生成し、textureSizeを明示的に設定
     animation = SpriteAnimation.fromFrameData(
       await game.images.load('amburance.png'),
@@ -38,6 +36,9 @@ class CarEnemy extends EnemyBase {
         loop: true,
       ),
     );
+
+    size = animation!.frames.first.sprite.srcSize.clone();
+    await super.onLoad();
 
     // ヒットボックスを追加
     add(

@@ -1,0 +1,46 @@
+
+カテゴリ別・画像生成プロンプト一覧
+
+
+
+[ 生物系（NPC・敵）]
+
+英語プロンプト：
+A 2D pixel art sprite sheet of video game characters, side-scrolling style. Includes ordinary citizens (NPCs) in casual clothing, and enemies in business suits and casual outfits. Multiple full-body character sprites standing, front view, arranged in a clean row. 16-bit retro game aesthetic, sharp pixels. Isolated on a solid, flat white background for easy cutting.
+
+（日本語訳）
+サイドスクロールゲーム用の2Dドット絵キャラクター素材集。私服の一般市民（NPC）や、ビジネススーツ・私服姿の敵キャラクターを含む。複数の全身スプライトが正面を向いて綺麗に整列している。16bitレトロゲーム風のシャープなピクセル。切り抜きやすいようにプレーンな白単色背景に孤立している。
+
+
+
+[ 景色系（遠景・超遠景・近景・中景）]
+
+・超遠景（最背面：空や遠くの山など）
+
+2D pixel art parallax background layer, ultra-distant view. Distant misty mountains, retro 16-bit video game style, seamless horizontal looping, flat colors.
+
+・遠景・中景（ステージの後ろ：街並みや建物のシルエット）
+
+2D pixel art background layer, mid-ground view for a side-scroller game. Cityscape silhouettes, buildings, retro game style. Isolated on a solid flat white background.
+
+・近景（ステージの手前：通り過ぎる電柱や手前の草木など）
+
+A collection of 2D pixel art foreground assets for a side-scrolling game. Streetlights, utility poles, foreground trees. Clean pixel lines, isolated on a solid flat white background.
+
+
+
+[ オブジェクト系（建物・家具）]
+
+A collection of 2D pixel art game assets and props. Includes city buildings, doors, storefronts, street objects, and indoor furniture (chairs, tables). 16-bit retro game style, clean pixel lines, flat 2D view. Formatted as an asset pack, isolated on a solid flat white background.
+
+（日本語訳）
+2Dドット絵のゲームアセットと小道具のコレクション。街の建物、扉、店構え、ストリートのオブジェクト、室内の家具（椅子、テーブル）を含む。16bitレトロゲーム風、きれいなピクセルライン、フラットな2D視点。アセットパックの形式で、白単色背景に配置。
+
+
+
+
+
+
+
+
+

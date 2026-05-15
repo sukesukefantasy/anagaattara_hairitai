@@ -1,9 +1,8 @@
-// シーン名と背景データを照合し、マップするファイル
+﻿// シーン名と背景データを照合し、マップするファイル
 
 import 'package:flame/components.dart';
 
 class BackgroundData {
-  final double baseSize;
   final String imagePath;
   final double parallaxEffect;
   final int priority;
@@ -11,8 +10,8 @@ class BackgroundData {
   final Vector2 srcSize;
   final double? groundOffset;
 
+  /// 描画・配置は [srcSize] をそのままワールド単位（px）として使う。
   const BackgroundData({
-    required this.baseSize,
     required this.imagePath,
     required this.parallaxEffect,
     required this.priority,
@@ -23,10 +22,27 @@ class BackgroundData {
 }
 
 final Map<String, List<BackgroundData>> backgroundDataMap = {
+  'outdoor_0': [
+    // 遠景（母星の山々など）
+    BackgroundData(
+      imagePath: 'outdoor_1.png',
+      parallaxEffect: -0.9,
+      priority: 2,
+      srcPosition: Vector2(0, 0),
+      srcSize: Vector2(1599, 299),
+    ),
+    // 宇宙の遠景（星空）- 最初は透明にしておく
+    BackgroundData(
+      imagePath: 'outdoor_true.png', // 星空っぽい画像として流用
+      parallaxEffect: -0.95,
+      priority: 1,
+      srcPosition: Vector2(0, 0),
+      srcSize: Vector2(1599, 299),
+    ),
+  ],
   'outdoor_1': [
     // 遠景（ビル群など）
     BackgroundData(
-      baseSize: 450,
       imagePath: 'outdoor_1.png',
       parallaxEffect: -0.9,
       priority: 2, // 空より手前に配置
@@ -35,7 +51,6 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
     ),
     // 近景
     BackgroundData(
-      baseSize: 300,
       imagePath: 'CITY_MEGA.png',
       parallaxEffect: 0.5,
       priority: 100,
@@ -46,7 +61,6 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
   ],
   'outdoor_2': [
     BackgroundData(
-      baseSize: 450,
       imagePath: 'outdoor_2.png',
       parallaxEffect: -0.2,
       priority: 2, // 空より手前に配置
@@ -56,7 +70,6 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
   ],
   'outdoor_3': [
     BackgroundData(
-      baseSize: 450,
       imagePath: 'outdoor_3.png',
       parallaxEffect: -0.2,
       priority: 2,
@@ -66,7 +79,6 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
   ],
   'outdoor_4': [
     BackgroundData(
-      baseSize: 450,
       imagePath: 'outdoor_4.png',
       parallaxEffect: -0.2,
       priority: 2,
@@ -76,7 +88,6 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
   ],
   'outdoor_philosophy': [
     BackgroundData(
-      baseSize: 450,
       imagePath: 'outdoor_philosophy.png',
       parallaxEffect: -0.2,
       priority: 2,
@@ -86,7 +97,6 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
   ],
   'outdoor_despair': [
     BackgroundData(
-      baseSize: 450,
       imagePath: 'outdoor_despair.png',
       parallaxEffect: -0.2,
       priority: 2,
@@ -96,7 +106,6 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
   ],
   'outdoor_true': [
     BackgroundData(
-      baseSize: 450,
       imagePath: 'outdoor_true.png',
       parallaxEffect: -0.2,
       priority: 2,
@@ -106,7 +115,6 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
   ],
   'shop_interior': [
     BackgroundData(
-      baseSize: 120,
       imagePath: 'CITY_MEGA.png',
       parallaxEffect: 0,
       priority: 100,
@@ -117,7 +125,6 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
   ],
   'health_center_interior': [
     BackgroundData(
-      baseSize: 120,
       imagePath: 'CITY_MEGA.png',
       parallaxEffect: 0,
       priority: 100,
@@ -128,7 +135,6 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
   ],
   'apartment_interior': [
     BackgroundData(
-      baseSize: 120,
       imagePath: 'CITY_MEGA.png',
       parallaxEffect: 0,
       priority: 100,
@@ -139,7 +145,6 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
   ],
   'cafe_interior': [
     BackgroundData(
-      baseSize: 120,
       imagePath: 'CITY_MEGA.png',
       parallaxEffect: 0,
       priority: 100,
@@ -150,7 +155,6 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
   ],
   'sushi_interior': [
     BackgroundData(
-      baseSize: 120,
       imagePath: 'CITY_MEGA.png',
       parallaxEffect: 0,
       priority: 100,
@@ -159,7 +163,6 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
       groundOffset: 0,
     ),
     BackgroundData(
-      baseSize: 120,
       imagePath: 'CITY_MEGA.png',
       parallaxEffect: 0,
       priority: 100,
@@ -170,7 +173,6 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
   ],
   'burger_store_interior': [
     BackgroundData(
-      baseSize: 120,
       imagePath: 'CITY_MEGA.png',
       parallaxEffect: 0,
       priority: 100,
@@ -179,4 +181,4 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
       groundOffset: 0,
     ),
   ],
-}; 
+};

@@ -1,16 +1,24 @@
-import 'package:anagaattara_hairitai/component/player.dart';
+﻿import 'dart:math';
+
+import 'package:anagaattara_hairitai/main.dart';
 
 class PowerUpEffectResolver {
-  static Function(Player)? resolve(String? effectName) {
+  static void Function(MyGame)? resolve(String? effectName) {
     if (effectName == null) return null;
 
     switch (effectName) {
+      case 'increaseMaxHealth':
+        return (game) {
+          game.gameRuntimeState.hpBonus += 20;
+          game.player.recoveryIntegrity(20);
+        };
       case 'addMaxStress':
-        return (player) => player.addMaxStress(5.0);
-      // 他のパワーアップ効果があればここに追加
+        return (game) {
+          game.gameRuntimeState.stressBonus += 20;
+          game.player.updateStress(max(0, game.player.currentStress - 20));
+        };
       default:
         return null;
     }
   }
 }
-

@@ -7,6 +7,7 @@ import '../component/enemy/car_enemy.dart';
 import '../component/game_stage/lighting/sky_component.dart';
 import 'game_scene.dart';
 import 'outdoor_scene.dart';
+import 'prologue_scene.dart'; // PrologueSceneをインポート
 import 'abstract_outdoor_scene.dart'; // AbstractOutdoorSceneをインポート
 import 'apartment_interior_scene.dart';
 import 'burger_store_interior_scene.dart';
@@ -14,7 +15,7 @@ import 'cafe_interior_scene.dart';
 import 'health_center_interior_scene.dart';
 import 'shop_interior_scene.dart';
 import 'sushi_interior_scene.dart';
-import '../system/storage/game_runtime_state.dart'; // GameRuntimeStateをインポート
+// import '../system/storage/game_runtime_state.dart'; // GameRuntimeStateをインポート
 
 class SceneManager extends Component with HasGameReference<MyGame> {
   GameScene? _currentScene;
@@ -30,7 +31,17 @@ class SceneManager extends Component with HasGameReference<MyGame> {
 
   SceneManager({required MyGame game}) {
     _sceneConstructors = {
-    'outdoor_1': (
+      'outdoor_0': (
+        constructor: ({dynamic data}) {
+          final Map<String, dynamic>? sceneData =
+              data is Map ? data as Map<String, dynamic> : null;
+          return PrologueScene(
+            sceneId: 'outdoor_0',
+            initialPlayerPosition: sceneData?['initialPlayerPosition'] as Vector2?,
+          );
+        },
+      ),
+      'outdoor_1': (
       constructor: ({dynamic data}) {
         final Map<String, dynamic>? sceneData =
             data is Map ? data as Map<String, dynamic> : null;
@@ -216,6 +227,36 @@ class SceneManager extends Component with HasGameReference<MyGame> {
         );
       },
     ),
+    'outdoor_true_corridor': (
+      constructor: ({dynamic data}) {
+        final Map<String, dynamic>? sceneData =
+            data is Map ? data as Map<String, dynamic> : null;
+        return OutdoorScene(
+          sceneId: 'outdoor_true_corridor',
+          initialPlayerPosition: sceneData?['initialPlayerPosition'] as Vector2?,
+        );
+      },
+    ),
+    'outdoor_true_vault': (
+      constructor: ({dynamic data}) {
+        final Map<String, dynamic>? sceneData =
+            data is Map ? data as Map<String, dynamic> : null;
+        return OutdoorScene(
+          sceneId: 'outdoor_true_vault',
+          initialPlayerPosition: sceneData?['initialPlayerPosition'] as Vector2?,
+        );
+      },
+    ),
+    'outdoor_true_finale': (
+      constructor: ({dynamic data}) {
+        final Map<String, dynamic>? sceneData =
+            data is Map ? data as Map<String, dynamic> : null;
+        return OutdoorScene(
+          sceneId: 'outdoor_true_finale',
+          initialPlayerPosition: sceneData?['initialPlayerPosition'] as Vector2?,
+        );
+      },
+    ),
   };
 }
 
@@ -223,18 +264,28 @@ class SceneManager extends Component with HasGameReference<MyGame> {
     String sceneId, {
     dynamic data,
     Vector2? initialPlayerPosition, // Vector2で受け取るように変更
+    VoidCallback? onBeforeLoad,    // ロード開始直前
+    Future<void> Function()? onLoadAsync, // 非同期ロード処理
+    VoidCallback? onAfterLoad,     // ロード完了後
   }) async {
-    debugPrint('SceneManager.loadScene called for scene: $sceneId'); // 追加
-    debugPrint('loadScene: Attempting to load scene: $sceneId');
+    debugPrint('SceneManager.loadScene called for scene: $sceneId');
+    
+    // 1. ロード前処理
+    onBeforeLoad?.call();
+
+    final bool prevSceneWasOutdoor = _currentScene is AbstractOutdoorScene;
+    final String? prevOutdoorSceneId = prevSceneWasOutdoor
+        ? game.gameRuntimeState.currentOutdoorSceneId
+        : null;
 
     // シーン切り替え前に現在のシーンとプレイヤー位置を保存
-    if (_currentScene != null && game.player != null) {
+    if (_currentScene != null) {
       // パンくずリスト情報の更新
       if (_currentScene is AbstractOutdoorScene &&
           sceneId.contains('interior')) {
         // 屋外から屋内へ遷移する場合
-        game.gameRuntimeState.exitPlayerPositionX = game.player!.position.x;
-        game.gameRuntimeState.exitPlayerPositionY = game.player!.position.y;
+        game.gameRuntimeState.exitPlayerPositionX = game.player.position.x;
+        game.gameRuntimeState.exitPlayerPositionY = game.player.position.y;
 
         final Building? building =
             data is Map
@@ -253,14 +304,14 @@ class SceneManager extends Component with HasGameReference<MyGame> {
       } else if (_currentScene is AbstractOutdoorScene) {
         // 屋内から屋外へ遷移する場合
         game.gameRuntimeState.currentSceneId = sceneId;
-        game.gameRuntimeState.exitPlayerPositionX = game.player!.position.x;
-        game.gameRuntimeState.exitPlayerPositionY = game.player!.position.y;
+        game.gameRuntimeState.exitPlayerPositionX = game.player.position.x;
+        game.gameRuntimeState.exitPlayerPositionY = game.player.position.y;
         debugPrint('パンくずリストクリア：屋内→屋外');
       } else {
         // その他の遷移の場合（例: 屋内から屋内、またはゲーム開始時など）
         game.gameRuntimeState.currentSceneId = sceneId;
-        game.gameRuntimeState.exitPlayerPositionX = game.player!.position.x;
-        game.gameRuntimeState.exitPlayerPositionY = game.player!.position.y;
+        game.gameRuntimeState.exitPlayerPositionX = game.player.position.x;
+        game.gameRuntimeState.exitPlayerPositionY = game.player.position.y;
         debugPrint('パンくずリストクリア：その他の遷移');
       }
     }
@@ -281,7 +332,7 @@ class SceneManager extends Component with HasGameReference<MyGame> {
       // シーンからプレイヤーを明示的に削除 (ワールドからは削除しない)
       final scene = _currentScene!;
       final player = game.player;
-      if (player != null && scene.contains(player)) {
+      if (scene.contains(player)) {
         debugPrint('シーンからプレイヤーを削除します。');
         scene.remove(player); // プレイヤーを古いシーンから削除
       }
@@ -305,6 +356,12 @@ class SceneManager extends Component with HasGameReference<MyGame> {
       _currentScene!.removeFromParent();
       debugPrint('現在のシーンを削除しました。'); // 追加
       _currentScene = null;
+    }
+
+    // 2. 非同期ロード処理（アセット読み込みなど）
+    if (onLoadAsync != null) {
+      debugPrint('SceneManager: Executing onLoadAsync...');
+      await onLoadAsync();
     }
 
     // 新しいシーンをインスタンス化
@@ -350,10 +407,8 @@ class SceneManager extends Component with HasGameReference<MyGame> {
     debugPrint('新しいシーンをインスタンス化しました: ${_currentScene.runtimeType}'); // 追加
 
     // ここで新しいシーンにプレイヤーを追加
-    if (game.player != null) {
-      debugPrint('新しいシーンにプレイヤーを追加します。');
-      _currentScene!.add(game.player!); // プレイヤーを新しいシーンの子にする
-    }
+    debugPrint('新しいシーンにプレイヤーを追加します。');
+    _currentScene!.add(game.player); // プレイヤーを新しいシーンの子にする
     
     await add(_currentScene!); // ゲームワールドにシーンを追加
     debugPrint('新しいシーンをゲームワールドに追加しました。'); // 追加
@@ -362,6 +417,20 @@ class SceneManager extends Component with HasGameReference<MyGame> {
 
     // シーンがロードされた後、もしそれが屋外シーンであればIDを保存
     if (newScene is AbstractOutdoorScene) {
+      if (prevSceneWasOutdoor &&
+          prevOutdoorSceneId != null &&
+          prevOutdoorSceneId.isNotEmpty &&
+          newScene.sceneId != prevOutdoorSceneId) {
+        game.gameRuntimeState.recordOutdoorToOutdoorTransition(
+          fromOutdoorId: prevOutdoorSceneId,
+          toOutdoorId: newScene.sceneId,
+        );
+      }
+      // 以前の屋外シーンと異なるIDの場合は羅針盤表示フラグをリセット
+      if (game.gameRuntimeState.currentOutdoorSceneId != newScene.sceneId) {
+        game.gameRuntimeState.hasShownCompassToday = false;
+        debugPrint('Stage changed. Reset hasShownCompassToday to false.');
+      }
       game.gameRuntimeState.currentOutdoorSceneId =
           newScene.sceneId; // GameRuntimeStateを更新
       debugPrint(
@@ -369,8 +438,16 @@ class SceneManager extends Component with HasGameReference<MyGame> {
       );
     }
 
-    // ステージ開始時のミッション設定を更新（メッセージウィンドウは出さない）
-    game.missionManager.showCompassMessage(sceneId, showWindow: false);
+    // 3. ロード完了後処理
+    onAfterLoad?.call();
+
+    final nar = game.gameRuntimeState.pollNextNarrativeMessage();
+    if (nar != null) {
+      game.windowManager.showDialog(
+        [nar],
+        bodyTextColor: Colors.lightBlueAccent,
+      );
+    }
 
     // カメラのズームレベルをリセット
     if (sceneId.contains('outdoor')) {

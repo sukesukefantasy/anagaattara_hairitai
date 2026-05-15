@@ -1,13 +1,18 @@
-import 'package:flame/collisions.dart';
+﻿import 'package:flame/collisions.dart';
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
+import '../collision/collision_family.dart';
 import '../../player.dart';
 import '../../../UI/game_ui.dart';
 
 /// プレイヤーが接近した際にインタラクト（ボタン操作）を可能にするための共通ヒットボックス。
 /// 
 /// ドア、レジ、NPCなど、インタラクト可能なすべてのオブジェクトに使用できます。
-class InteractHitbox extends PositionComponent with CollisionCallbacks {
+class InteractHitbox extends PositionComponent
+    with CollisionCallbacks, HasCollisionFamily {
+  @override
+  CollisionFamily get collisionFamily => CollisionFamily.interactUi;
+
   /// ボタンが押された際の処理
   final VoidCallback? onInteract;
   

@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+﻿import 'package:flutter/foundation.dart';
 
 enum TimeOfDayType {
   midnight,
@@ -71,6 +71,18 @@ class TimeService extends ChangeNotifier {
         } 
       }
     }
+    notifyListeners();
+  }
+
+  void skipToMorning() {
+    // 翌朝の 6:00 まで進める
+    _hour = 6;
+    _minute = 0;
+    _day++;
+    if (_day > 7) {
+      _day = 1;
+    }
+    _elapsedTime = 0.0;
     notifyListeners();
   }
 

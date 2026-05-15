@@ -6,6 +6,8 @@ import 'dart:ui' show lerpDouble;
 import '../main.dart';
 import '../UI/game_ui.dart';
 import 'game_stage/building/station.dart';
+import 'common/physics/physics_step_obstacle.dart';
+import 'common/collision/collision_family.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
 import 'game_stage/building/destructible_object.dart';
 import 'game_stage/building/hideable_object.dart';
@@ -20,6 +22,10 @@ import '../game_manager/audio_manager.dart'; // Add this line
 import '../system/storage/game_runtime_state.dart'; // GameRuntimeStateをインポート
 import 'npc/npc.dart';
 import '../component/effect/hp_low_effect.dart';
+import '../component/effect/drowsiness_effect.dart';
+import '../component/effect/residue_effect.dart'; // Add this line
+import 'effect/residue_pickup.dart';
+import 'player_cargo_terminal.dart';
 
 enum PlayerState { idle, walking, jumping, digging, falling }
 
@@ -54,7 +60,10 @@ class MiningPointsNotifier extends ChangeNotifier {
 }
 
 class Player extends SpriteAnimationComponent
-    with CollisionCallbacks, HasGameReference<MyGame> {
+    with CollisionCallbacks, HasGameReference<MyGame>, HasCollisionFamily {
+  @override
+  CollisionFamily get collisionFamily => CollisionFamily.player;
+
   static const double speed = 180.0;
   static const double powerOfPlayer = 1.25;
   static const double gravity = 700.0;
@@ -64,67 +73,57 @@ class Player extends SpriteAnimationComponent
   // 属性による能力強化の計算
   double get effectiveSpeed {
     final state = game.gameRuntimeState;
-    final attr = game.missionManager.getCurrentAttribute();
-    final level = game.missionManager.getAttributeLevel();
-    
+
     double base = speed;
-    
+
     // 周回ボーナス（キャリブレーション適用）
     base *= (1.0 + (state.movementSpeedBonus - 1.0) * state.speedCalibrationScale);
 
-    // 属性レベルボーナス（リアルタイム）
-    if (attr == GameRuntimeState.routeEfficiency) {
-      base *= (1.0 + (level * 0.2)); // Level 3 で 1.6倍
-    }
+    // 警戒度による「引力体感」への影響：移動速度上昇（1.0 につきおよそ 10%）
+    base *= (1.0 + (state.starAlertLevel * 0.1));
+
     return base;
   }
 
   double get effectiveGravity {
     final state = game.gameRuntimeState;
-    final attr = game.missionManager.getCurrentAttribute();
-    final level = game.missionManager.getAttributeLevel();
-    
+
     double base = gravity;
-    
-    // 哲学ボーナス（キャリブレーション適用：投擲力の一部を重力軽減に転用するイメージ）
+
+    // 投擲強化ボーナスを重力軽減に転用（キャリブレーション適用）
     double philosophyEffect = (state.throwPowerBonus - 1.0) * state.powerCalibrationScale;
     base *= (1.0 - (philosophyEffect * 0.5));
 
-    // 属性レベルボーナス（リアルタイム）
-    if (attr == GameRuntimeState.routePhilosophy) {
-      base *= (1.0 - (level * 0.2)); // Level 3 で 0.4倍
+    // 警戒度による「引力体感」への影響：重力軽減（1.0 につきおよそ 15%）
+    base *= (1.0 - (state.starAlertLevel * 0.15)).clamp(0.1, 1.0);
+
+    // シーンによる重力倍率の適用
+    final currentScene = game.sceneManager.currentScene;
+    if (currentScene is AbstractOutdoorScene) {
+      base *= currentScene.gravityMultiplier;
     }
+
     return base;
   }
 
   double get effectiveMeleeSizeScale {
     final state = game.gameRuntimeState;
-    final attr = game.missionManager.getCurrentAttribute();
-    final level = game.missionManager.getAttributeLevel();
-    
+
     double bonusScale = 1.0;
     // HPボーナスの一部を体格（攻撃範囲）に反映
     bonusScale += (state.hpBonus / 1000.0) * state.hpCalibrationScale;
 
-    if (attr == GameRuntimeState.routeViolence) {
-      bonusScale += (level * 0.5); // Level 3 で +1.5
-    }
     return bonusScale;
   }
 
   double get vacuumRange {
     final state = game.gameRuntimeState;
-    final attr = game.missionManager.getCurrentAttribute();
-    final level = game.missionManager.getAttributeLevel();
-    
+
     double range = 0.0;
-    if (attr == GameRuntimeState.routeEfficiency && level >= 1) {
-      range = 50.0 + (level * 50.0); // Level 3 で 200px
-    }
-    
-    // キャリブレーションによる調整（効率ボーナスが溜まっている場合）
+
+    // キャリブレーションによる調整（移動ボーナスが溜まっている場合）
     range += (state.movementSpeedBonus - 1.0) * 200 * state.speedCalibrationScale;
-    
+
     return range;
   }
 
@@ -138,15 +137,23 @@ class Player extends SpriteAnimationComponent
 
   bool unbeatable = false;
 
-  // HPの変更を通知するためのValueNotifier
-  final ValueNotifier<double> hpNotifier = ValueNotifier<double>(1000.0);
-  double maxHp = 1000.0;
-  double get currentHp => hpNotifier.value;
+  DrowsinessEffect? _drowsinessEffect;
 
-  // ストレスの変更を通知するためのValueNotifier
+  // 耐久力（Integrity）の変更を通知するためのValueNotifier
+  final ValueNotifier<double> integrityNotifier = ValueNotifier<double>(1000.0);
+  double get maxIntegrity => gameRuntimeState.maxIntegrity;
+  double get currentIntegrity => integrityNotifier.value;
+
+  // 外的刺激（Stress）の変更を通知するためのValueNotifier
   final ValueNotifier<double> stressNotifier = ValueNotifier<double>(0.0);
-  double maxStress;
+  double get maxStress => gameRuntimeState.maxStress;
   double get currentStress => stressNotifier.value;
+
+  /// [updateStress] の上限および 80% 判定と同一。
+  double get effectiveMaxStress =>
+      maxStress +
+      (gameRuntimeState.stressBonus *
+          gameRuntimeState.stressCalibrationScale);
 
   // お金ポイント
   final CurrencyNotifier currencyNotifier;
@@ -203,6 +210,8 @@ class Player extends SpriteAnimationComponent
   bool _enableVerticalMovement = true;
 
   final Set<PositionComponent> _solidCollisions = {};
+  bool _physicsStepOverActive = false;
+  PositionComponent? _physicsStepOverTarget;
   final Set<EnemyBase> _collidingEnemies = {};
   final Set<Item> _activeLadders = {}; // 接触中のはしごを保持
 
@@ -261,6 +270,9 @@ class Player extends SpriteAnimationComponent
   final ItemBag itemBag;
   final AudioManager audioManager; // Add this line
 
+  /// カーゴ端末への参照（UIボタンから呼び出す）
+  PlayerCargoTerminal? cargoTerminal;
+
   double _lastPlayerX = 0.0; // プレイヤーの前のX座標を追跡
 
   Player({
@@ -268,12 +280,16 @@ class Player extends SpriteAnimationComponent
     required this.itemBag,
     required this.gameRuntimeState,
     required this.audioManager,
-  }) : maxStress = gameRuntimeState.maxStress, // 初期値をGameRuntimeStateから取得
-       currencyNotifier = CurrencyNotifier(gameRuntimeState.currency),
+  }) : currencyNotifier = CurrencyNotifier(gameRuntimeState.currency),
        miningPointsNotifier = MiningPointsNotifier(
          gameRuntimeState.miningPoints,
        ),
-       super(size: Vector2.all(50), anchor: Anchor.center);
+       super(size: Vector2.all(50), anchor: Anchor.center) {
+    // 初期値をGameRuntimeStateから取得
+    integrityNotifier.value =
+        GameRuntimeState.quantizeIntegrityHalf(gameRuntimeState.currentIntegrity);
+    stressNotifier.value = gameRuntimeState.currentStress;
+  }
 
   @override
   Future<void> onLoad() async {
@@ -287,6 +303,10 @@ class Player extends SpriteAnimationComponent
         isSolid: true,
       ),
     );
+
+    // カーゴ端末をプレイヤーに追従させる
+    cargoTerminal = PlayerCargoTerminal();
+    add(cargoTerminal!);
 
     // 画像の読み込み
     final spriteSheet01 = await game.images.load('player01_anim.png');
@@ -449,6 +469,9 @@ class Player extends SpriteAnimationComponent
 
     _lastPlayerX = position.x; // 初期位置を設定
 
+    _drowsinessEffect = DrowsinessEffect();
+    game.camera.viewport.add(_drowsinessEffect!);
+
     // オーディオの読み込み
     for (final type in _playerSoundFiles.keys) {
       _playerSounds[type] = await Future.wait(
@@ -487,6 +510,8 @@ class Player extends SpriteAnimationComponent
   void teleportTo(Vector2 newPosition) {
     position = newPosition;
     _lastPlayerX = newPosition.x;
+    game.cameraController.resetManualPan();
+    game.cameraController.syncVerticalFocusFromPlayer();
     game.cameraController.resetBackgroundParallax();
   }
 
@@ -494,17 +519,16 @@ class Player extends SpriteAnimationComponent
   void update(double dt) {
     super.update(dt);
 
+    if (!game.gameRuntimeState.isAutoPlay) {
+      game.gameRuntimeState.tickAutomationAutoPickup(dt);
+    }
+
     if (gameRuntimeState.isAutoPlay) {
       _performAutoPlay(dt);
       _handleUnderGroundAndGroundCollisionLogic(dt);
       return;
     }
 
-    // 属性レベルの取得
-    final attr = game.missionManager.getCurrentAttribute();
-    final level = game.missionManager.getAttributeLevel();
-
-    // 背景パララックスの更新
     final double currentPlayerX = position.x;
     final double playerDx = currentPlayerX - _lastPlayerX;
     if (playerDx != 0) {
@@ -513,33 +537,35 @@ class Player extends SpriteAnimationComponent
     }
     _lastPlayerX = currentPlayerX; // 現在のX座標を更新
 
-    // ストレス値の自動回復 と ストレスに応じた健康被害
-    updateStress(currentStress - 10 * dt);
-    if (currentStress >= 25 && !unbeatable) {
-      updateHp(currentHp - (currentStress / maxStress));
-    }
-
-    // Empathy Lv3: NPCの近くで回復
-    if (attr == GameRuntimeState.routeEmpathy && level >= 3) {
-      final npcs = game.world.children.whereType<Npc>();
-      bool isNearNpc = false;
-      for (final npc in npcs) {
-        if ((absolutePosition - npc.absolutePosition).length < 100) {
-          isNearNpc = true;
-          break;
-        }
-      }
-      if (isNearNpc) {
-        recoveryHp(100 * dt); // 毎秒100回復
-        updateStress(currentStress - 200 * dt); // 毎秒200ストレス軽減
-      }
-    }
+    // 外的刺激（ストレス）値の自動回復
+    updateStress(currentStress - 5 * dt);
 
     // 地下でのベース処理
     if (inUnderGround) {
-      // 地下での自動hp回復
-      if (currentHp < (maxHp / 2) && currentStress < 25) {
-        recoveryHp(30 * dt);
+      // 地下深部での眠気演出
+      final currentScene = game.sceneManager.currentScene;
+      if (currentScene is AbstractOutdoorScene) {
+        final double depth = position.y - currentScene.underGround.position.y;
+        if (depth > 300) {
+          // 深度300を超えると眠気が発生
+          final double intensity = ((depth - 300) / 500).clamp(0.0, 1.0);
+          _drowsinessEffect?.intensity = intensity;
+          
+          // 耐久力を継続的に減少
+          decreaseIntegrity(10 * intensity * dt);
+          
+          if (intensity > 0.8) {
+             // 非常に深い場所ではさらにストレスも増加
+             updateStress(currentStress + 5 * dt);
+          }
+        } else {
+          _drowsinessEffect?.intensity = 0.0;
+        }
+      }
+
+      // 地下での自動耐久力回復
+      if (currentIntegrity < (maxIntegrity / 2) && currentStress < 25) {
+        recoveryIntegrity(15 * dt);
       }
 
       if (inUnderGroundFlag == false) {
@@ -572,9 +598,12 @@ class Player extends SpriteAnimationComponent
       inUnderGroundFlag = false;
     }
 
-    // ゲームオーバー
-    if (currentHp <= 0 && !game.isGameOver) {
-      game.gameOver();
+    // ゲームオーバー（意志力が尽きた場合）
+    // max が 0 のときは gameOver 後も current が補充できず連続発火するためトリガーしない
+    if (gameRuntimeState.currentWillpower <= 0 &&
+        !game.isGameOver &&
+        gameRuntimeState.maxWillCoreValue > 1e-9) {
+      Future.microtask(() => game.gameOver());
     }
 
     // inUnderGround の状態を更新
@@ -612,6 +641,11 @@ class Player extends SpriteAnimationComponent
         final double playbackRate = 0.9 + Random().nextDouble() * 0.2;
         requestPlayPlayerSound('footsteps', volume: 0.8, playbackRate: playbackRate);
         _lastMovingAnimationFrameIndex = animationTicker!.currentIndex;
+
+        // ダッシュ中は生命資源の残滓（赤粒子）を漏出させる
+        if (isRunning) {
+          ResidueEffect.spawnLife(game, absolutePosition.clone(), count: 3);
+        }
       }
     } else {
       // 他のアニメーションに変わったらリセット
@@ -642,9 +676,33 @@ class Player extends SpriteAnimationComponent
       _idleTimer = 0.0; // 移動または掘削中はタイマーをリセット
     }
 
+    final outdoorScene =
+        game.sceneManager.currentScene is AbstractOutdoorScene;
+    final steppingMove = outdoorScene &&
+        _physicsStepOverActive &&
+        !isDigging &&
+        !iscrouching &&
+        !isOnLadder &&
+        _enableHorizontalPhysics &&
+        _enableVerticalMovement;
+
     // 水平方向の移動
     if (_enableHorizontalPhysics) {
-      if (isDigging) {
+      if (steppingMove) {
+        double stepBase = effectiveSpeed;
+        if (isRunning) {
+          stepBase *= 1.5;
+        }
+        velocity.x = 0;
+        velocity.y = -stepBase * 0.5;
+        if (_lastMoveDirection.x > 0 || isMovingRight) {
+          animation = jumpingRightAnimation;
+        } else if (_lastMoveDirection.x < 0 || isMovingLeft) {
+          animation = jumpingLeftAnimation;
+        } else {
+          animation = jumpingAnimation;
+        }
+      } else if (isDigging) {
         // 掘削中の水平移動速度
         if (inUnderGround) {
           velocity.x =
@@ -664,12 +722,12 @@ class Player extends SpriteAnimationComponent
         }
         animation = crouchingAnimation;
       } else {
-    // 通常の水平移動速度
-    double currentBaseSpeed = effectiveSpeed;
-    if (isRunning) {
-      currentBaseSpeed *= 1.5; // ダッシュ時は1.5倍
-    }
-    velocity.x = (isMovingRight ? currentBaseSpeed : (isMovingLeft ? -currentBaseSpeed : 0));
+        // 通常の水平移動速度
+        double currentBaseSpeed = effectiveSpeed;
+        if (isRunning) {
+          currentBaseSpeed *= 1.5; // ダッシュ時は1.5倍
+        }
+        velocity.x = (isMovingRight ? currentBaseSpeed : (isMovingLeft ? -currentBaseSpeed : 0));
 
         if (isMovingRight) {
           animation = movingRightAnimation;
@@ -689,12 +747,46 @@ class Player extends SpriteAnimationComponent
       }
     }
 
+    double horizontalDx = velocity.x * dt;
+    if (!steppingMove &&
+        outdoorScene &&
+        !isDigging &&
+        !iscrouching &&
+        !isOnLadder &&
+        _enableHorizontalPhysics &&
+        _enableVerticalMovement &&
+        isOnGround) {
+      final intent = velocity.x.sign.toInt();
+      if (intent != 0 && velocity.x.abs() > 1.0) {
+        final obstacle = _findPlayerPhysicsStepWallPredicted(horizontalDx, intent);
+        if (obstacle != null) {
+          _physicsStepOverActive = true;
+          _physicsStepOverTarget = obstacle;
+          double stepBase = effectiveSpeed;
+          if (isRunning) {
+            stepBase *= 1.5;
+          }
+          velocity.x = 0;
+          velocity.y = -stepBase * 0.5;
+          horizontalDx = 0;
+        }
+      }
+    }
+
     // 明示的に水平位置を更新
-    position.x += velocity.x * dt;
+    position.x += horizontalDx;
 
     // 垂直方向の移動 (重力、ジャンプ、および掘削)
     if (_enableVerticalMovement) {
-      if (isDigging) {
+      final steppingVertical = outdoorScene &&
+          _physicsStepOverActive &&
+          !isDigging &&
+          !isOnLadder;
+
+      if (steppingVertical) {
+        position.y += velocity.y * dt;
+        _tryFinishPhysicsStepOverPlayer();
+      } else if (isDigging) {
         // 掘削中は重力は通常無視され、垂直速度は直接制御される
         if (isMovingDown) {
           velocity.y = effectiveSpeed * 0.25; // 下に掘る
@@ -760,14 +852,7 @@ class Player extends SpriteAnimationComponent
         // まずは重力による影響を計算
         if (_applyGravity && !_isJumping) {
           double gravityForce = effectiveGravity;
-          
-          // 哲学能力：空中浮遊 (Levitation)
-          final attr = game.missionManager.getCurrentAttribute();
-          final level = game.missionManager.getAttributeLevel();
-          if (attr == GameRuntimeState.routePhilosophy && level >= 2 && isJumpButtonPressed && velocity.y > 0) {
-            gravityForce *= 0.1; // 落下速度を大幅に軽減
-          }
-          
+
           velocity.y += gravityForce * dt;
         }
 
@@ -831,7 +916,9 @@ class Player extends SpriteAnimationComponent
       }
 
       // 全ての計算後に最終的な垂直速度を適用
-      position.y += velocity.y * dt;
+      if (!steppingVertical) {
+        position.y += velocity.y * dt;
+      }
 
       // 運搬中のアイテムをプレイヤーの頭上に固定
       if (carriedItem != null) {
@@ -843,9 +930,11 @@ class Player extends SpriteAnimationComponent
     if (game.sceneManager.currentScene != null &&
         game.sceneManager.currentScene!.groundComponent != null) {
       final ground = game.sceneManager.currentScene!.groundComponent!;
+      double clampLeft = game.sceneManager.currentScene is AbstractOutdoorScene ? -MyGame.worldWidth + 10 : ground.position.x + 10;
+      double clampRight = game.sceneManager.currentScene is AbstractOutdoorScene ? -10 : ground.groundWidth - 10;
       position.x = position.x.clamp(
-        ground.position.x + 10,
-        ground.position.x + ground.size.x - 10,
+        clampLeft,
+        clampRight,
       );
 
       // 落下限界点の定義
@@ -897,7 +986,7 @@ class Player extends SpriteAnimationComponent
     // 崖（世界の右端）に到達したらリセット（飛び降り または 帰還）
     if (position.x > 1000) { 
       debugPrint('AutoPlay: Reached the edge. Returning to Stage 1...');
-      game.routeClear(); // 周回クリア処理
+      game.stageClear(); // 周回クリア処理
     }
   }
 
@@ -977,23 +1066,11 @@ class Player extends SpriteAnimationComponent
     final playerCenter = absolutePosition;
     final scale = effectiveMeleeSizeScale;
     final meleeSize = Vector2(60 * scale, 60 * scale); 
-    
-    // 属性とレベルの取得
-    final attr = game.missionManager.getCurrentAttribute();
-    final level = game.missionManager.getAttributeLevel();
-    final isViolenceLv3 = attr == GameRuntimeState.routeViolence && level >= 3;
 
-    // 攻撃音（属性レベルに応じてピッチや音質をリアルタイム変化させる）
+    // 攻撃音
     double playbackRate = 1.1;
     double volume = 1.0;
-    
-    if (attr == GameRuntimeState.routeViolence) {
-      playbackRate -= (level * 0.1); // 重厚な音へ
-      volume += (level * 0.2);
-    } else if (attr == GameRuntimeState.routeEfficiency) {
-      playbackRate += (level * 0.1); // 鋭い音へ
-    }
-    
+
     // ご要望のオフセット調整 (+25)
     // 向きに応じてXの位置を決定し、さらに+25
     final double meleeX = facingDirection.x > 0 
@@ -1010,7 +1087,7 @@ class Player extends SpriteAnimationComponent
     final attackEffect = RectangleComponent(
       position: Vector2(effectX, -(meleeSize.y / 2) + 25),
       size: meleeSize,
-      paint: Paint()..color = (isViolenceLv3 ? Colors.redAccent : Colors.white).withOpacity(0.4),
+      paint: Paint()..color = Colors.white.withOpacity(0.4),
     );
     add(attackEffect);
     
@@ -1035,45 +1112,61 @@ class Player extends SpriteAnimationComponent
     for (final obj in destructibles) {
       if (obj.toAbsoluteRect().overlaps(attackRect)) {
         debugPrint('Melee Hit: DestructibleObject at ${obj.position}');
-        if (isViolenceLv3) {
-          // 即死級ダメージ（healthを0にするなど）
-          obj.onHit();
-          obj.onHit(); // 2回呼んで確実に壊すか、DestructibleObject側の調整が必要
-        } else {
-          obj.onHit();
-        }
+        obj.onHit();
       }
     }
 
     // 敵
     final enemies = currentScene.children.whereType<EnemyBase>();
+    
+    // 依存ルートの補正：自動エイム（近くの敵に吸い寄せられる）
+    if (gameRuntimeState.isDependencyOverloadForUi) {
+      EnemyBase? nearestEnemy;
+      double minDistance = 100.0;
+      for (final enemy in enemies) {
+        final distance = (absolutePosition - enemy.absolutePosition).length;
+        if (distance < minDistance) {
+          minDistance = distance;
+          nearestEnemy = enemy;
+        }
+      }
+      if (nearestEnemy != null) {
+        // 敵の方向にわずかに移動（吸い付き）
+        position.x = lerpDouble(position.x, nearestEnemy.position.x - (facingDirection.x * 20), 0.3)!;
+      }
+    }
+
     for (final enemy in enemies) {
       if (enemy.toAbsoluteRect().overlaps(attackRect)) {
         debugPrint('Melee Hit: Enemy at ${enemy.position}');
-        if (game.gameRuntimeState.currentOutdoorSceneId == 'outdoor_2') {
-          game.missionManager.onAction(GameRuntimeState.routeViolence);
+
+        final equippedItemName = itemBag.equippedItemName;
+        double itemAttackPower = 0.0;
+        double itemMass = 0.5; // デフォルトの重さ（素手想定）
+
+        if (equippedItemName != null) {
+          final tempItem = ItemFactory.createItemByName(equippedItemName, Vector2.zero());
+          if (tempItem != null) {
+            itemAttackPower = tempItem.attackPower;
+            itemMass = tempItem.mass;
+          }
         }
-        
-        if (isViolenceLv3) {
-          // Violence Lv3: 即死 + アイテム化
-          enemy.dieAndDropItem();
-        } else {
-          // ノックバックの計算: 向きと威力(scale)に基づく
-          final impulse = Vector2(facingDirection.x * 300 * scale, -50 * scale);
-          enemy.hitByMelee(impulse);
-        }
+
+        final damage = powerOfPlayer * (itemAttackPower + itemMass * 2.0);
+        final impulse = Vector2(
+          facingDirection.x * 300 * scale * (itemMass + 0.5),
+          -50 * scale * (itemMass + 0.5),
+        );
+
+        enemy.hitByMelee(damage, impulse);
       }
     }
-    
+
     // NPC
     final npcs = currentScene.children.whereType<Npc>();
     for (final npc in npcs) {
       if (npc.toAbsoluteRect().overlaps(attackRect)) {
         debugPrint('Melee Hit: NPC at ${npc.position}');
-        if (isViolenceLv3) {
-          // Violence Lv3: NPCも殺害してアイテム化
-          npc.dieAndDropItem();
-        }
       }
     }
   }
@@ -1090,6 +1183,13 @@ class Player extends SpriteAnimationComponent
   void toggleDigging([bool? diggingState]) {
     isDigging = diggingState ?? !isDigging;
     final bool isDiggingOnGround = diggingState != null && diggingState;
+
+    // 依存ルートの演出：採掘モーションの高速化
+    if (gameRuntimeState.isDependencyOverloadForUi && isDigging) {
+      diggingAnimation.stepTime = 0.05; // 超高速
+    } else {
+      diggingAnimation.stepTime = 0.3; // 通常
+    }
 
     // UI更新を非同期にスケジュール
     Future.microtask(() {
@@ -1149,12 +1249,7 @@ class Player extends SpriteAnimationComponent
   }
 
   void _handleMoveInputStart(int direction) {
-    // Efficiency Lv3 または canRun フラグが真の場合にダッシュ可能
-    final attr = game.missionManager.getCurrentAttribute();
-    final level = game.missionManager.getAttributeLevel();
-    final isEfficiencyLv3 = attr == GameRuntimeState.routeEfficiency && level >= 3;
-
-    if (!gameRuntimeState.canRun && !isEfficiencyLv3) return;
+    if (!gameRuntimeState.canRun) return;
     
     final currentTime = game.timeService.totalPlayTime;
     if (direction == _lastTapDirection && (currentTime - _lastTapTime) < _doubleTapThreshold) {
@@ -1181,29 +1276,63 @@ class Player extends SpriteAnimationComponent
 
   // ステータス管理メソッド ==============================================================================
 
-  // HPを更新するメソッド
-  void updateHp(double newHp) {
+  // 耐久力を更新するメソッド（小数は .0 / .5 のみ）
+  void updateIntegrity(double newIntegrity) {
     final state = game.gameRuntimeState;
-    double effectiveMaxHp = maxHp + (state.hpBonus * state.hpCalibrationScale);
-    hpNotifier.value = newHp.clamp(0.0, effectiveMaxHp);
+    double effectiveMaxIntegrity =
+        maxIntegrity + (state.hpBonus * state.hpCalibrationScale);
+    final q = GameRuntimeState.quantizeIntegrityHalf(
+      newIntegrity.clamp(0.0, effectiveMaxIntegrity),
+    );
+    integrityNotifier.value = q;
+    state.currentIntegrity = q;
   }
 
   // 自然回復
-  void recoveryHp(double recoveryHp) {
-    updateHp(hpNotifier.value + recoveryHp);
+  void recoveryIntegrity(double recoveryAmount) {
+    updateIntegrity(integrityNotifier.value + recoveryAmount);
   }
 
-  // ストレス値を更新するメソッド
+  // 外的刺激（ストレス）値を更新するメソッド
   void updateStress(double newStress) {
     final state = game.gameRuntimeState;
-    double effectiveMaxStress = maxStress + (state.stressBonus * state.stressCalibrationScale);
-    stressNotifier.value = newStress.clamp(0.0, effectiveMaxStress);
+    final cap = effectiveMaxStress;
+    stressNotifier.value = newStress.clamp(0.0, cap);
+    state.currentStress = stressNotifier.value; // GameRuntimeStateを同期
+
+    // ストレスが閾値（80%）を超えた場合の耐久力減少ロジック
+    if (stressNotifier.value >= cap * 0.8 && !unbeatable) {
+      // ストレス1につき耐久力1.0減少（以前の2倍）
+      decreaseIntegrity(1.0); 
+    }
+  }
+
+  // 耐久力を減少させるメソッド
+  void decreaseIntegrity(double amount) {
+    if (unbeatable) return;
+    updateIntegrity(currentIntegrity - amount);
+
+    if (currentIntegrity <= 0 &&
+        !game.isGameOver &&
+        gameRuntimeState.maxWillCoreValue > 1e-9) {
+      final state = gameRuntimeState;
+      final unit = GameRuntimeState.willCoreUnit;
+      // currentWillpower > willCoreUnit のときだけコストを支払い復帰（上限核は削らない）。
+      // <= willCoreUnit は活力枯渇として GO。
+      if (state.currentWillpower > unit) {
+        state.payWillCoreUnitAfterIntegrityKnockdown();
+        final effectiveMax =
+            maxIntegrity + (state.hpBonus * state.hpCalibrationScale);
+        updateIntegrity(effectiveMax);
+      } else {
+        Future.microtask(() => game.gameOver());
+      }
+    }
   }
 
   // 最大ストレス値を増やすメソッド
-  void addMaxStress(double addStress) {
-    maxStress = (maxStress + addStress).clamp(50.0, 300.0);
-    gameRuntimeState.maxStress = maxStress; // GameRuntimeStateを更新
+  void addMaxStress(double addAmount) {
+    gameRuntimeState.maxStress = (gameRuntimeState.maxStress + addAmount).clamp(50.0, 300.0);
   }
 
   // お金を増減させるメソッド
@@ -1223,40 +1352,19 @@ class Player extends SpriteAnimationComponent
   // アイテムを収集するメソッド (Itemクラスから呼び出される)
   void collectItem(Item item) {
     itemBag.addItem(item);
-    
-    // 能動性（余計な行動）の加算
-    // 石やクオーツなどの基本アイテムを拾うのは「余計な行動」とする
-    if (item.type == ItemType.gem || item.name == '石') {
-      gameRuntimeState.addExtraAction(game);
-      
-      // Stage 1の石拾いミッション更新
-      if (item.name == '石') {
-        game.missionManager.onPickupStone(itemBag.getItemCount('石'));
-      }
-    }
-
-    // ロケットパーツの拾得時のミッション更新 (Stage 1)
-    if (item.name == 'バルブ' || item.name == '点火装置' || item.name == 'ノズル' || item.name == '石') {
-      game.missionManager.onPickupRocketPart();
-    }
-
-    // コレクションアイテム拾得時のルート進行 (Stage 2-6)
-    if (item.type == ItemType.collection && 
-        item.name != 'バルブ' && item.name != '点火装置' && item.name != 'ノズル' && 
-        item.name != '石') {
-      game.missionManager.onPickupPhilosophyItem(); // 汎用的な進行トリガーとして使用
-    }
   }
 
   // アイテム運搬メソッド --------------------------------------------------------------------------------
   // アイテム運搬を開始するメソッド
   Future<void> startCarrying(Item item) async {
+    debugPrint('Player: startCarrying called for ${item.name}');
     // 運搬アイテムの重複チェック
     if (carriedItem != null) {
       if (carriedItem!.name == item.name) {
         // 同じアイテムをすでに持っている場合は、位置だけ再設定して早期リターン
-        carriedItem!.position = Vector2(0, -30);
+        carriedItem!.position = Vector2(size.x / 2, -30);
         isCarryingItemNotifier.value = true;
+        debugPrint('Player: Already carrying ${item.name}, updated position.');
         return;
       }
       debugPrint('すでに別のアイテムを運搬中です: ${carriedItem!.name}');
@@ -1274,23 +1382,29 @@ class Player extends SpriteAnimationComponent
 
     // プレイヤーの子として追加
     if (item.isMounted) {
+      debugPrint('Player: Item ${item.name} was already mounted, removing from parent.');
       item.removeFromParent();
     }
-    add(item); 
+    
+    debugPrint('Player: Adding item ${item.name} to player children.');
+    await add(item); 
     
     // アンカーを中央にし、プレイヤーの頭上に配置
     item.anchor = Anchor.center;
     item.position = Vector2(size.x / 2, -30); // プレイヤーの頭上(Playerの中心からの相対座標)
 
     // 運搬中はアイテムの衝突判定を無効にする
+    debugPrint('Player: Waiting for item ${item.name} to load...');
     await item.loaded;
     final hitboxes = item.children.whereType<ShapeHitbox>();
     if (hitboxes.isNotEmpty) {
       hitboxes.first.collisionType = CollisionType.inactive;
+      debugPrint('Player: Item hitbox set to inactive.');
     }
 
     // スプライトを再ロードして表示を確実にする
     if (item.spritePath.isNotEmpty) {
+      debugPrint('Player: Reloading sprite for ${item.name}: ${item.spritePath}');
       item.sprite = await game.loadSprite(item.spritePath);
     }
 
@@ -1298,13 +1412,14 @@ class Player extends SpriteAnimationComponent
     // UIを確実に更新するために、一度falseにしてからtrueにする（再起動時のロード対策）
     isCarryingItemNotifier.value = false;
     isCarryingItemNotifier.value = true;
+    debugPrint('Player: isCarryingItemNotifier set to true.');
     
     GameUI.setPlaceButtonState(ActionButtonState.normal);
     GameUI.setStoreButtonState(ActionButtonState.normal);
 
     // GameRuntimeStateに運搬アイテムの情報を保存
     gameRuntimeState.carriedItemName = item.name;
-    debugPrint('Player: Started carrying ${item.name}. Position set to ${item.position}');
+    debugPrint('Player: startCarrying finished for ${item.name}. Position: ${item.position}');
   }
 
   // アイテム運搬を終了するメソッド
@@ -1334,7 +1449,6 @@ class Player extends SpriteAnimationComponent
       item.isCollected = true;
       game.world.add(item);
       await item.loaded; // ItemのonLoadが完了するまで待機
-      gameRuntimeState.addExtraAction(game); // 余計な行動としてカウント
     }
 
     // GameRuntimeStateの運搬アイテム情報をリセット
@@ -1380,7 +1494,6 @@ class Player extends SpriteAnimationComponent
       item.isCollected = true;
       game.world.add(item);
       await item.loaded; // ItemのonLoadが完了するまで待機
-      gameRuntimeState.addExtraAction(game); // 余計な行動としてカウント
 
       // プレイヤーの向きに応じて水平方向の力を設定
       final horizontalThrowForce =
@@ -1391,6 +1504,16 @@ class Player extends SpriteAnimationComponent
 
     // GameRuntimeStateの運搬アイテム情報をリセット
     gameRuntimeState.carriedItemName = null;
+  }
+
+  /// 装備中ツールを投げ、バッグから 1 つ消費する（UI / ToolEffectResolver 用）。
+  Future<void> throwEquippedToolItem() async {
+    final itemName = itemBag.equippedItemName;
+    if (itemName == null) return;
+    final template = ItemFactory.createItemByName(itemName, Vector2.zero());
+    if (template == null) return;
+    await throwWorldObject(template);
+    itemBag.removeItem(itemName, count: 1);
   }
 
   // アイテムウィンドウ用メソッド --------------------------------------------------------------------------------
@@ -1419,9 +1542,6 @@ class Player extends SpriteAnimationComponent
       ['${item.name} を廃棄しました。'],
     );
     itemBag.removeItem(item.name, count: 0);
-    if (game.gameRuntimeState.currentOutdoorSceneId == 'outdoor_3') {
-      game.missionManager.onAction(GameRuntimeState.routeEfficiency); // ルート進行
-    }
   }
 
   // 宝石を眺めるメソッド (後で実装)
@@ -1456,6 +1576,64 @@ class Player extends SpriteAnimationComponent
   }
 
   // 衝突ロジック メソッド ==============================================================================
+
+  PositionComponent? _findPlayerPhysicsStepWallPredicted(
+    double dxAttempt,
+    int intentSign,
+  ) {
+    if (intentSign == 0 || dxAttempt.abs() < 1e-6) return null;
+    final base = PhysicsStepQueries.absoluteAabb(this);
+    final shifted = Rect.fromLTRB(
+      base.left + dxAttempt,
+      base.top,
+      base.right + dxAttempt,
+      base.bottom,
+    );
+
+    for (final raw in _solidCollisions) {
+      final root = PhysicsStepQueries.solidRoot(raw);
+      if (root is! PhysicsStepObstacleMixin) continue;
+      if (root.physicsStepClearHeight > size.y / 2) continue;
+
+      final solidRect = PhysicsStepQueries.absoluteAabb(root);
+      if (!shifted.overlaps(solidRect)) continue;
+
+      final ox = PhysicsStepQueries.axisOverlap(
+        shifted.left,
+        shifted.right,
+        solidRect.left,
+        solidRect.right,
+      );
+      final oy = PhysicsStepQueries.axisOverlap(
+        shifted.top,
+        shifted.bottom,
+        solidRect.top,
+        solidRect.bottom,
+      );
+      if (ox <= 0 || oy <= 0) continue;
+      if (ox >= oy) continue;
+
+      final towardWall = solidRect.center.dx >= shifted.center.dx ? 1 : -1;
+      if (intentSign != towardWall) continue;
+
+      return root;
+    }
+    return null;
+  }
+
+  void _tryFinishPhysicsStepOverPlayer() {
+    final t = _physicsStepOverTarget;
+    if (t == null || !t.isMounted || t is! PhysicsStepObstacleMixin) {
+      _physicsStepOverActive = false;
+      _physicsStepOverTarget = null;
+      return;
+    }
+    final feetBottom = PhysicsStepQueries.absoluteAabb(this).bottom;
+    if (feetBottom <= t.physicsStepSurfaceTopWorldY + 10) {
+      _physicsStepOverActive = false;
+      _physicsStepOverTarget = null;
+    }
+  }
 
   void _handleUnderGroundAndGroundCollisionLogic(double dt) {
     final currentScene = game.sceneManager.currentScene;
@@ -1549,11 +1727,14 @@ class Player extends SpriteAnimationComponent
     }
 
     // アイテム吸引 (Efficiency能力)
-    if (vacuumRange > 0) {
+    final double autoPickupRange = gameRuntimeState.automationAutoPickupVacuumRange;
+    final double pullRange =
+        vacuumRange > autoPickupRange ? vacuumRange : autoPickupRange;
+    if (pullRange > 0) {
       final items = game.world.children.whereType<Item>().where((i) => !i.isCollected);
       for (final item in items) {
         final dist = (absoluteCenter - item.absolutePosition).length;
-        if (dist < vacuumRange) {
+        if (dist < pullRange) {
           // プレイヤーの方へ引き寄せる
           final dir = (absoluteCenter - item.absolutePosition).normalized();
           item.position += dir * 200 * dt;
@@ -1568,13 +1749,13 @@ class Player extends SpriteAnimationComponent
   // エフェクト管理 メソッド ==============================================================================
 
   void updateEffect() {
-    // HPが300以下の場合の画面全体のエフェクト管理
-    if (currentHp <= 350) {
+    // 耐久力が350以下の場合の画面全体のエフェクト管理
+    if (currentIntegrity <= 350) {
       if (game.camera.viewport.children.whereType<HpLowEffect>().isEmpty) {
         game.camera.viewport.add(HpLowEffect()); 
       }
     } else {
-      // HPが300より大きい場合、既存のHpLowEffectがあれば削除
+      // 耐久力が350より大きい場合、既存のHpLowEffectがあれば削除
       game.camera.viewport.children.whereType<HpLowEffect>().forEach((e) {
         e.removeFromParent();
       });
@@ -1605,28 +1786,24 @@ class Player extends SpriteAnimationComponent
     if (other is EnemyBase) {
       _collidingEnemies.add(other);
       isTouchingEnemy = true;
-      
-      final attr = game.missionManager.getCurrentAttribute();
-      final level = game.missionManager.getAttributeLevel();
-      final isEmpathyLv3 = attr == GameRuntimeState.routeEmpathy && level >= 3;
 
-      if (isEmpathyLv3) {
-        // Empathy Lv3: 硬い音を再生
-        requestPlayPlayerSound('hits', volume: 0.5, playbackRate: 0.5); // 低ピッチで硬い音
-      } else {
-        requestPlayPlayerSound('hits', volume: 0.8, playbackRate: 1.0);
-      }
+      requestPlayPlayerSound('hits', volume: 0.8, playbackRate: 1.0);
 
       // ストレス値とHPの更新
       // 衝突している敵からのストレス増加
       if (!unbeatable && _collidingEnemies.isNotEmpty) {
         double totalAttackStress = 0.0;
         for (final enemy in _collidingEnemies) {
-          double stress = enemy.attackStress;
-          if (isEmpathyLv3) stress *= 0.2; // ダメージ80%軽減
-          totalAttackStress += stress;
+          totalAttackStress += enemy.attackStress;
         }
         updateStress(currentStress + totalAttackStress);
+        if (totalAttackStress > 1e-6) {
+          ResiduePickup.spawnCaptureResistantBurst(
+            game,
+            ResiduePickup.worldEmitOrigin(this),
+            intensity: (totalAttackStress / 25).clamp(0.35, 2.5),
+          );
+        }
       }
 
       // ダメージエフェクトの適用 (プレイヤー自身に - ColorFilterを使用)
@@ -1634,7 +1811,7 @@ class Player extends SpriteAnimationComponent
         _isTintedRed = true;
         _tintTimer = 0.2; // 0.2秒間赤くする
         paint.colorFilter = ColorFilter.mode(
-          isEmpathyLv3 ? Colors.white.withOpacity(0.5) : const Color.fromARGB(200, 255, 0, 0), // Empathy Lv3は白っぽく光る
+          const Color.fromARGB(200, 255, 0, 0),
           BlendMode.srcATop, // レイヤーを重ねるモード
         );
       }

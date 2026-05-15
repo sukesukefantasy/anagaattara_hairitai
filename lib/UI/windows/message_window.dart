@@ -4,17 +4,20 @@ import 'package:flutter/material.dart';
 class MessageWindow extends StatefulWidget {
   final List<String> messages;
   final double fontSize;
-  final VoidCallback? onFinish;
+  /// メッセージを閉じる操作（最後のページのタップ、または選択肢確定）の直後に呼ばれる。
+  final Future<void> Function()? onClosed;
   final List<String>? options;
   final Function(int)? onSelect;
+  final Color? messageTextColor;
 
   const MessageWindow({
     super.key,
     required this.messages,
     required this.fontSize,
-    this.onFinish,
+    this.onClosed,
     this.options,
     this.onSelect,
+    this.messageTextColor,
   });
 
   @override
@@ -99,7 +102,7 @@ class _MessageWindowState extends State<MessageWindow> {
         _startTyping();
       });
     } else {
-      widget.onFinish?.call();
+      widget.onClosed?.call();
     }
   }
 
@@ -146,7 +149,7 @@ class _MessageWindowState extends State<MessageWindow> {
                           _displayingText,
                           softWrap: true,
                           style: TextStyle(
-                            color: Colors.white,
+                            color: widget.messageTextColor ?? Colors.white,
                             fontSize: widget.fontSize,
                             fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
                             height: 1.5,
@@ -178,7 +181,7 @@ class _MessageWindowState extends State<MessageWindow> {
           return ElevatedButton(
             onPressed: () {
               widget.onSelect?.call(index);
-              widget.onFinish?.call();
+              widget.onClosed?.call();
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.blueAccent.withOpacity(0.9),

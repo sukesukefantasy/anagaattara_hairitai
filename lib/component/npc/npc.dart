@@ -1,17 +1,34 @@
-﻿import 'package:flame/components.dart';
+﻿import 'package:flame/collisions.dart';
+import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 import 'dart:math';
 import '../../../main.dart';
 import '../common/hitboxes/interact_hitbox.dart';
-import '../../../system/storage/game_runtime_state.dart';
+import '../common/physics/entity_physics_mixin.dart';
+import '../common/collision/collision_family.dart';
 import '../item/item.dart';
+import '../effect/residue_pickup.dart';
 
-class Npc extends SpriteComponent with HasGameReference<MyGame> {
+class Npc extends SpriteComponent
+    with CollisionCallbacks, HasGameReference<MyGame>, EntityPhysicsMixin, HasCollisionFamily {
+  @override
+  CollisionFamily get collisionFamily => CollisionFamily.entity;
+
+  /// 物理ヒットボックスより広げるインタラクト領域（各辺へのパディング、px）。
+  static const double defaultInteractPaddingW = 12;
+  static const double defaultInteractPaddingH = 8;
+
   final String name;
   final List<String> talkMessages;
   final String giftResponse;
   final String uniqueId; // 永続化用のID
+  final void Function()? onTalkOverride; // 会話ロジックのオーバーライド
   bool isSatisfied = false;
+
+  // スプライト指定用のパラメータd
+  final String spritePath;
+  final Vector2? srcPosition;
+  final Vector2? srcSize;
 
   late final SpriteComponent _speechBubble;
   bool _hasMission = true; // とりあえず全てのNPCがミッションを持っていると仮定
@@ -22,8 +39,11 @@ class Npc extends SpriteComponent with HasGameReference<MyGame> {
     required this.giftResponse,
     required this.uniqueId,
     required super.position,
-    required super.size,
-  }) {
+    this.onTalkOverride,
+    this.spritePath = 'CITY_MEGA.png',
+    this.srcPosition,
+    this.srcSize,
+  }) : super(size: Vector2(1.0, 1.0)) {
     anchor = Anchor.bottomCenter;
   }
 
@@ -35,38 +55,84 @@ class Npc extends SpriteComponent with HasGameReference<MyGame> {
     if (game.gameRuntimeState.satisfiedNpcIds.contains(uniqueId)) {
       isSatisfied = true;
       _hasMission = false;
+      game.gameRuntimeState.codexEnsureConnectionSeen(uniqueId, satisfied: true);
     }
 
-    // 仮のスプライト（歩行エネミーのフレームなどを流用）
-    sprite = await Sprite.load(
-      'CITY_MEGA.png',
-      srcPosition: Vector2(102, 162), // 適当なNPCっぽい位置
-      srcSize: Vector2(21, 30),
-    );
+    // TODO: 画像挿入 (NPC本体)
+    // CITY_MEGA.png かつ 指定がない場合のみ、従来のデフォルト値を使用
+    Vector2? effectivePos = srcPosition;
+    Vector2? effectiveSize = srcSize;
+    if (spritePath == 'CITY_MEGA.png' && srcPosition == null) {
+      effectivePos = Vector2(102, 162);
+      effectiveSize = Vector2(21, 30);
+    }
+
+    try {
+      sprite = await Sprite.load(
+        spritePath,
+        srcPosition: effectivePos,
+        srcSize: effectiveSize,
+      );
+      if (sprite != null) {
+        size = sprite!.srcSize.clone();
+      }
+    } catch (e) {
+      debugPrint('Error loading NPC sprite ($spritePath): $e');
+      if (effectiveSize != null) {
+        size = effectiveSize.clone();
+      }
+    }
+
+    // デバッグ用の背景色（スプライトが見えない場合の対策）
+    /* add(RectangleComponent(
+      size: size,
+      paint: Paint()..color = Colors.orange.withOpacity(0.5),
+      priority: -1,
+    )); */
 
     // 吹き出しアイコン（簡易版としてSpriteで実装、必要に応じて画像を用意）
+    // TODO: 画像挿入 (吹き出し)
+    final speechSprite = await Sprite.load(
+      'CITY_MEGA.png',
+      srcPosition: Vector2(1381, 403),
+      srcSize: Vector2(16, 16),
+    );
     _speechBubble = SpriteComponent(
-      sprite: await Sprite.load('CITY_MEGA.png',
-          srcPosition: Vector2(1381, 403), srcSize: Vector2(16, 16)), // 白い吹き出し
+      sprite: speechSprite, // 白い吹き出し
       position: Vector2(0, -size.y + 12),
-      size: Vector2(16, 16),
+      size: speechSprite.srcSize.clone(),
       anchor: Anchor.bottomCenter,
       priority: 10, // 親（NPC）より前面に
     );
     add(_speechBubble);
 
-    // インタラクト用のヒットボックスを追加
+    // インタラクト用のヒットボックス（本体より広めに取る）
+    const pw = defaultInteractPaddingW;
+    const ph = defaultInteractPaddingH;
     add(InteractHitbox(
-      position: Vector2(0, 0),
-      size: size,
+      position: Vector2(-pw, -ph),
+      size: Vector2(size.x + (pw * 2), size.y + (ph * 2)),
       onInteract: _onTalk,
       icon: Icons.chat,
     ));
+
+    // 物理用ヒットボックス（重力・着地検知専用、isSolid=false でプレイヤーをブロックしない）
+    add(
+      RectangleHitbox(
+        size: size,
+        collisionType: CollisionType.active,
+        isSolid: false,
+      ),
+    );
   }
 
   @override
   void update(double dt) {
     super.update(dt);
+
+    // 重力・着地物理
+    updatePhysics(dt);
+
     // 満足したNPCやミッションがない場合は吹き出しを消す
     _speechBubble.opacity = _hasMission ? 1.0 : 0.0;
     
@@ -74,9 +140,39 @@ class Npc extends SpriteComponent with HasGameReference<MyGame> {
     if (_hasMission) {
       _speechBubble.position.y = -size.y + 12 + sin(game.timeService.totalPlayTime * 3) * 2;
     }
+
+    // 依存ルートの演出：行動予測補完（要求を先回りして表示）
+    if (game.gameRuntimeState.isDependencyOverloadForUi && _hasMission && !isSatisfied) {
+      final playerDist = (game.player.absolutePosition - absolutePosition).length;
+      if (playerDist < 100) {
+        if (children.whereType<TextComponent>().isEmpty) {
+          final prediction = name == '住人' ? '要求：希少な鉱石' : '要求：対話';
+          add(TextComponent(
+            text: prediction,
+            position: Vector2(0, -size.y - 20),
+            anchor: Anchor.bottomCenter,
+            textRenderer: TextPaint(
+              style: const TextStyle(
+                color: Colors.redAccent,
+                fontSize: 10,
+                fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+              ),
+            ),
+          ));
+        }
+      } else {
+        children.whereType<TextComponent>().forEach((c) => c.removeFromParent());
+      }
+    } else {
+      children.whereType<TextComponent>().forEach((c) => c.removeFromParent());
+    }
   }
 
   void _onTalk() {
+    if (onTalkOverride != null) {
+      onTalkOverride!();
+      return;
+    }
     final state = game.gameRuntimeState;
     
     // ステージ4の特殊処理
@@ -110,10 +206,10 @@ class Npc extends SpriteComponent with HasGameReference<MyGame> {
         "[$name]",
         ...talkMessages,
       ],
-      onFinish: () {
+      onClosed: () async {
         // 汎用的な共感ルートの進行（以前の仕様）
         if (state.currentOutdoorSceneId == 'outdoor_4' && !isSatisfied) {
-          game.missionManager.onAction(GameRuntimeState.routeEmpathy);
+          // TODO: 共感トリガーの再設計
         }
       },
     );
@@ -128,9 +224,7 @@ class Npc extends SpriteComponent with HasGameReference<MyGame> {
     }
     isSatisfied = true;
     state.satisfiedNpcIds.add(uniqueId);
-    
-    // ルートマネージャーを通じてアクションを通知（scoreが増加し、必要数に達すればルート確定）
-    game.missionManager.onAction(GameRuntimeState.routeEmpathy, 5.0);
+    state.codexEnsureConnectionSeen(uniqueId, satisfied: true);
     
     game.windowManager.showDialog(
       ["[$name]", "「おお、ありがとう！ これで少しはマシな生活ができそうだ。」"],
@@ -149,7 +243,15 @@ class Npc extends SpriteComponent with HasGameReference<MyGame> {
     // NPCを消去
     removeFromParent();
     
-    // Violenceスコアを大幅に加算（禁忌を犯した）
-    game.missionManager.onAction(GameRuntimeState.routeViolence, 10.0);
+    // 破壊ポイントを加算
+    game.gameRuntimeState.destructionPointsInStage += 1;
+
+    game.gameRuntimeState.codexBlackedConnection(uniqueId);
+    game.gameRuntimeState.noteMicroCategoryExplore(5);
+
+    // 残滓微粒子のスポーン時に starAlertLevel が上乗せされる（NPC 専用の二重加算は避ける）。
+    ResiduePickup.emitCargo(game, ResiduePickup.worldEmitOrigin(this), life: 6);
+    ResiduePickup.emitCargo(game, ResiduePickup.worldEmitOrigin(this), history: 4);
+    ResiduePickup.emitCargo(game, ResiduePickup.worldEmitOrigin(this), inorganic: 4);
   }
 }

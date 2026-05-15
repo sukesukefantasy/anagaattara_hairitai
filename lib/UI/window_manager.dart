@@ -1,13 +1,23 @@
 ﻿import 'package:flutter/material.dart';
 import 'windows/message_window.dart';
+import 'windows/true_vault_dial_window.dart';
+import '../main.dart';
 
 /// メッセージリクエストのデータ構造
 class MessageRequest {
   final List<String> messages;
-  final VoidCallback? onFinish;
+  /// メッセージUIを閉じたあとに実行（キューが空なら先にオーバーレイを外してゲーム再開後に await）
+  final Future<void> Function()? onClosed;
   final List<String>? options; // 選択肢
   final Function(int)? onSelect; // 選択時のコールバック
-  MessageRequest({required this.messages, this.onFinish, this.options, this.onSelect});
+  final Color? bodyTextColor;
+  MessageRequest({
+    required this.messages,
+    this.onClosed,
+    this.options,
+    this.onSelect,
+    this.bodyTextColor,
+  });
 }
 
 /// ウィンドウの種類を識別するためのEnum
@@ -17,9 +27,14 @@ enum GameWindowType {
   pause,
   itemBag,
   shop,
+  crafting,
   message,
   puzzle,
   calibration,
+  loading,
+  automationShop,
+  codex,
+  trueVaultDial,
 }
 
 /// ウィンドウ表示の状態と内容を管理するChangeNotifier
@@ -47,11 +62,50 @@ class WindowManager extends ChangeNotifier {
   WindowManager({required this.screenWidth, required this.screenHeight});
 
   /// メッセージをキューに追加して表示する（推奨される新しい方法）
-  void showDialog(List<String> messages, {VoidCallback? onFinish, List<String>? options, Function(int)? onSelect}) {
-    _messageQueue.add(MessageRequest(messages: messages, onFinish: onFinish, options: options, onSelect: onSelect));
+  void showDialog(
+    List<String> messages, {
+    Future<void> Function()? onClosed,
+    List<String>? options,
+    Function(int)? onSelect,
+    Color? bodyTextColor,
+  }) {
+    _messageQueue.add(
+      MessageRequest(
+        messages: messages,
+        onClosed: onClosed,
+        options: options,
+        onSelect: onSelect,
+        bodyTextColor: bodyTextColor,
+      ),
+    );
     
-    // 他のウィンドウ（ポーズなど）が開いておらず、かつメッセージ表示中でなければ開始
-    if (_currentWindowType == GameWindowType.none) {
+    bool canImmediatelyProcessMessageQueue =
+        _currentWindowType == GameWindowType.none ||
+        _currentWindowType == GameWindowType.automationShop ||
+        _currentWindowType == GameWindowType.codex ||
+        _currentWindowType == GameWindowType.crafting ||
+        _currentWindowType == GameWindowType.trueVaultDial;
+
+    if (canImmediatelyProcessMessageQueue) {
+      _processNextMessage();
+    }
+  }
+
+  /// メッセージ用オーバーレイだけ外す（キューは触らない）。hideWindow とは別。
+  void _dismissActiveMessageChrome() {
+    if (_currentWindowType == GameWindowType.message) {
+      _currentWindowType = GameWindowType.none;
+      _currentWindowContent = null;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _handleMessageClosed(MessageRequest request) async {
+    if (_messageQueue.isEmpty) {
+      _dismissActiveMessageChrome();
+      await request.onClosed?.call();
+    } else {
+      await request.onClosed?.call();
       _processNextMessage();
     }
   }
@@ -75,20 +129,17 @@ class WindowManager extends ChangeNotifier {
       messages: request.messages,
       fontSize: fontSize, // WindowManagerのfontSizeを渡す
       options: request.options,
+      messageTextColor: request.bodyTextColor,
       onSelect: (index) {
         request.onSelect?.call(index);
       },
-      onFinish: () {
-        // このメッセージの終了処理を実行
-        request.onFinish?.call();
-        // 次のメッセージがあれば表示
-        _processNextMessage();
-      },
+      onClosed: () => _handleMessageClosed(request),
     );
     notifyListeners();
   }
 
   void showWindow(GameWindowType type, Widget? content) {
+    debugPrint('WindowManager: showWindow called. type: $type, content null: ${content == null}');
     _currentWindowType = type;
     _currentWindowContent = content;
     notifyListeners();
@@ -105,4 +156,18 @@ class WindowManager extends ChangeNotifier {
     _messageQueue.clear(); // 強制終了時はキューもクリア
     notifyListeners();
   }
+
+  /// True 深層・6桁ダイアル（金庫）
+  void showTrueVaultDial(MyGame game) {
+    showWindow(
+      GameWindowType.trueVaultDial,
+      TrueVaultDialWindow(
+        game: game,
+        windowManager: this,
+      ),
+    );
+  }
+
+  /// 指定のウィンドウタイプが現在表示中かどうかを返す
+  bool isShowing(GameWindowType type) => _currentWindowType == type;
 } 

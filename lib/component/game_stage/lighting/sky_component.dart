@@ -1,4 +1,4 @@
-import 'package:flame/components.dart';
+﻿import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 import 'dart:ui' as ui; // dart:ui を 'ui' としてインポート
 import '../../../game_manager/time_service.dart'; // TimeServiceとTimeOfDayTypeをインポート
@@ -20,8 +20,8 @@ class SkyComponent extends RectangleComponent with HasGameReference<MyGame> {
   SkyComponent({required this.timeService})
     : super(
         position: Vector2(-MyGame.worldWidth * 2, 0),
-        paint: Paint()..color = Colors.blue.withOpacity(0.0), // 初期は透明な水色
-        priority: 1, // 最も奥に配置
+        paint: Paint()..color = const Color(0xFF84CAFF),
+        priority: 1,
       );
 
   Color get currentColor => paint.color; // 現在の空の色を返すgetter (変更)
@@ -31,8 +31,9 @@ class SkyComponent extends RectangleComponent with HasGameReference<MyGame> {
     await super.onLoad();
 
     position = Vector2(-MyGame.worldWidth * 2, game.initialGameCanvasSize.y);
-    size = Vector2(MyGame.worldWidth * 4, game.initialGameCanvasSize.y * 2);
+    size = Vector2(MyGame.worldWidth * 6, game.initialGameCanvasSize.y * 2);
     anchor = Anchor.bottomLeft;
+    _updateSkyBackgroundColor();
   }
 
   @override

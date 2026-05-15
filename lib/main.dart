@@ -1,4 +1,5 @@
 ﻿import 'package:flame/extensions.dart';
+import 'component/common/collision/family_filtered_collision_detection.dart';
 import 'package:flame/game.dart';
 import 'package:flame/components.dart';
 import 'package:flame/events.dart';
@@ -20,13 +21,14 @@ import 'UI/window_manager.dart';
 import 'UI/windows/pause_window.dart';
 import 'component/item/item_bag.dart';
 import 'UI/windows/title_window.dart';
+import 'UI/windows/loading_window.dart';
 import 'scene/scene_manager.dart';
 import 'scene/abstract_outdoor_scene.dart';
 import 'component/common/underground/underground.dart';
 import 'game_manager/audio_manager.dart';
-import 'game_manager/mission_manager.dart';
 import 'scene/game_scene.dart';
-import 'component/camera_conponent.dart';
+import 'component/camera_component.dart';
+import 'game/world_scale.dart';
 import 'component/game_stage/lighting/light_shader.dart';
 import 'system/storage/game_runtime_state.dart';
 import 'dart:async';
@@ -184,8 +186,8 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
   }
 
   // シーンロード処理を分離 (内容はそのまま)
-  Future<void> _performSceneLoad() async {
-    debugPrint('GameScreen: _performSceneLoad started.');
+  Future<void> _performSceneLoad({bool showCompass = false}) async {
+    debugPrint('GameScreen: _performSceneLoad started. showCompass: $showCompass');
     // 保存されたシーンIDとプレイヤー位置を取得
     String savedSceneId =
         gameRuntimeState.currentSceneId; // GameRuntimeStateから取得
@@ -349,7 +351,7 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
             // gameがnullでないことを確認してからGameWidgetをレンダリング
             return Stack(
               children: [
-                GameWidget(key: UniqueKey(), game: game), // Keyを追加
+                GameWidget(game: game), // UniqueKeyを削除
                 GameUI(
                   screenSize: screenSize,
                   game: game,
@@ -407,6 +409,13 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
   Future<void> _postGameLoadInitialization() async {
     try {
       debugPrint('GameScreen: _postGameLoadInitialization started.');
+      
+      // ローディング画面を表示
+      _windowManager?.showWindow(
+        GameWindowType.loading,
+        LoadingWindow(windowManager: windowManager),
+      );
+
       // MyGame.onLoadが完了するのを待機
       debugPrint('GameScreen: Waiting for _gameReadyForSceneLoadCompleter.future...');
       await _gameReadyForSceneLoadCompleter.future;
@@ -422,25 +431,42 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
       await _performSceneLoad();
       debugPrint('GameScreen: _performSceneLoad completed.');
 
+      // コンポーネントのマウントを確実にするために1フレーム待機
+      await Future.delayed(Duration.zero);
+      debugPrint('GameScreen: Post-mount delay completed.');
+
+      final rs = game.gameRuntimeState;
+      if (rs.currentWillpower <= 0 || rs.maxWillCoreValue <= 0) {
+        debugPrint(
+          'GameScreen: Will exhausted or zero cores on load — running gameOver.',
+        );
+        await game.gameOver();
+      }
+
       // GameRuntimeStateに運搬中のアイテム情報があれば、プレイヤーに設定する
       if (game.gameRuntimeState.carriedItemName != null) {
-        debugPrint('GameScreen: Loading carried item: ${game.gameRuntimeState.carriedItemName}');
+        final itemName = game.gameRuntimeState.carriedItemName!;
+        debugPrint('GameScreen: Restoring carried item: $itemName');
         final carriedItem = ItemFactory.createItemByName(
-          game.gameRuntimeState.carriedItemName!,
+          itemName,
           Vector2.zero(),
         );
 
         if (carriedItem != null) {
           await game.player.startCarrying(carriedItem);
-          debugPrint('GameScreen: Carried item set to player.');
+          debugPrint('GameScreen: Carried item restoration completed.');
         }
       }
 
       // GameRuntimeStateに装備アイテム情報があれば、プレイヤーに設定する
       if (game.gameRuntimeState.equippedItemName != null) {
-        debugPrint('GameScreen: Equipping item: ${game.gameRuntimeState.equippedItemName}');
-        game.player.equipItem(game.gameRuntimeState.equippedItemName!);
+        final itemName = game.gameRuntimeState.equippedItemName!;
+        debugPrint('GameScreen: Restoring equipped item: $itemName');
+        game.player.equipItem(itemName);
       }
+
+      // ローディング画面を隠す
+      _windowManager?.hideWindow();
 
       // ゲームロード後にタイトル画面を表示
       debugPrint('GameScreen: Showing TitleWindow.');
@@ -449,10 +475,7 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
         TitleWindow(
           windowManager: windowManager,
           onStart: () {
-            // ゲーム開始時に羅針盤メッセージを表示（クリア済みルートならスキップされる）
-            final state = game.gameRuntimeState;
-            final currentSceneId = state.currentOutdoorSceneId ?? 'outdoor_1';
-            game.missionManager.showCompassMessage(currentSceneId);
+            // ゲーム開始時の処理
           },
         ),
       );
@@ -471,7 +494,7 @@ class MyGame extends FlameGame
         HasCollisionDetection,
         HasGameReference,
         TapCallbacks {
-  static const worldWidth = 3000.0;
+  static const double worldWidth = WorldScale.worldWidth;
   late final Player player; // late final に変更
   DigEffectComponent? digEffect;
   // TerrainManager? terrainManager; // 削除
@@ -492,7 +515,6 @@ class MyGame extends FlameGame
   final ItemBag itemBag;
   late final SceneManager sceneManager;
   late final AudioManager audioManager; // AudioManagerを追加
-  late final MissionManager missionManager; // MissionManagerを追加
   late final CameraController cameraController; // CameraControllerを追加
   final Random random = Random(); // Randomインスタンスを追加
   final Size screenSize;
@@ -504,7 +526,9 @@ class MyGame extends FlameGame
   bool isGameOver = false;
   bool isGameClear = false;
 
-  int _lastTrainSpawnMinute = -1;
+  // カーゴ自動射出・自動進行のトリガー管理
+  bool _autoLaunchTriggered = false;   // 23:50 自動射出済みフラグ
+  bool _autoAdvanceTriggered = false;  // 0:00 自動進行済みフラグ
 
   final Function() onGameLoaded;
 
@@ -512,6 +536,9 @@ class MyGame extends FlameGame
 
   // カメラの追従オフセット
   Vector2 cameraFollowOffset = Vector2(0, -100); // Y座標を負の値にして上方向を向くように調整
+
+  /// 通常プレイでは true。演出でプレイヤーをフレーム外に出してよいとき false。
+  bool clampPlayerInCamera = true;
 
   // 初回ロード時のゲームキャンバスサイズを保存するプロパティ (gameresizeで更新される)
   Vector2? _initialGameCanvasSize;
@@ -535,8 +562,6 @@ class MyGame extends FlameGame
     sceneManager = SceneManager(game: this);
     // ここでAudioManagerを初期化
     audioManager = AudioManager(game: this, soloud: SoLoud.instance);
-    // ここでMissionManagerを初期化
-    missionManager = MissionManager(this);
     // ここでCameraControllerを初期化
     cameraController = CameraController();
     // playerをここで初期化する
@@ -549,6 +574,10 @@ class MyGame extends FlameGame
 
   @override
   Future<void> onLoad() async {
+    collisionDetection = FamilyFilteredCollisionDetection();
+    // バッグ内テンプレート Item はツリー未接続のため HasGameReference が解決できない。
+    // onUse / getDescription 等で game を参照する前に紐付ける。
+    itemBag.bindToGame(this);
     debugPrint('MyGame: onLoad started.'); // onLoad開始ログ
     // デバッグモード
     /* debugMode = true; */
@@ -563,12 +592,6 @@ class MyGame extends FlameGame
     debugPrint(
       'MyGame: player before DigEffectComponent init: not null',
     );
-
-    // AudioManagerの初期化 (_GameScreenStateで初期化済みなのでここでは不要)
-    // await audioManager.initialize(); // この行を削除またはコメントアウト
-
-    // セーブデータロード
-    await saveDataManager.loadSaveData();
 
     // 掘るエフェクトを追加
     try {
@@ -588,10 +611,16 @@ class MyGame extends FlameGame
     // カメラの初期化（CameraControllerに委譲）
     // CameraControllerをワールドに追加
     await world.add(cameraController); // cameraControllerを先にworldに追加
+    cameraController.priority = 10; // プレイヤー更新のあとでアンカーを合わせる
     cameraController.initializeCamera(player);
 
     // シーンマネージャーをゲームワールドに追加
     await world.add(sceneManager); // これをplayerなどより後にする
+
+    // 資源蓄積イベントの監視
+    gameRuntimeState.cargoAccumulatedStream.listen((event) {
+      _handleCargoAccumulated(event.$1, event.$2, event.$3);
+    });
 
     // フェード用オーバーレイの初期化
     _fadeOverlay = RectangleComponent(
@@ -631,6 +660,22 @@ class MyGame extends FlameGame
     super.onRemove();
   }
 
+  void _handleCargoAccumulated(int life, int history, int inorganic) {
+    // 即時フィードバック（条件反射）の演出
+    if (life > 0) {
+      // 生命資源：心拍音、赤ランプ（仮で画面フラッシュ）
+      // TODO: 画面端の赤ランプ脈動演出
+    }
+    if (history > 0) {
+      // 歴史資源：音声ノイズ、青波紋
+      // TODO: 青波紋エフェクト
+    }
+    if (inorganic > 0) {
+      // 無機資源：重低音、金属振動
+      // TODO: 重低音SE、画面揺れ
+    }
+  }
+
   @override
   void update(double dt) {
     super.update(dt);
@@ -638,12 +683,31 @@ class MyGame extends FlameGame
     audioManager.update(dt);
     timeService.update(dt);
 
-    // 10分ごとに電車をスポーンさせる
-    final currentMinute = timeService.minute;
-    if ((currentMinute % 10 == 0) && currentMinute != _lastTrainSpawnMinute) {
-      if (sceneManager.currentScene is AbstractOutdoorScene) {
-        (sceneManager.currentScene as dynamic).spawnTrain();
-        _lastTrainSpawnMinute = currentMinute;
+    // ステージ内の時間ベースカーゴ射出・自動進行ロジック
+    if (sceneManager.currentScene is AbstractOutdoorScene) {
+      final state = gameRuntimeState;
+      final hour = timeService.hour;
+      final minute = timeService.minute;
+      final scene = sceneManager.currentScene as AbstractOutdoorScene;
+
+      // 23:50 に未射出なら強制射出
+      if (hour == 23 && minute >= 50 && !state.isCargoLaunched && !_autoLaunchTriggered) {
+        _autoLaunchTriggered = true;
+        state.launchCargo();
+        scene.spawnTrain();
+        debugPrint('MyGame: Auto cargo launch triggered at 23:50');
+      }
+
+      // 0:00（真夜中）に射出済みで未乗車なら少女のセリフ後に自動進行
+      if (hour == 0 && minute == 0 && state.isCargoLaunched && !isGameClear && !_autoAdvanceTriggered) {
+        _autoAdvanceTriggered = true;
+        windowManager.showDialog(
+          ['「……もう時間だ。行こう。」'],
+          onClosed: () async {
+            await stageClear();
+          },
+        );
+        debugPrint('MyGame: Auto stage advance triggered at 0:00');
       }
     }
 
@@ -680,6 +744,18 @@ class MyGame extends FlameGame
   void onGameResize(Vector2 gameSize) {
     super.onGameResize(gameSize);
     debugPrint('MyGame: onGameResize called with size: $gameSize');
+    
+    // オーバーレイのサイズを更新
+    if (gameSize.x > 0 && gameSize.y > 0) {
+      if (isLoaded) {
+        _fadeOverlay.size = gameSize;
+        _tessellationOverlay.size = gameSize;
+        if (_lightingOverlayComponent != null) {
+          _lightingOverlayComponent!.size = gameSize;
+        }
+      }
+    }
+
     if (_initialGameCanvasSize == null && gameSize.x > 0 && gameSize.y > 0) {
       _initialGameCanvasSize = gameSize;
       debugPrint('MyGame: initialGameCanvasSize set to: $gameSize');
@@ -759,19 +835,20 @@ class MyGame extends FlameGame
       }
     }
 
-    // カメラの位置を上に移動
-    if (event.logicalKey == LogicalKeyboardKey.home) {
-      camera.viewfinder.position += Vector2(0, -100);
-    }
-    // カメラの位置を下に移動
-    if (event.logicalKey == LogicalKeyboardKey.end) {
-      camera.viewfinder.position += Vector2(0, 100);
+    // カメラの手動パン（ワールド座標）
+    if (event is KeyDownEvent) {
+      if (event.logicalKey == LogicalKeyboardKey.home) {
+        cameraController.nudgeManualPanWorld(Vector2(0, -100));
+      } else if (event.logicalKey == LogicalKeyboardKey.end) {
+        cameraController.nudgeManualPanWorld(Vector2(0, 100));
+      }
     }
 
     return KeyEventResult.handled;
   }
 
   Future<void> gameOver() async {
+    if (isGameOver) return;
     player.unbeatable = true;
     isGameOver = true;
     debugPrint('gameOver sequence started');
@@ -783,7 +860,7 @@ class MyGame extends FlameGame
         1.0, // 暗転時の不透明度 (0.0 - 1.0)
         EffectController(duration: 1),
         onComplete: () {
-          player.updateHp(player.maxHp);
+          player.updateIntegrity(player.maxIntegrity);
           player.updateStress(0);
           player.addMaxStress(-10);
           timeService.advanceTime(90);
@@ -802,12 +879,11 @@ class MyGame extends FlameGame
     await Future.delayed(const Duration(seconds: 1));
     debugPrint('2s hold complete');
 
-    // 3. player.position をリセットし、100 money 失う
+    // 3. player.position をリセット
     player.teleportTo(Vector2(
       -50,
       initialGameCanvasSize.y - player.size.y / 2,
     ));
-    player.updateMoneyPoints(-100);
     debugPrint('Player position reset');
 
     // 4. 1秒かけて画面を元の明るさに戻す (フェードアウト)
@@ -822,6 +898,8 @@ class MyGame extends FlameGame
     debugPrint('1s fade out complete');
     debugPrint('gameOver sequence complete');
 
+    gameRuntimeState.refillCurrentWillpowerAfterGameOver();
+
     gameRuntimeState.currentPlayerPositionX = player.position.x;
     gameRuntimeState.currentPlayerPositionY = player.position.y;
     gameRuntimeState.saveGame();
@@ -829,7 +907,7 @@ class MyGame extends FlameGame
     player.unbeatable = false;
   }
 
-  Future<void> routeClear() async {
+  Future<void> stageClear() async {
     player.unbeatable = true;
     isGameClear = true;
     final state = gameRuntimeState;
@@ -837,55 +915,39 @@ class MyGame extends FlameGame
     final bool isFinalStage = currentSceneId == 'outdoor_despair' || currentSceneId == 'outdoor_true';
 
     // 現在の属性を確定し、クリア済みリストに追加
-    final currentAttr = missionManager.getCurrentAttribute();
+    // TODO: 属性確定ロジックの再設計
     
-    // 重複チェックと冗長性の記録
-    if (state.completedRouteIds.contains(currentAttr)) {
-      state.attributeRedundancy[currentAttr] = (state.attributeRedundancy[currentAttr] ?? 0) + 1;
-      final count = state.attributeRedundancy[currentAttr]!;
-      missionManager.unlockRedundancyAchievement(currentAttr, count);
-    } else if (currentAttr != GameRuntimeState.routeNormal) {
-      state.completedRouteIds.add(currentAttr);
-      state.unlockAchievement('clear_$currentAttr', 'ルート初踏破: ${missionManager.getRouteName(currentAttr)}');
-    }
-    state.lastSimulatedAttribute = currentAttr;
-
-    // 報酬適用
-    _applyScenarioClearRewards(currentAttr);
-
     // 1. フェードアウト
-    _fadeOverlay.add(OpacityEffect.to(1.0, EffectController(duration: 1.0)));
-    await Future.delayed(const Duration(seconds: 1));
+    final fadeOutCompleter = Completer<void>();
+    _fadeOverlay.add(OpacityEffect.to(
+      1.0, 
+      EffectController(duration: 1.0),
+      onComplete: () => fadeOutCompleter.complete(),
+    ));
+    await fadeOutCompleter.future;
 
     // 2. 状態更新
-    String nextStageId = 'outdoor_1';
+    String nextStageId = 'outdoor_0';
     if (!isFinalStage) {
       // 次のステージ番号を計算
       int nextNum = (currentSceneId == 'outdoor_philosophy') ? 6 : (int.tryParse(currentSceneId.split('_').last) ?? 1) + 1;
       
       if (nextNum == 5) nextStageId = 'outdoor_philosophy';
       else if (nextNum == 6) {
-        bool isTrue = true;
-        for (int i = 1; i <= 4; i++) {
-          if (!state.subRouteConfirmedStages.contains('outdoor_$i')) { isTrue = false; break; }
-        }
-        nextStageId = isTrue ? 'outdoor_true' : 'outdoor_despair';
+        nextStageId = state.outdoorIdAfterPhilosophy();
       } else {
         nextStageId = 'outdoor_$nextNum';
       }
     } else {
-      // シナリオ完了時
+      // シナリオ完了時（v8.3 マクロ／父のメモ）
+      state.applyScenarioClearMacroRewardsForCompletedRun();
+      state.sentLifeScenarioBaseline = state.sentLifeResourceCount;
       state.scenarioCount++;
-      state.attributeScores.forEach((k, v) => state.attributeScores[k] = 0.0);
-      state.activeRouteId = null;
-      state.triggeredRouteIds.clear();
-      state.triggeredMidRouteIds.clear();
-      state.subRouteConfirmedStages.clear();
       
       // 明示的に屋外シーンIDをリセット
-      state.currentOutdoorSceneId = 'outdoor_1';
-      nextStageId = 'outdoor_1';
-      debugPrint('Scenario completed. Starting Scenario ${state.scenarioCount} from Stage 1.');
+      state.currentOutdoorSceneId = 'outdoor_0';
+      nextStageId = 'outdoor_0';
+      debugPrint('Scenario completed. Starting Scenario ${state.scenarioCount} from Stage 0.');
     }
 
     // 3. テレポートとリセット
@@ -896,18 +958,34 @@ class MyGame extends FlameGame
     cameraController.setOutdoorSceneCamera();
 
     debugPrint('Transitioning to: $nextStageId (Scenario: ${state.scenarioCount})');
-    await sceneManager.loadScene(nextStageId, initialPlayerPosition: resetPos);
+    
+    // シーンをロードするが、メッセージ表示はフェードインの後に回す
+    await sceneManager.loadScene(
+      nextStageId, 
+      initialPlayerPosition: resetPos,
+    );
 
     // 4. フェードイン
-    _fadeOverlay.add(OpacityEffect.to(0.0, EffectController(duration: 1.0)));
-    player.updateHp(player.maxHp);
+    final fadeInCompleter = Completer<void>();
+    _fadeOverlay.add(OpacityEffect.to(
+      0.0, 
+      EffectController(duration: 1.0),
+      onComplete: () => fadeInCompleter.complete(),
+    ));
+    await fadeInCompleter.future;
+
+    // 5. ステータス回復と時間経過
+    player.updateIntegrity(player.maxIntegrity);
     player.updateStress(0);
     timeService.advanceTime(420);
     
     isGameClear = false;
     player.unbeatable = false;
+    _autoLaunchTriggered = false;
+    _autoAdvanceTriggered = false;
   }
 
+  /*
   /// シナリオクリア時の報酬適用
   void _applyScenarioClearRewards(String attribute) {
     final state = gameRuntimeState;
@@ -918,18 +996,18 @@ class MyGame extends FlameGame
     
     // 属性に応じたステータス永続強化
     switch (attribute) {
-      case GameRuntimeState.routeViolence:
-        state.hpBonus += 100.0; // HP最大値アップ
-        player.maxHp += 100.0;
+      case 'violence':
+        state.hpBonus += 100.0; // 耐久力最大値アップ
+        state.maxIntegrity += 100.0;
         break;
-      case GameRuntimeState.routeEfficiency:
+      case 'efficiency':
         state.movementSpeedBonus += 0.1; // 速度アップ
         break;
-      case GameRuntimeState.routeEmpathy:
+      case 'empathy':
         state.stressBonus += 20.0; // ストレス耐性アップ
         state.maxStress += 20.0;
         break;
-      case GameRuntimeState.routePhilosophy:
+      case 'philosophy':
         state.throwPowerBonus += 0.2; // 投擲・干渉力アップ
         break;
     }
@@ -941,6 +1019,7 @@ class MyGame extends FlameGame
 
     debugPrint('Applied Rewards for $attribute clear. Scenario: ${state.scenarioCount}');
   }
+  */
 
   @override
   void onDispose() {

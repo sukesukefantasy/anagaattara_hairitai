@@ -7,6 +7,9 @@ class SaveData {
   int currency;
   int miningPoints;
   double maxStress;
+  double currentStress;
+  double maxIntegrity;
+  double currentIntegrity;
   Map<String, int> itemCounts;
 
   String lastSceneId; // 最後にいたシーンのID
@@ -24,29 +27,10 @@ class SaveData {
   String? carriedItemName;
   String? equippedItemName;
 
-  // ルート進行用のカウンターとフラグ
-  int hitCount;
-  int giftCount;
-  int scrappedObjectCount;
-  int readLogCount;
-  int randomActionCount;
   String? currentMission;
-  List<String> triggeredRouteIds;
-  List<String> triggeredMidRouteIds;
-
-  // 能動性（余計な行動）システム
-  Map<String, int> extraActionCounts; // ステージごとのカウント
-  List<String> subRouteConfirmedStages; // 30回達成したステージID
   int scenarioCount;
-  Map<String, double> attributeScores;
-  Map<String, int> attributeRedundancy;
-  bool isAttributeFixed;
-  String? lastSimulatedAttribute;
 
   int dayCount;
-  List<String> completedRouteIds;
-  String? activeRouteId;
-  int unlockedStageCount;
 
   // 地下の採掘状況（シーンIDごとの座標文字列リスト）
   Map<String, List<String>> dugAreas;
@@ -63,41 +47,112 @@ class SaveData {
   double powerCalibrationScale;
   double stressCalibrationScale;
 
+  int youngUncleDialogueStep;
+  bool hasIdentifiedYoungUncle;
+  /// 父のメモ・日記等。父のメモはキー `father_memo_*` 推奨（v8.3 §7・§16）。
+  List<String> unlockedDiaryEntries;
+
+  double currentWillpower;
+  double maxWillCoreValue;
+  double willpowerSpentInStage;
+  int destructionPointsInStage;
+
+  // 母星ステータスと星の警戒度
+  double homePlanetHumanity;
+  double homePlanetEfficiency;
+  double homePlanetRealism;
+  double starAlertLevel;
+
+  // カーゴに自動蓄積された資源（行動の残滓）
+  int cargoLifeCount;
+  int cargoHistoryCount;
+  int cargoInorganicCount;
+  bool isCargoLaunched;
+
+  // 送信済み資源カウント（発射後に移動される）
+  int sentLifeResourceCount;
+  int sentHistoryResourceCount;
+  int sentInorganicResourceCount;
+
+  // 自動化キット
+  int automationKitStage;
+  double automationKitTotalRuntime;
+
+  /// 自動化ショップ C-2 契約（意志の核自動供給）。`automationKitStage >= 4` と同期させる。
+  bool automationContractC2;
+
+  /// v8.3 マクロルート到達記録（例: macro_nourishment, macro_destroy）。
+  List<String> completedMacroRoutes;
+
+  /// Destroy 系マクロへの「資格」が一度付いたか（C-2 未契約時のみ成立しうる）。
+  bool destroyMacroPathQualified;
+
+  /// 通算敵撃破（`EnemyBase.dieAndDropItem` 系）。
+  int lifetimeEnemyKills;
+
+  /// 累計「生命」カーゴ加算（換算前の素朴カウント）。
+  int lifetimeLifeCargoAccumulated;
+
+  /// 累計意志力消費（§6.1 特殊トリガー用。`resetStageState` では消さない）。
+  double totalWillpowerConsumed;
+
+  /// 屋外→屋外遷移時の微細ログ（上限はランタイム側でカット）。
+  List<Map<String, dynamic>> stageMicroLogEntries;
+
+  bool hasShownAutomationShopUnlockMessage;
+
+  /// 自動化ショップ段階（§5）。既存 `automationKitStage` とは別表現。C-2 はキット挿入とも同期。
+  int automationShopTierA;
+  int automationShopTierB;
+  int automationShopTierC;
+  int automationShopTierD;
+
+  /// [CodexSnapshot.toJson] を格納。
+  Map<String, dynamic> codexSnapshotJson;
+
+  /// §13 開示段階（0=序, 1=中, 2=終）。
+  int disclosureTier;
+
+  /// 累計カーゴ射出回数（開示・ログ用途）。
+  int totalCargoLaunches;
+
+  /// True 深層進行 0=未開始, 1=廊下, 2=金庫, 3=終盤戦, 4=完了。
+  int trueSequencePhase;
+
+  /// §6.1 ナラティブ（次シーンで消費する短い青メッセージ用）。永続は任意。
+  List<String> pendingNarrativeMessages;
+
+  /// B-2 相当：意志力の自動支払い基盤が有効か。
+  bool automationShopWillpowerAutoPay;
+
+  /// 6 桁ダイヤル正解のセーブ別シード（初回生成）。
+  int? trueDialSalt;
+
+  /// 現在シナリオ周回開始時点の `sentLifeResourceCount`（Normal 判定用）。
+  int sentLifeScenarioBaseline;
+
   SaveData({
     this.currency = 0,
     this.miningPoints = 0,
     this.maxStress = 100.0,
+    this.currentStress = 0.0,
+    this.maxIntegrity = 1000.0,
+    this.currentIntegrity = 1000.0,
     Map<String, int>? itemCounts,
-    this.lastSceneId = 'outdoor_1',
+    this.lastSceneId = 'outdoor_0',
     this.lastPlayerPositionX = -50.0,
     this.lastPlayerPositionY = 0.0,
     this.exitPlayerPositionX = -50.0,
     this.exitPlayerPositionY = 0.0,
-    this.lastOutdoorSceneId = 'outdoor_1',
+    this.lastOutdoorSceneId = 'outdoor_0',
     this.lastBuildingType = 'shop',
     this.lastBuildingPositionX = -50.0,
     this.lastBuildingPositionY = 0.0,
     this.carriedItemName,
     this.equippedItemName,
-    this.hitCount = 0,
-    this.giftCount = 0,
-    this.scrappedObjectCount = 0,
-    this.readLogCount = 0,
-    this.randomActionCount = 0,
     this.currentMission,
-    List<String>? triggeredRouteIds,
-    List<String>? triggeredMidRouteIds,
-    Map<String, int>? extraActionCounts,
-    List<String>? subRouteConfirmedStages,
     this.scenarioCount = 1,
-    Map<String, double>? attributeScores,
-    Map<String, int>? attributeRedundancy,
-    this.isAttributeFixed = false,
-    this.lastSimulatedAttribute,
     this.dayCount = 1,
-    List<String>? completedRouteIds,
-    this.activeRouteId,
-    this.unlockedStageCount = 1,
     Map<String, List<String>>? dugAreas,
     this.hasShownCompassToday = false,
     Map<String, Map<String, double>>? buildingPlacements,
@@ -109,25 +164,58 @@ class SaveData {
     this.speedCalibrationScale = 1.0,
     this.powerCalibrationScale = 1.0,
     this.stressCalibrationScale = 1.0,
+    this.youngUncleDialogueStep = 0,
+    this.hasIdentifiedYoungUncle = false,
+    List<String>? unlockedDiaryEntries,
+    this.currentWillpower = 10.0,
+    this.maxWillCoreValue = 10.0,
+    this.willpowerSpentInStage = 0.0,
+    this.destructionPointsInStage = 0,
+    this.homePlanetHumanity = 0.0,
+    this.homePlanetEfficiency = 0.0,
+    this.homePlanetRealism = 0.0,
+    this.starAlertLevel = 0.0,
+    this.cargoLifeCount = 0,
+    this.cargoHistoryCount = 0,
+    this.cargoInorganicCount = 0,
+    this.isCargoLaunched = false,
+    this.sentLifeResourceCount = 0,
+    this.sentHistoryResourceCount = 0,
+    this.sentInorganicResourceCount = 0,
+    this.automationKitStage = 0,
+    this.automationKitTotalRuntime = 0.0,
+    this.automationContractC2 = false,
+    List<String>? completedMacroRoutes,
+    this.destroyMacroPathQualified = false,
+    this.lifetimeEnemyKills = 0,
+    this.lifetimeLifeCargoAccumulated = 0,
+    this.totalWillpowerConsumed = 0.0,
+    List<Map<String, dynamic>>? stageMicroLogEntries,
+    this.hasShownAutomationShopUnlockMessage = false,
+    this.automationShopTierA = 0,
+    this.automationShopTierB = 0,
+    this.automationShopTierC = 0,
+    this.automationShopTierD = 0,
+    Map<String, dynamic>? codexSnapshotJson,
+    this.disclosureTier = 0,
+    this.totalCargoLaunches = 0,
+    this.trueSequencePhase = 0,
+    List<String>? pendingNarrativeMessages,
+    this.automationShopWillpowerAutoPay = false,
+    this.trueDialSalt,
+    this.sentLifeScenarioBaseline = 0,
   }) : itemCounts = itemCounts ?? {},
-       triggeredRouteIds = triggeredRouteIds ?? [],
-       triggeredMidRouteIds = triggeredMidRouteIds ?? [],
-       extraActionCounts = extraActionCounts ?? {},
-       subRouteConfirmedStages = subRouteConfirmedStages ?? [],
-       attributeScores = attributeScores ?? {
-         'violence': 0.0,
-         'efficiency': 0.0,
-         'empathy': 0.0,
-         'philosophy': 0.0,
-       },
-       attributeRedundancy = attributeRedundancy ?? {},
-       completedRouteIds = completedRouteIds ?? [],
        dugAreas = dugAreas ?? {},
        buildingPlacements = buildingPlacements ?? {},
        destructibleHealths = destructibleHealths ?? {},
        satisfiedNpcIds = satisfiedNpcIds ?? [],
        unlockedAchievements = unlockedAchievements ?? [],
-       missionTrueLogs = missionTrueLogs ?? {};
+       missionTrueLogs = missionTrueLogs ?? {},
+       unlockedDiaryEntries = unlockedDiaryEntries ?? [],
+       completedMacroRoutes = completedMacroRoutes ?? [],
+       stageMicroLogEntries = stageMicroLogEntries ?? [],
+       codexSnapshotJson = codexSnapshotJson ?? {},
+       pendingNarrativeMessages = pendingNarrativeMessages ?? [];
 
   // JSONからSaveDataオブジェクトを生成するファクトリコンストラクタ
   factory SaveData.fromJson(Map<String, dynamic> json) {
@@ -135,39 +223,26 @@ class SaveData {
       currency: json['currency'] as int? ?? 0,
       miningPoints: json['miningPoints'] as int? ?? 0,
       maxStress: json['maxStress'] as double? ?? 100.0,
+      currentStress: json['currentStress'] as double? ?? 0.0,
+      maxIntegrity: json['maxIntegrity'] as double? ?? 1000.0,
+      currentIntegrity: json['currentIntegrity'] as double? ?? 1000.0,
       itemCounts: (json['itemCounts'] as Map<dynamic, dynamic>?)?.map(
             (key, value) => MapEntry(key.toString(), value as int),
           ),
-      lastSceneId: json['lastSceneId'] as String? ?? 'outdoor_1',
+      lastSceneId: json['lastSceneId'] as String? ?? 'outdoor_0',
       lastPlayerPositionX: json['lastPlayerPositionX'] as double? ?? -50.0,
       lastPlayerPositionY: json['lastPlayerPositionY'] as double? ?? 0.0,
       exitPlayerPositionX: json['exitPlayerPositionX'] as double? ?? -50.0,
       exitPlayerPositionY: json['exitPlayerPositionY'] as double? ?? 0.0,
-      lastOutdoorSceneId: json['lastOutdoorSceneId'] as String?,
+      lastOutdoorSceneId: json['lastOutdoorSceneId'] as String? ?? 'outdoor_0',
       lastBuildingType: json['lastBuildingType'] as String?,
       lastBuildingPositionX: json['lastBuildingPositionX'] as double?,
       lastBuildingPositionY: json['lastBuildingPositionY'] as double?,
       carriedItemName: json['carriedItemName'] as String?,
       equippedItemName: json['equippedItemName'] as String?,
-      hitCount: json['hitCount'] as int? ?? 0,
-      giftCount: json['giftCount'] as int? ?? 0,
-      scrappedObjectCount: json['scrappedObjectCount'] as int? ?? 0,
-      readLogCount: json['readLogCount'] as int? ?? 0,
-      randomActionCount: json['randomActionCount'] as int? ?? 0,
       currentMission: json['currentMission'] as String?,
-      triggeredRouteIds: (json['triggeredRouteIds'] as List<dynamic>?)?.cast<String>(),
-      triggeredMidRouteIds: (json['triggeredMidRouteIds'] as List<dynamic>?)?.cast<String>(),
-      extraActionCounts: (json['extraActionCounts'] as Map<String, dynamic>?)?.cast<String, int>(),
-      subRouteConfirmedStages: (json['subRouteConfirmedStages'] as List<dynamic>?)?.cast<String>(),
       scenarioCount: json['scenarioCount'] as int? ?? 1,
-      attributeScores: (json['attributeScores'] as Map<dynamic, dynamic>?)?.cast<String, double>(),
-      attributeRedundancy: (json['attributeRedundancy'] as Map<dynamic, dynamic>?)?.cast<String, int>(),
-      isAttributeFixed: json['isAttributeFixed'] as bool? ?? false,
-      lastSimulatedAttribute: json['lastSimulatedAttribute'] as String?,
       dayCount: json['dayCount'] as int? ?? 1,
-      completedRouteIds: (json['completedRouteIds'] as List<dynamic>?)?.cast<String>(),
-      activeRouteId: json['activeRouteId'] as String?,
-      unlockedStageCount: json['unlockedStageCount'] as int? ?? 1,
       dugAreas: (json['dugAreas'] as Map<String, dynamic>?)?.map(
             (key, value) => MapEntry(key, List<String>.from(value as List)),
           ),
@@ -183,6 +258,59 @@ class SaveData {
       speedCalibrationScale: json['speedCalibrationScale'] as double? ?? 1.0,
       powerCalibrationScale: json['powerCalibrationScale'] as double? ?? 1.0,
       stressCalibrationScale: json['stressCalibrationScale'] as double? ?? 1.0,
+      youngUncleDialogueStep: json['youngUncleDialogueStep'] as int? ?? 0,
+      hasIdentifiedYoungUncle: json['hasIdentifiedYoungUncle'] as bool? ?? false,
+      unlockedDiaryEntries: (json['unlockedDiaryEntries'] as List<dynamic>?)?.cast<String>(),
+      currentWillpower: json['currentWillpower'] as double? ?? 10.0,
+      maxWillCoreValue: json['maxWillCoreValue'] as double? ?? 10.0,
+      willpowerSpentInStage: json['willpowerSpentInStage'] as double? ?? 0.0,
+      destructionPointsInStage: json['destructionPointsInStage'] as int? ?? 0,
+      homePlanetHumanity: json['homePlanetHumanity'] as double? ?? 0.0,
+      homePlanetEfficiency: json['homePlanetEfficiency'] as double? ?? 0.0,
+      homePlanetRealism: json['homePlanetRealism'] as double? ?? 0.0,
+      starAlertLevel: json['starAlertLevel'] as double? ?? 0.0,
+      cargoLifeCount: json['cargoLifeCount'] as int? ?? 0,
+      cargoHistoryCount: json['cargoHistoryCount'] as int? ?? 0,
+      cargoInorganicCount: json['cargoInorganicCount'] as int? ?? 0,
+      isCargoLaunched: json['isCargoLaunched'] as bool? ?? false,
+      sentLifeResourceCount: json['sentLifeResourceCount'] as int? ?? 0,
+      sentHistoryResourceCount: json['sentHistoryResourceCount'] as int? ?? 0,
+      sentInorganicResourceCount: json['sentInorganicResourceCount'] as int? ?? 0,
+      automationKitStage: json['automationKitStage'] as int? ?? 0,
+      automationKitTotalRuntime: json['automationKitTotalRuntime'] as double? ?? 0.0,
+      automationContractC2: json['automationContractC2'] as bool? ?? false,
+      completedMacroRoutes:
+          (json['completedMacroRoutes'] as List<dynamic>?)?.cast<String>(),
+      destroyMacroPathQualified:
+          json['destroyMacroPathQualified'] as bool? ?? false,
+      lifetimeEnemyKills: json['lifetimeEnemyKills'] as int? ?? 0,
+      lifetimeLifeCargoAccumulated:
+          json['lifetimeLifeCargoAccumulated'] as int? ?? 0,
+      totalWillpowerConsumed:
+          json['totalWillpowerConsumed'] as double? ?? 0.0,
+      stageMicroLogEntries: (json['stageMicroLogEntries'] as List<dynamic>?)
+              ?.map((e) => Map<String, dynamic>.from(e as Map))
+              .toList() ??
+          [],
+      hasShownAutomationShopUnlockMessage:
+          json['hasShownAutomationShopUnlockMessage'] as bool? ?? false,
+      automationShopTierA: json['automationShopTierA'] as int? ?? 0,
+      automationShopTierB: json['automationShopTierB'] as int? ?? 0,
+      automationShopTierC: json['automationShopTierC'] as int? ?? 0,
+      automationShopTierD: json['automationShopTierD'] as int? ?? 0,
+      codexSnapshotJson: (json['codexSnapshotJson'] as Map<String, dynamic>?) ??
+          {},
+      disclosureTier: json['disclosureTier'] as int? ?? 0,
+      totalCargoLaunches: json['totalCargoLaunches'] as int? ?? 0,
+      trueSequencePhase: json['trueSequencePhase'] as int? ?? 0,
+      pendingNarrativeMessages:
+          (json['pendingNarrativeMessages'] as List<dynamic>?)?.cast<String>() ??
+              [],
+      automationShopWillpowerAutoPay:
+          json['automationShopWillpowerAutoPay'] as bool? ?? false,
+      trueDialSalt: json['trueDialSalt'] as int?,
+      sentLifeScenarioBaseline:
+          json['sentLifeScenarioBaseline'] as int? ?? 0,
     );
   }
 
@@ -192,6 +320,9 @@ class SaveData {
       'currency': currency,
       'miningPoints': miningPoints,
       'maxStress': maxStress,
+      'currentStress': currentStress,
+      'maxIntegrity': maxIntegrity,
+      'currentIntegrity': currentIntegrity,
       'itemCounts': itemCounts,
       'lastSceneId': lastSceneId,
       'lastPlayerPositionX': lastPlayerPositionX,
@@ -204,25 +335,9 @@ class SaveData {
       'lastBuildingPositionY': lastBuildingPositionY,
       'carriedItemName': carriedItemName,
       'equippedItemName': equippedItemName,
-      'hitCount': hitCount,
-      'giftCount': giftCount,
-      'scrappedObjectCount': scrappedObjectCount,
-      'readLogCount': readLogCount,
-      'randomActionCount': randomActionCount,
       'currentMission': currentMission,
-      'triggeredRouteIds': triggeredRouteIds,
-      'triggeredMidRouteIds': triggeredMidRouteIds,
-      'extraActionCounts': extraActionCounts,
-      'subRouteConfirmedStages': subRouteConfirmedStages,
       'scenarioCount': scenarioCount,
-      'attributeScores': attributeScores,
-      'attributeRedundancy': attributeRedundancy,
-      'isAttributeFixed': isAttributeFixed,
-      'lastSimulatedAttribute': lastSimulatedAttribute,
       'dayCount': dayCount,
-      'completedRouteIds': completedRouteIds,
-      'activeRouteId': activeRouteId,
-      'unlockedStageCount': unlockedStageCount,
       'dugAreas': dugAreas,
       'hasShownCompassToday': hasShownCompassToday,
       'buildingPlacements': buildingPlacements,
@@ -234,6 +349,47 @@ class SaveData {
       'speedCalibrationScale': speedCalibrationScale,
       'powerCalibrationScale': powerCalibrationScale,
       'stressCalibrationScale': stressCalibrationScale,
+      'youngUncleDialogueStep': youngUncleDialogueStep,
+      'hasIdentifiedYoungUncle': hasIdentifiedYoungUncle,
+      'unlockedDiaryEntries': unlockedDiaryEntries,
+      'currentWillpower': currentWillpower,
+      'maxWillCoreValue': maxWillCoreValue,
+      'willpowerSpentInStage': willpowerSpentInStage,
+      'destructionPointsInStage': destructionPointsInStage,
+      'homePlanetHumanity': homePlanetHumanity,
+      'homePlanetEfficiency': homePlanetEfficiency,
+      'homePlanetRealism': homePlanetRealism,
+      'starAlertLevel': starAlertLevel,
+      'cargoLifeCount': cargoLifeCount,
+      'cargoHistoryCount': cargoHistoryCount,
+      'cargoInorganicCount': cargoInorganicCount,
+      'isCargoLaunched': isCargoLaunched,
+      'sentLifeResourceCount': sentLifeResourceCount,
+      'sentHistoryResourceCount': sentHistoryResourceCount,
+      'sentInorganicResourceCount': sentInorganicResourceCount,
+      'automationKitStage': automationKitStage,
+      'automationKitTotalRuntime': automationKitTotalRuntime,
+      'automationContractC2': automationContractC2,
+      'completedMacroRoutes': completedMacroRoutes,
+      'destroyMacroPathQualified': destroyMacroPathQualified,
+      'lifetimeEnemyKills': lifetimeEnemyKills,
+      'lifetimeLifeCargoAccumulated': lifetimeLifeCargoAccumulated,
+      'totalWillpowerConsumed': totalWillpowerConsumed,
+      'stageMicroLogEntries': stageMicroLogEntries,
+      'hasShownAutomationShopUnlockMessage':
+          hasShownAutomationShopUnlockMessage,
+      'automationShopTierA': automationShopTierA,
+      'automationShopTierB': automationShopTierB,
+      'automationShopTierC': automationShopTierC,
+      'automationShopTierD': automationShopTierD,
+      'codexSnapshotJson': codexSnapshotJson,
+      'disclosureTier': disclosureTier,
+      'totalCargoLaunches': totalCargoLaunches,
+      'trueSequencePhase': trueSequencePhase,
+      'pendingNarrativeMessages': pendingNarrativeMessages,
+      'automationShopWillpowerAutoPay': automationShopWillpowerAutoPay,
+      'trueDialSalt': trueDialSalt,
+      'sentLifeScenarioBaseline': sentLifeScenarioBaseline,
     };
   }
 }

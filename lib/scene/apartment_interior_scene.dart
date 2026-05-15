@@ -9,6 +9,7 @@ import '../component/game_stage/gamestage_component.dart';
 import '../component/game_stage/building/building_definitions.dart'; // BuildingDefinitionsをインポート
 import '../component/common/hitboxes/interact_hitbox.dart';
 import '../component/game_stage/building/destructible_object.dart';
+import '../component/game_stage/building/bed.dart';
 
 class ApartmentInteriorScene extends GameScene {
   final Building? _enteredBuilding; // nullableに変更
@@ -111,6 +112,12 @@ class ApartmentInteriorScene extends GameScene {
     debugPrint(
       'Counter position: ${counterComponent.position}, size: ${counterComponent.size}',
     );
+
+    // ベッドの配置
+    await add(Bed(
+      position: Vector2(350, _backgroundComponent!.position.y + _backgroundComponent!.size.y - 5),
+      size: Vector2(64, 32),
+    ));
 
     // Stage 3 ギミック：壊せる家具の配置
     if (game.gameRuntimeState.currentOutdoorSceneId == 'outdoor_3') {

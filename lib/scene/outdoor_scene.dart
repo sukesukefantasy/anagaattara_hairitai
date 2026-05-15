@@ -1,9 +1,9 @@
 ﻿import 'package:flutter/material.dart';
 import 'abstract_outdoor_scene.dart';
 import 'package:flame/components.dart'; // Add for SpriteComponent
-import '../UI/window_manager.dart';
-import '../UI/windows/message_window.dart';
-import '../component/vehicle/train.dart'; // Add this line
+// import '../UI/window_manager.dart';
+// import '../UI/windows/message_window.dart';
+// import '../component/vehicle/train.dart'; // Add this line
 import '../component/item/item.dart';
 
 class OutdoorScene extends AbstractOutdoorScene {
@@ -12,20 +12,6 @@ class OutdoorScene extends AbstractOutdoorScene {
   double get groundHeight => 20.0;
 
   OutdoorScene({required super.sceneId, super.initialPlayerPosition});
-
-  // 電車をスポーンさせるメソッド (このクラスに属する)
-  void spawnTrain() {
-    if (station == null) {
-      debugPrint('Station is not yet initialized in OutdoorScene.');
-      return;
-    }
-    final train = Train(
-      position: Vector2(0, station!.position.y + station!.size.y - 126),
-      station: station!,
-    )..priority = 3; // 建物(priority: 5)より奥に描画される
-    add(train); // OutdoorSceneの子として追加
-    debugPrint('Spawned a new train in OutdoorScene.');
-  }
 
   @override
   Future<void> initializeScene(dynamic data) async {
@@ -52,6 +38,9 @@ class OutdoorScene extends AbstractOutdoorScene {
         break;
       case 'outdoor_despair':
       case 'outdoor_true':
+      case 'outdoor_true_corridor':
+      case 'outdoor_true_vault':
+      case 'outdoor_true_finale':
         entrances = [-300.0, -1000.0];
         break;
       default:
@@ -60,14 +49,13 @@ class OutdoorScene extends AbstractOutdoorScene {
 
     // 地下の採掘状況
     if (sceneId == 'outdoor_philosophy') {
-      final state = game.gameRuntimeState;
-      bool isSubScenario = true;
-      for (int i = 1; i <= 4; i++) {
-        if (!state.subRouteConfirmedStages.contains('outdoor_$i')) {
-          isSubScenario = false;
-          break;
-        }
-      }
+      // bool isSubScenario = true;
+      // for (int i = 1; i <= 4; i++) {
+      //   if (!state.subRouteConfirmedStages.contains('outdoor_$i')) {
+      //     isSubScenario = false;
+      //     break;
+      //   }
+      // }
 
       final targetItem = '中枢演算コア';
       // 地下の3層目（深度3マス目）、x=-250にアイテムを配置
@@ -78,6 +66,35 @@ class OutdoorScene extends AbstractOutdoorScene {
     }
 
     underGround.addDiggableEntrances(entrances);
+
+    if (sceneId == 'outdoor_true_corridor') {
+      game.windowManager.showDialog(
+        [
+          '〔深層廊下〕',
+          '父の断片が足元の摩擦を薄めている。（意志力の消費が抑制される）',
+          'この先、6桁の錠が待つ。',
+        ],
+        options: ['金庫区画へ進む', 'しばらく留まる'],
+        onSelect: (i) async {
+          if (i != 0) return;
+          final st = game.gameRuntimeState;
+          st.trueSequencePhase = 2;
+          await st.saveGame();
+          await game.sceneManager.loadScene(
+            'outdoor_true_vault',
+            initialPlayerPosition: Vector2(
+              -100,
+              game.initialGameCanvasSize.y - game.player.size.y / 2,
+            ),
+          );
+        },
+      );
+    }
+
+    if (sceneId == 'outdoor_true_vault') {
+      Future.microtask(() => game.windowManager.showTrueVaultDial(game));
+    }
+
     debugPrint('OutdoorScene initializeScene complete for $sceneId');
   }
 }

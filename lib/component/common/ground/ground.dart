@@ -3,15 +3,19 @@ import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../main.dart';
+import '../collision/collision_family.dart';
 
 class Ground extends RectangleComponent
-    with CollisionCallbacks, HasGameReference<MyGame> {
+    with CollisionCallbacks, HasGameReference<MyGame>, HasCollisionFamily {
+  @override
+  CollisionFamily get collisionFamily => CollisionFamily.terrain;
+
   Sprite? _groundSprite;
   final double groundWidth;
   final double groundHeight;
   final bool isScrollForward;
   final bool loop;
-  final Color? overlayColor;
+  Color? overlayColor; // finalを削除
 
   Ground({
     required this.groundWidth,

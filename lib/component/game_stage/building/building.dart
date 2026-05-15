@@ -1,10 +1,13 @@
-import 'package:flame/collisions.dart';
+﻿import 'package:flame/collisions.dart';
 import 'package:flame/components.dart';
 import '../../../main.dart';
 import '../../player.dart';
+import '../../common/collision/collision_family.dart';
 
 abstract class Building extends PositionComponent
-    with HasGameReference<MyGame>, CollisionCallbacks {
+    with HasGameReference<MyGame>, CollisionCallbacks, HasCollisionFamily {
+  @override
+  CollisionFamily get collisionFamily => CollisionFamily.prop;
   final Vector2 initialPosition;
   // 建物の種類を識別するためのプロパティ
   final String type;

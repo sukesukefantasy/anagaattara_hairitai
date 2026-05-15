@@ -58,8 +58,8 @@ class HpLowEffect extends Component with HasGameReference<MyGame> {
       _opacityDirection = 1.0; // 増加に転じる
     }
 
-    // HPがエフェクト閾値を超えた場合にのみ削除
-    if (game.player.currentHp > 350) {
+    // 耐久力がエフェクト閾値を超えた場合にのみ削除
+    if (game.player.currentIntegrity > 350) {
       removeFromParent();
     }
   }

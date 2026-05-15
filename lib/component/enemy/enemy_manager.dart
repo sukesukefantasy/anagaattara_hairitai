@@ -1,12 +1,10 @@
-import 'dart:math';
+﻿import 'dart:math';
 import 'package:flame/components.dart';
 import 'package:flutter/foundation.dart';
 import '../../../main.dart';
 import 'car_enemy.dart';
 import 'walking_enemy.dart';
 import 'enemy_base.dart'; // EnemyBaseをインポート
-import '../../scene/outdoor_scene.dart'; // OutdoorSceneのgroundHeight/underGroundHeightにアクセスするため
-
 class EnemyManager {
   final Random _random = Random();
   final double _spawnInterval = 0.2; // 敵をスポーンさせる間隔（秒）を1.5から0.5に短縮
@@ -15,38 +13,45 @@ class EnemyManager {
 
   EnemyManager(this.game);
 
+  /// Ground 上端に足元を合わせる。[initialGameCanvasSize] と実際の地面位置のズレを避ける。
+  double get _feetSpawnY {
+    final ground = game.sceneManager.currentScene?.groundComponent;
+    if (ground != null) return ground.position.y + 2;
+    return game.initialGameCanvasSize.y + 2;
+  }
+
   // スケジュール定義
   static const Map<int, Map<int, Map<String, dynamic>>> _schedule = {
     // 月曜から金曜 (1-5)
     1: {
       7: {
         'walking': [50, 60],
-        'car': [5, 7],
+        'car': [0, 0],
         'left_direction_ratio': 0.9,
       }, // 通勤ラッシュ（左向きが多い）
       9: {
         'walking': [5, 10],
-        'car': [2, 3],
+        'car': [0, 0],
         'left_direction_ratio': 0.5,
       }, // 午前
       12: {
         'walking': [15, 20],
-        'car': [0, 1],
+        'car': [0, 0],
         'left_direction_ratio': 0.5,
       }, // 昼時
       13: {
         'walking': [5, 10],
-        'car': [0, 1],
+        'car': [0, 0],
         'left_direction_ratio': 0.5,
       }, // 午後
       17: {
         'walking': [50, 60],
-        'car': [5, 7],
+        'car': [0, 0],
         'left_direction_ratio': 0.1,
       }, // 帰宅ラッシュ（右向きが多い）
       21: {
         'walking': [7, 12],
-        'car': [1, 3],
+        'car': [0, 0],
         'left_direction_ratio': 0.5,
       }, // 夜時
       23: {
@@ -56,7 +61,7 @@ class EnemyManager {
       }, // 深夜
       5: {
         'walking': [1, 3],
-        'car': [0, 1],
+        'car': [0, 0],
         'left_direction_ratio': 0.5,
       }, // 早朝
     },
@@ -69,22 +74,22 @@ class EnemyManager {
       }, // 起きるころ
       9: {
         'walking': [5, 10],
-        'car': [2, 3],
+        'car': [0, 0],
         'left_direction_ratio': 0.5,
       }, // 午前
       12: {
         'walking': [20, 30],
-        'car': [0, 1],
+        'car': [0, 0],
         'left_direction_ratio': 0.5,
       }, // 昼時
       13: {
         'walking': [10, 20],
-        'car': [2, 4],
+        'car': [0, 0],
         'left_direction_ratio': 0.5,
       }, // 午後
       17: {
         'walking': [10, 20],
-        'car': [3, 5],
+        'car': [0, 0],
         'left_direction_ratio': 0.5,
       }, // 夕方
       21: {
@@ -111,22 +116,22 @@ class EnemyManager {
       }, // 起きるころ
       9: {
         'walking': [5, 10],
-        'car': [2, 3],
+        'car': [0, 0],
         'left_direction_ratio': 0.5,
       }, // 午前
       12: {
         'walking': [20, 30],
-        'car': [0, 1],
+        'car': [0, 0],
         'left_direction_ratio': 0.5,
       }, // 昼時
       13: {
         'walking': [10, 20],
-        'car': [2, 4],
+        'car': [0, 0],
         'left_direction_ratio': 0.5,
       }, // 午後
       17: {
         'walking': [10, 20],
-        'car': [3, 5],
+        'car': [0, 0],
         'left_direction_ratio': 0.5,
       }, // 夕方
       21: {
@@ -294,12 +299,12 @@ class EnemyManager {
       final groundLeft = ground.position.x;
       final groundRight = ground.position.x + ground.size.x;
 
+      // 端の「床の外100px」だと地面コライダーが無く落下し続ける。縁の内側から歩き始める。
+      const edgeInset = 36.0;
       if (direction == -1.0) {
-        // 左向きの場合、Groundの右端から出現
-        spawnX = groundRight + 100; // Groundの右端から100ピクセル外
+        spawnX = groundRight - edgeInset;
       } else {
-        // 右向きの場合、Groundの左端から出現
-        spawnX = groundLeft - 100; // Groundの左端から100ピクセル外
+        spawnX = groundLeft + edgeInset;
       }
     } else {
       // Groundが利用できない場合のフォールバック（既存の画面範囲でのスポーンロジック）
@@ -321,9 +326,8 @@ class EnemyManager {
       return WalkingEnemy(
         position: Vector2(
           spawnX,
-          game.initialGameCanvasSize.y, // Anchor.bottomCenterに合わせたY座標（地面に揃える）
+          _feetSpawnY, // Anchor.bottomCenterに合わせたY座標（地面に揃える）
         ),
-        size: Vector2.all(50),
         direction: direction,
         walkCycleSpeed: walkCycleSpeed,
       );
@@ -331,9 +335,8 @@ class EnemyManager {
       return CarEnemy(
         position: Vector2(
           spawnX,
-          game.initialGameCanvasSize.y, // Anchor.bottomCenterに合わせたY座標（地面に揃える）
+          _feetSpawnY, // Anchor.bottomCenterに合わせたY座標（地面に揃える）
         ),
-        size: Vector2(252, 104),
         direction: direction,
       );
     }
@@ -377,9 +380,8 @@ class EnemyManager {
       return WalkingEnemy(
         position: Vector2(
           spawnX,
-          game.initialGameCanvasSize.y, // Anchor.bottomCenterに合わせたY座標（地面に揃える）
+          _feetSpawnY, // Anchor.bottomCenterに合わせたY座標（地面に揃える）
         ),
-        size: Vector2.all(50),
         direction: finalDirection,
         walkCycleSpeed: walkCycleSpeed,
       );
@@ -387,9 +389,8 @@ class EnemyManager {
       return CarEnemy(
         position: Vector2(
           spawnX,
-          game.initialGameCanvasSize.y, // Anchor.bottomCenterに合わせたY座標（地面に揃える）
+          _feetSpawnY, // Anchor.bottomCenterに合わせたY座標（地面に揃える）
         ),
-        size: Vector2(252, 104),
         direction: finalDirection,
       );
     }

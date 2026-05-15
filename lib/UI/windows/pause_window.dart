@@ -1,112 +1,105 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../window_manager.dart';
-import '../../component/item/item_bag.dart'; // ItemBagをインポート
-import 'item_bag_window.dart'; // ItemBagWindowをインポート
-import '../../main.dart'; // MyGameのために追加
-import 'title_window.dart'; // TitleWindowをインポート
+import '../../component/item/item_bag.dart';
+import '../../main.dart';
+import 'title_window.dart';
+import 'window_base.dart';
 
-class PauseWindow extends StatelessWidget {
+class PauseWindow extends StatelessWidget with GameWindowResponsiveMixin {
   final WindowManager windowManager;
-  final ItemBag itemBag; // ItemBagを追加
-  final MyGame game; // MyGameを追加
+  final ItemBag itemBag;
+  final MyGame game;
 
   const PauseWindow({
     super.key, 
     required this.windowManager, 
     required this.itemBag,
-    required this.game, // コンストラクタで受け取る
+    required this.game,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent, // 背景の透過
-      child: Center(
-        child: Container(
-          width: windowManager.screenWidth * 0.5,
-          height: windowManager.screenHeight * 0.6,
-          decoration: BoxDecoration(
-            color: Colors.blueGrey[800], // ウィンドウの背景色
-            borderRadius: BorderRadius.circular(20), // 角の丸み
-            border: Border.all(color: Colors.white, width: 2), // 枠線
+    final isMobile = getIsMobile(windowManager);
+    final screenWidth = windowManager.screenWidth;
+    final screenHeight = windowManager.screenHeight;
+
+    return GameWindow(
+      windowManager: windowManager,
+      backgroundColor: Colors.blueGrey[800],
+      widthFactor: 0.5,
+      heightFactor: 0.6,
+      mobileWidthFactor: 0.8,
+      mobileHeightFactor: 0.8,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            'PAUSED',
+            style: TextStyle(
+              fontSize: isMobile ? 32 : screenHeight * 0.07,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+              fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+              letterSpacing: 5,
+            ),
           ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                'PAUSED',
-                style: TextStyle(
-                  fontSize: windowManager.screenHeight * 0.07, // 画面高さの7%
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                  fontFamily: 'TRS-Million-Rg',
-                  letterSpacing: 5,
-                ),
+          SizedBox(height: isMobile ? 20 : screenHeight * 0.03),
+          ElevatedButton(
+            onPressed: () {
+              windowManager.hideWindow();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blueAccent,
+              padding: EdgeInsets.symmetric(
+                horizontal: isMobile ? 40 : screenWidth * 0.05,
+                vertical: isMobile ? 12 : screenHeight * 0.02,
               ),
-              SizedBox(height: windowManager.screenHeight * 0.03), // 画面高さの3%
-              ElevatedButton(
-                onPressed: () {
-                  windowManager.hideWindow();
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.blueAccent,
-                  padding: EdgeInsets.symmetric(
-                    horizontal: windowManager.screenWidth * 0.05, // 画面幅の5%
-                    vertical: windowManager.screenHeight * 0.02, // 画面高さの2%
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-                child: Text(
-                  'resume',
-                  style: TextStyle(
-                    fontSize: windowManager.screenHeight * 0.035, // 画面高さの3.5%
-                    color: Colors.white,
-                    fontFamily: 'TRS-Million-Rg',
-                  ),
-                ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
               ),
-              SizedBox(height: windowManager.screenHeight * 0.015), // 画面高さの1.5%
-              ElevatedButton(
-                onPressed: () {
-                  windowManager.hideWindow();
-                  windowManager.showWindow(
-                    GameWindowType.title,
-                    TitleWindow(
-                      windowManager: windowManager,
-                      onStart: () {
-                        // タイトルから戻った時も羅針盤メッセージを表示（クリア済みならスキップ）
-                        final state = game.gameRuntimeState;
-                        final currentSceneId = state.currentOutdoorSceneId ?? 'outdoor_1';
-                        game.missionManager.showCompassMessage(currentSceneId);
-                      },
-                    ),
-                  );
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color.fromARGB(255, 85, 51, 0), // タイトルに戻るボタンの色
-                  padding: EdgeInsets.symmetric(
-                    horizontal: windowManager.screenWidth * 0.05, // 画面幅の5%
-                    vertical: windowManager.screenHeight * 0.02, // 画面高さの2%
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-                child: Text(
-                  'back to title',
-                  style: TextStyle(
-                    fontSize: windowManager.screenHeight * 0.035, // 画面高さの3.5%
-                    color: Colors.white,
-                    fontFamily: 'TRS-Million-Rg',
-                  ),
-                ),
+            ),
+            child: Text(
+              'resume',
+              style: TextStyle(
+                fontSize: isMobile ? 18 : screenHeight * 0.035,
+                color: Colors.white,
+                fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
               ),
-            ],
+            ),
           ),
-        ),
+          SizedBox(height: isMobile ? 12 : screenHeight * 0.015),
+          ElevatedButton(
+            onPressed: () {
+              windowManager.hideWindow();
+              windowManager.showWindow(
+                GameWindowType.title,
+                TitleWindow(
+                  windowManager: windowManager,
+                  onStart: () {},
+                ),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color.fromARGB(255, 85, 51, 0),
+              padding: EdgeInsets.symmetric(
+                horizontal: isMobile ? 40 : screenWidth * 0.05,
+                vertical: isMobile ? 12 : screenHeight * 0.02,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: Text(
+              'back to title',
+              style: TextStyle(
+                fontSize: isMobile ? 18 : screenHeight * 0.035,
+                color: Colors.white,
+                fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
-} 
+}

@@ -1,24 +1,15 @@
-import 'package:anagaattara_hairitai/component/player.dart';
-import 'package:anagaattara_hairitai/system/storage/game_runtime_state.dart';
+﻿import 'package:anagaattara_hairitai/main.dart';
 
+/// 定義の `customEffect` 文字列 → 効果。
 class CustomItemEffectResolver {
-  static Function(Player)? resolve(String? effectName) {
+  static void Function(MyGame)? resolve(String? effectName) {
     if (effectName == null) return null;
 
     switch (effectName) {
       case 'updateMiningPoints5':
-        return (player) => player.updateMiningPoints(5);
-      /* case 'addMetaScore':
-        return (player) => {
-          if (player.game.gameRuntimeState.currentOutdoorSceneId == 'outdoor_philosophy') {
-            player.game.missionManager.onAction(GameRuntimeState.routePhilosophy)
-          }
-        }; */
-        
-      // 他のカスタム効果があればここに追加
+        return (game) => game.player.updateMiningPoints(5);
       default:
         return null;
     }
   }
 }
-

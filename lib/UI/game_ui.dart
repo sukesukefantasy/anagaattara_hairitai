@@ -1,14 +1,22 @@
-﻿import 'package:flutter/material.dart';
+﻿import 'dart:async';
+import 'dart:math' as math;
+
+import 'package:flutter/material.dart';
+import 'package:flame/components.dart';
+
 import '../main.dart';
 import '../game_manager/time_service.dart';
-import '../game_manager/mission_manager.dart';
+import '../system/crafting_system.dart';
 import '../system/storage/game_runtime_state.dart';
 import 'window_manager.dart';
 import 'windows/pause_window.dart';
 import 'windows/message_window.dart';
 import 'windows/item_bag_window.dart';
-import 'windows/calibration_window.dart';
+import 'windows/automation_shop_window.dart';
+import 'windows/codex_window.dart';
+import 'windows/crafting_window.dart';
 import '../component/item/item.dart';
+import '../component/player.dart';
 
 class GameUI extends StatefulWidget {
   final Size screenSize;
@@ -42,12 +50,6 @@ class GameUI extends StatefulWidget {
       ValueNotifier<DirectionButtonState>(DirectionButtonState.normal);
   static final ValueNotifier<bool> _rightButtonPressedNotifier =
       ValueNotifier<bool>(false); // rightボタンの押下状態を通知するNotifier
-
-  // Mission Glitch Notifier
-  static final ValueNotifier<int> missionGlitchNotifier = ValueNotifier<int>(0);
-
-  // Attribute PIPs Pulse Notifier (通知したい属性IDを渡す)
-  static final ValueNotifier<String?> attributePulseNotifier = ValueNotifier<String?>(null);
 
   // Action button state notifiers
   static final ValueNotifier<ActionButtonState> _jumpButtonStateNotifier =
@@ -157,13 +159,17 @@ class _ScanningLineEffect extends StatefulWidget {
   State<_ScanningLineEffect> createState() => _ScanningLineEffectState();
 }
 
-class _ScanningLineEffectState extends State<_ScanningLineEffect> with SingleTickerProviderStateMixin {
+class _ScanningLineEffectState extends State<_ScanningLineEffect>
+    with SingleTickerProviderStateMixin {
   late AnimationController _controller;
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat();
   }
 
   @override
@@ -195,9 +201,10 @@ class _ScanningLinePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.white.withOpacity(0.05 + (erosionLevel * 0.1))
-      ..strokeWidth = 1.0;
+    final paint =
+        Paint()
+          ..color = Colors.white.withOpacity(0.05 + (erosionLevel * 0.1))
+          ..strokeWidth = 1.0;
 
     // メインの走査線
     final double y = size.height * progress;
@@ -208,7 +215,11 @@ class _ScanningLinePainter extends CustomPainter {
       final random = (progress * 100).toInt();
       if (random % 10 < (erosionLevel * 5)) {
         final double noiseY = size.height * ((progress + 0.2) % 1.0);
-        canvas.drawLine(Offset(0, noiseY), Offset(size.width, noiseY), paint..color = Colors.white.withOpacity(0.02));
+        canvas.drawLine(
+          Offset(0, noiseY),
+          Offset(size.width, noiseY),
+          paint..color = Colors.white.withOpacity(0.02),
+        );
       }
     }
   }
@@ -217,18 +228,158 @@ class _ScanningLinePainter extends CustomPainter {
   bool shouldRepaint(_ScanningLinePainter oldDelegate) => true;
 }
 
-class _GameUIState extends State<GameUI> {
-  bool _isPlayerInitialized = false;
-  double _startZoomDrag = 1.0;
+/// [CargoHudFlyEvent] 用の一発オーブ演出（親 Stack の Positioned 子になる）。
+class _CargoHudFlyingOrb extends StatefulWidget {
+  final Offset start;
+  final Offset end;
+  final Color color;
+  final VoidCallback onComplete;
+
+  const _CargoHudFlyingOrb({
+    super.key,
+    required this.start,
+    required this.end,
+    required this.color,
+    required this.onComplete,
+  });
+
+  @override
+  State<_CargoHudFlyingOrb> createState() => _CargoHudFlyingOrbState();
+}
+
+class _CargoHudFlyingOrbState extends State<_CargoHudFlyingOrb>
+    with SingleTickerProviderStateMixin {
+  static const double _size = 14;
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 520),
+  );
+  late final Animation<double> _t = CurvedAnimation(
+    parent: _controller,
+    curve: Curves.easeInOutCubic,
+  );
+
+  late final AnimationStatusListener _statusListener;
 
   @override
   void initState() {
     super.initState();
+    _statusListener = (AnimationStatus status) {
+      if (status == AnimationStatus.completed && mounted) {
+        widget.onComplete();
+      }
+    };
+    _controller.addStatusListener(_statusListener);
+    _controller.forward();
+  }
+
+  @override
+  void dispose() {
+    _controller.removeStatusListener(_statusListener);
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _t,
+      builder: (context, _) {
+        final p = Offset.lerp(widget.start, widget.end, _t.value)!;
+        return Positioned(
+          left: p.dx - _size / 2,
+          top: p.dy - _size / 2,
+          child: Container(
+            width: _size,
+            height: _size,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: widget.color.withOpacity(0.92),
+              boxShadow: [
+                BoxShadow(
+                  color: widget.color.withOpacity(0.55),
+                  blurRadius: 8,
+                  spreadRadius: 1,
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _CargoFlySpec {
+  _CargoFlySpec({
+    required this.key,
+    required this.start,
+    required this.end,
+    required this.color,
+  });
+
+  final Key key;
+  final Offset start;
+  final Offset end;
+  final Color color;
+}
+
+class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
+  bool _isPlayerInitialized = false;
+
+  final GlobalKey _cargoRatioBarKey = GlobalKey();
+  final GlobalKey _statusHudKey = GlobalKey();
+
+  StreamSubscription<CargoHudFlyEvent>? _cargoHudFlySub;
+
+  final List<_CargoFlySpec> _cargoFlySpecs = [];
+
+  void _onRuntimeStateForV83() {
+    if (!mounted) return;
+    final s = widget.game.gameRuntimeState;
+    if (!s.pendingAutomationShopUnlockNotice) return;
+    s.consumeAutomationShopUnlockNoticeUi();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      widget.windowManager.showDialog([
+        '〔星の通知〕',
+        '自動化ショップの端末が、画面右上に現れた。',
+      ], bodyTextColor: Colors.lightBlueAccent);
+    });
+  }
+
+  double _startZoomDrag = 1.0;
+
+  late final AnimationController _hudShakeController;
+
+  @override
+  void initState() {
+    super.initState();
+    _hudShakeController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 45),
+    );
+    widget.game.player.stressNotifier.addListener(_syncHudShakeFromStress);
+
+    widget.game.gameRuntimeState.addListener(_onRuntimeStateForV83);
+    widget.game.gameRuntimeState.addListener(_syncHudShakeFromStress);
+    _cargoHudFlySub = widget.game.gameRuntimeState.cargoHudFlyStream.listen((
+      e,
+    ) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _spawnCargoHudFlyFromEvent(e),
+      );
+    });
     _initializePlayer();
   }
 
   @override
   void dispose() {
+    widget.game.player.stressNotifier.removeListener(_syncHudShakeFromStress);
+    _hudShakeController.dispose();
+    _cargoHudFlySub?.cancel();
+    widget.game.gameRuntimeState.removeListener(_syncHudShakeFromStress);
+    widget.game.gameRuntimeState.removeListener(_onRuntimeStateForV83);
     if (_isPlayerInitialized) {
       widget.game.itemBag.removeListener(_onItemBagChanged);
     }
@@ -253,6 +404,124 @@ class _GameUIState extends State<GameUI> {
     super.dispose();
   }
 
+  Color _cargoFlyColor(CargoHudFlyKind k) => switch (k) {
+    CargoHudFlyKind.life => Colors.redAccent.shade200,
+    CargoHudFlyKind.history => Colors.lightBlue.shade300,
+    CargoHudFlyKind.inorganic => Colors.blueGrey.shade500,
+  };
+
+  /// Flame の [CameraComponent.visibleWorldRect] とズームでビューポート座標へ（ライティングシェーダと同じ前提）。
+  Offset _worldPointToScreenOverlay(double wx, double wy) {
+    final cam = widget.game.camera;
+    final rect = cam.visibleWorldRect;
+    final z = cam.viewfinder.zoom;
+    final vx = (wx - rect.left) * z;
+    final vy = (wy - rect.top) * z;
+    return Offset(vx, vy);
+  }
+
+  /// 比率バー Row と同じ順序・比率で、種別セグメントの画面上の狙い位置。
+  Offset _cargoSegmentTargetGlobal(CargoHudFlyKind kind) {
+    final state = widget.game.gameRuntimeState;
+    final life = state.cargoLifeCount;
+    final hist = state.cargoHistoryCount;
+    final ino = state.cargoInorganicCount;
+    final t = life + hist + ino;
+
+    double segmentCenterX(double width) {
+      if (t <= 0) return width * 0.5;
+      final tt = t.toDouble();
+      double x0 = 0;
+      if (life > 0) {
+        final sw = width * life / tt;
+        if (kind == CargoHudFlyKind.life) return x0 + sw / 2;
+        x0 += sw;
+      }
+      if (hist > 0) {
+        final sw = width * hist / tt;
+        if (kind == CargoHudFlyKind.history) return x0 + sw / 2;
+        x0 += sw;
+      }
+      if (ino > 0) {
+        final sw = width * ino / tt;
+        if (kind == CargoHudFlyKind.inorganic) return x0 + sw / 2;
+      }
+      return width * 0.5;
+    }
+
+    final barCtx = _cargoRatioBarKey.currentContext;
+    final barBox = barCtx?.findRenderObject() as RenderBox?;
+    if (barBox != null && barBox.hasSize && t > 0) {
+      final lx = segmentCenterX(barBox.size.width);
+      return barBox.localToGlobal(Offset(lx, barBox.size.height / 2));
+    }
+
+    final statusCtx = _statusHudKey.currentContext;
+    final statusBox = statusCtx?.findRenderObject() as RenderBox?;
+    if (statusBox != null && statusBox.hasSize) {
+      return statusBox.localToGlobal(
+        Offset(statusBox.size.width * 0.35, statusBox.size.height * 0.52),
+      );
+    }
+
+    return Offset(
+      widget.screenSize.width * 0.12,
+      widget.screenSize.height * 0.12,
+    );
+  }
+
+  void _spawnCargoHudFlyFromEvent(CargoHudFlyEvent event) {
+    if (!mounted || !_isPlayerInitialized) return;
+
+    final world = event.worldPosition;
+    final start = _worldPointToScreenOverlay(world.x, world.y);
+    final end = _cargoSegmentTargetGlobal(event.kind);
+
+    final spec = _CargoFlySpec(
+      key: UniqueKey(),
+      start: start,
+      end: end,
+      color: _cargoFlyColor(event.kind),
+    );
+    setState(() => _cargoFlySpecs.add(spec));
+  }
+
+  void _removeCargoFlySpec(_CargoFlySpec spec) {
+    if (!mounted) return;
+    setState(() => _cargoFlySpecs.remove(spec));
+  }
+
+  void _syncHudShakeFromStress() {
+    if (!mounted || !_isPlayerInitialized) return;
+    final p = widget.game.player;
+    final cap = p.effectiveMaxStress;
+    final high = cap > 1e-9 && p.currentStress >= cap * 0.8;
+    if (high) {
+      if (!_hudShakeController.isAnimating) {
+        _hudShakeController.repeat();
+      }
+    } else {
+      if (_hudShakeController.isAnimating) {
+        _hudShakeController.stop();
+      }
+      _hudShakeController.value = 0;
+    }
+  }
+
+  Offset _computeHudShakeOffset() {
+    final p = widget.game.player;
+    final cap = p.effectiveMaxStress;
+    if (cap < 1e-9 || p.currentStress < cap * 0.8) {
+      return Offset.zero;
+    }
+    final t = _hudShakeController.value;
+    const amp = 3.2;
+    return Offset(
+      amp * math.sin(t * math.pi * 2 * 7),
+      amp * math.cos(t * math.pi * 2 * 11),
+    );
+  }
+
   Future<void> _initializePlayer() async {
     // playerの初期化を待つ (MyGameのplayerはlate finalなので、初期化完了を待つロジックが必要な場合は別のフラグやFutureを検討)
     if (mounted) {
@@ -260,6 +529,9 @@ class _GameUIState extends State<GameUI> {
       // ItemBagの変更を監視
       widget.game.itemBag.addListener(_onItemBagChanged);
       _onItemBagChanged(); // 初期化時にも実行
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _syncHudShakeFromStress();
+      });
     }
   }
 
@@ -283,11 +555,22 @@ class _GameUIState extends State<GameUI> {
 
   void _onScaleUpdate(ScaleUpdateDetails details) {
     if (!_isPlayerInitialized) return;
-    if (details.scale != 1.0) {
+    // ピンチ時のみズーム（わずかな数値ゆれでパンと両立しないよう閾値を挟む）
+    const zoomNoise = 0.02;
+    if ((details.scale - 1.0).abs() > zoomNoise) {
       final newZoom = _startZoomDrag * details.scale;
       widget.game.camera.viewfinder.zoom = newZoom.clamp(
         widget.game.minZoomToFit,
         widget.game.maxZoomToFit,
+      );
+      return;
+    }
+    // 右半分の一本指ドラッグ → カメラ手動パン（[CameraController.addManualPanFromScreenDelta]）
+    if (details.localFocalPoint.dx >= widget.screenSize.width * 0.5) {
+      final z = widget.game.camera.viewfinder.zoom;
+      widget.game.cameraController.addManualPanFromScreenDelta(
+        Vector2(-details.focalPointDelta.dx, -details.focalPointDelta.dy),
+        z,
       );
     }
   }
@@ -314,11 +597,43 @@ class _GameUIState extends State<GameUI> {
           ),
         ),
         if (_isPlayerInitialized) ...[
-          _buildStatusDisplay(fontSize),
+          AnimatedBuilder(
+            animation: Listenable.merge([
+              widget.game.player.stressNotifier,
+              _hudShakeController,
+            ]),
+            builder: (context, _) {
+              return Transform.translate(
+                offset: _computeHudShakeOffset(),
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [_buildStatusDisplay(fontSize)],
+                ),
+              );
+            },
+          ),
           _buildDirectionalButtons(),
           _buildActionButtons(fontSize), // アクションボタン
           _buildTopRightButtons(fontSize), // ポーズボタンとアイテムバッグボタンをグループ化
           _buildAchievementNotification(fontSize), // アチーブメント通知
+          if (_cargoFlySpecs.isNotEmpty)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    for (final spec in _cargoFlySpecs)
+                      _CargoHudFlyingOrb(
+                        key: spec.key,
+                        start: spec.start,
+                        end: spec.end,
+                        color: spec.color,
+                        onComplete: () => _removeCargoFlySpec(spec),
+                      ),
+                  ],
+                ),
+              ),
+            ),
         ],
       ],
     );
@@ -335,7 +650,7 @@ class _GameUIState extends State<GameUI> {
           builder: (context, child) {
             final title = widget.game.gameRuntimeState.lastUnlockedAchievement;
             if (title == null) return const SizedBox.shrink();
-            
+
             return Container(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
               decoration: BoxDecoration(
@@ -343,7 +658,10 @@ class _GameUIState extends State<GameUI> {
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(color: Colors.amber, width: 2),
                 boxShadow: [
-                  BoxShadow(color: Colors.amberAccent.withOpacity(0.5), blurRadius: 10)
+                  BoxShadow(
+                    color: Colors.amberAccent.withOpacity(0.5),
+                    blurRadius: 10,
+                  ),
                 ],
               ),
               child: Row(
@@ -357,7 +675,7 @@ class _GameUIState extends State<GameUI> {
                       color: Colors.white,
                       fontSize: fontSize,
                       fontWeight: FontWeight.bold,
-                      fontFamily: 'TRS-Million-Rg',
+                      fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
                     ),
                   ),
                 ],
@@ -369,100 +687,192 @@ class _GameUIState extends State<GameUI> {
     );
   }
 
+  /// ステータスHUD左列の各ブロック外周パディング（[_buildWillCoreHud] と同一規則）。
+  EdgeInsets _statusHudBlockPadding(double fontSize) {
+    final bool isMobile =
+        widget.screenSize.width < 600 || widget.screenSize.height < 500;
+    final padX = (fontSize * 0.35).clamp(4.0, 10.0);
+    return EdgeInsets.fromLTRB(padX, isMobile ? 4 : 6, padX, isMobile ? 4 : 6);
+  }
+
   Widget _buildStatusDisplay(double fontSize) {
-    final bool isMobile = widget.screenSize.width < 600 || widget.screenSize.height < 500;
+    final bool isMobile =
+        widget.screenSize.width < 600 || widget.screenSize.height < 500;
     final double effectiveFontSize = isMobile ? 12.0 : 16.0;
+    final double sectionGap = isMobile ? 2.0 : 4.0;
+    final double sw = widget.screenSize.width;
+    final double baseW = sw * (isMobile ? 0.45 : 0.3);
+    final double leftW = baseW * 0.7;
+    final double cargoW = baseW * 0.5;
+    final double hColGap = isMobile ? 4.0 : 6.0;
 
     return Positioned(
       top: widget.screenSize.height * 0.02,
-      left: widget.screenSize.width * 0.02,
-      width: widget.screenSize.width * (isMobile ? 0.45 : 0.3), // 幅をコンパクトに
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxHeight: widget.screenSize.height * 0.45,
+      left: sw * 0.02,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: leftW,
+            child: ConstrainedBox(
+              key: _statusHudKey,
+              constraints: BoxConstraints(
+                maxHeight: widget.screenSize.height * 0.45,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildWillCoreHud(effectiveFontSize),
+                    SizedBox(height: sectionGap),
+                    _buildHpBarContent(effectiveFontSize),
+                    SizedBox(height: sectionGap),
+                    _buildDigitalClockContent(effectiveFontSize),
+                    SizedBox(height: sectionGap),
+                    _buildCommunicationWindow(effectiveFontSize),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          SizedBox(width: hColGap),
+          SizedBox(
+            width: cargoW,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildCargoHudBlock(effectiveFontSize),
+                SizedBox(height: sectionGap),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    _buildPointsContent(effectiveFontSize),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _willCorePip(Color shellColor, double w, double h, double fill) {
+    return SizedBox(
+      width: w,
+      height: h,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: shellColor, width: 1.1),
+          color: const Color(0xFF120c08).withValues(alpha: 0.9),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _buildHpBarContent(effectiveFontSize),
-            const SizedBox(height: 4),
-            _buildDigitalClockContent(effectiveFontSize),
-            const SizedBox(height: 4),
-            _buildPointsContent(effectiveFontSize),
-            const SizedBox(height: 4),
-            _buildAttributePips(effectiveFontSize),
-            const SizedBox(height: 4),
-            _buildCalibrationDisplay(effectiveFontSize),
-            const SizedBox(height: 4),
-            _buildUndergroundHint(effectiveFontSize),
-            const SizedBox(height: 4),
-            _buildCommunicationWindow(effectiveFontSize),
-          ],
+        child: Padding(
+          padding: const EdgeInsets.all(2),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(2),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: FractionallySizedBox(
+                widthFactor: fill,
+                heightFactor: 1,
+                child: const DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Color(0xFFe65100), Color(0xFFffc947)],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildUndergroundHint(double fontSize) {
-    return ValueListenableBuilder<bool>(
-      valueListenable: widget.game.player.inUnderGroundNotifier,
-      builder: (context, inUnderground, child) {
-        if (!inUnderground) return const SizedBox.shrink();
-        
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-          decoration: BoxDecoration(
-            color: Colors.green.withOpacity(0.2),
-            borderRadius: BorderRadius.circular(4),
-            border: Border.all(color: Colors.greenAccent.withOpacity(0.5), width: 0.5),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.security, size: fontSize * 0.8, color: Colors.greenAccent),
-              const SizedBox(width: 4),
-              Text(
-                'STATUS: RAW_DATA_ACCESS (SANCTUARY)',
-                style: TextStyle(
-                  color: Colors.greenAccent,
-                  fontSize: fontSize * 0.6,
-                  fontFamily: 'TRS-Million-Rg',
-                  letterSpacing: 1.0,
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
+  /// 意志の核（カウント可能な単位ピップ）。HP ブロックの直上。
+  Widget _buildWillCoreHud(double fontSize) {
+    final shellColor = const Color(0xFFb8860b).withValues(alpha: 0.75);
+    const unit = GameRuntimeState.willCoreUnit;
+    final bool isMobile =
+        widget.screenSize.width < 600 || widget.screenSize.height < 500;
 
-  Widget _buildCalibrationDisplay(double fontSize) {
     return AnimatedBuilder(
       animation: widget.game.gameRuntimeState,
       builder: (context, child) {
         final state = widget.game.gameRuntimeState;
-        if (state.scenarioCount <= 1) return const SizedBox.shrink();
-        
+        final maxSlots = math.max(1, (state.maxWillCoreValue / unit).ceil());
+        final blockPad = _statusHudBlockPadding(fontSize);
+        final padX = blockPad.left;
+        final pipW = math.max(14.0, fontSize * 0.62);
+        final pipH = math.max(10.0, fontSize * 0.46);
+        final gap = (fontSize * 0.22).clamp(3.0, 7.0);
+
+        final pips = <Widget>[];
+        for (var i = 0; i < maxSlots; i++) {
+          final slotFill = ((state.currentWillpower - i * unit) / unit).clamp(
+            0.0,
+            1.0,
+          );
+          pips.add(_willCorePip(shellColor, pipW, pipH, slotFill));
+          if (i < maxSlots - 1) {
+            pips.add(SizedBox(width: gap));
+          }
+        }
+
+        final curCores = state.currentWillpower / unit;
+        final maxCores = state.maxWillCoreValue / unit;
+
         return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          padding: blockPad,
           decoration: BoxDecoration(
-            color: Colors.blueGrey.withOpacity(0.3),
-            borderRadius: BorderRadius.circular(4),
+            color: const Color(0xFF0f0b06).withValues(alpha: 0.92),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: const Color(0xFF5d4037).withValues(alpha: 0.65),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFFffb300).withValues(alpha: 0.12),
+                blurRadius: 8,
+              ),
+            ],
           ),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.tune, size: fontSize * 0.8, color: Colors.white70),
-              const SizedBox(width: 4),
-              Text(
-                'CALIBRATED: ${(state.speedCalibrationScale * 100).toInt()}%',
-                style: TextStyle(
-                  color: Colors.white70,
-                  fontSize: fontSize * 0.7,
-                  fontFamily: 'monospace',
-                ),
+              Row(
+                children: [
+                  Icon(
+                    Icons.brightness_5_outlined,
+                    size: fontSize * 0.85,
+                    color: const Color(0xFFffcc80),
+                  ),
+                  SizedBox(width: padX * 0.6),
+                  Expanded(
+                    child: Text(
+                      '意志力（${curCores.toStringAsFixed(1)} / ${maxCores.toStringAsFixed(1)} 核）',
+                      style: TextStyle(
+                        color: const Color(0xFFffe0b2),
+                        fontSize: fontSize * 0.68,
+                        fontWeight: FontWeight.bold,
+                        fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+                        letterSpacing: 0.4,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+              SizedBox(height: isMobile ? fontSize * 0.18 : fontSize * 0.24),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(mainAxisSize: MainAxisSize.min, children: pips),
               ),
             ],
           ),
@@ -471,136 +881,236 @@ class _GameUIState extends State<GameUI> {
     );
   }
 
-  Widget _buildAttributePips(double fontSize) {
-    return AnimatedBuilder(
-      animation: Listenable.merge([widget.game.gameRuntimeState, GameUI.attributePulseNotifier]),
-      builder: (context, child) {
-        final scores = widget.game.gameRuntimeState.attributeScores;
-        final currentAttr = widget.game.missionManager.getCurrentAttribute();
-        final pulseAttr = GameUI.attributePulseNotifier.value;
-        
-        return Row(
+  /// カーゴ残滓ゲージと射出操作を一塊にしたブロック。
+  Widget _buildCargoHudBlock(double fontSize) {
+    const edge = Color(0xFF006064);
+    final bool isMobile =
+        widget.screenSize.width < 600 || widget.screenSize.height < 500;
+    final pad = _statusHudBlockPadding(fontSize);
+    final headerGap = pad.left * 0.75;
+    const double btnHeightScale = 1.5;
+    final btnIconSize =
+        (isMobile ? fontSize * 0.72 : fontSize * 0.85) * btnHeightScale;
+    final btnLabelSize = isMobile ? fontSize * 0.56 : fontSize * 0.65;
+    final btnPadH = isMobile ? fontSize * 0.38 : fontSize * 0.5;
+    final btnPadV =
+        (isMobile ? fontSize * 0.16 : fontSize * 0.22) * btnHeightScale;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF061416).withValues(alpha: 0.9),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: edge.withValues(alpha: 0.55), width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.cyanAccent.withValues(alpha: 0.06),
+            blurRadius: 6,
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: pad,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            _buildPip(GameRuntimeState.routeViolence, Colors.redAccent, scores[GameRuntimeState.routeViolence] ?? 0, currentAttr == GameRuntimeState.routeViolence, pulseAttr == GameRuntimeState.routeViolence),
-            const SizedBox(width: 4),
-            _buildPip(GameRuntimeState.routeEfficiency, Colors.blueAccent, scores[GameRuntimeState.routeEfficiency] ?? 0, currentAttr == GameRuntimeState.routeEfficiency, pulseAttr == GameRuntimeState.routeEfficiency),
-            const SizedBox(width: 4),
-            _buildPip(GameRuntimeState.routeEmpathy, Colors.orange, scores[GameRuntimeState.routeEmpathy] ?? 0, currentAttr == GameRuntimeState.routeEmpathy, pulseAttr == GameRuntimeState.routeEmpathy),
-            const SizedBox(width: 4),
-            _buildPip(GameRuntimeState.routePhilosophy, Colors.greenAccent, scores[GameRuntimeState.routePhilosophy] ?? 0, currentAttr == GameRuntimeState.routePhilosophy, pulseAttr == GameRuntimeState.routePhilosophy),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.pie_chart_outline,
+                  size: fontSize * 0.8,
+                  color: Colors.cyanAccent.shade100,
+                ),
+                SizedBox(width: headerGap),
+                Expanded(
+                  child: Text(
+                    'カーゴ残滓',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: fontSize * 0.68,
+                      fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+                      fontWeight: FontWeight.w600,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: isMobile ? 3 : 4),
+            _buildCargoRatioBar(fontSize),
+            SizedBox(height: isMobile ? 4 : 6),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                AnimatedBuilder(
+                  animation: widget.game.gameRuntimeState,
+                  builder: (context, _) {
+                    final rs = widget.game.gameRuntimeState;
+                    final canLaunch =
+                        !rs.isCargoLaunched && rs.totalCargoCount > 0;
+                    return FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.center,
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: canLaunch
+                              ? Colors.cyanAccent
+                              : edge.withValues(alpha: 0.65),
+                          foregroundColor:
+                              canLaunch ? edge : Colors.cyanAccent,
+                          elevation: 2,
+                          shadowColor: Colors.cyanAccent.withValues(alpha: 0.22),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: btnPadH,
+                            vertical: btnPadV,
+                          ),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          side: BorderSide(
+                            color: canLaunch
+                                ? edge.withValues(alpha: 0.85)
+                                : Colors.cyanAccent.withValues(alpha: 0.45),
+                            width: 1,
+                          ),
+                        ),
+                        onPressed: () {
+                          widget.game.player.cargoTerminal?.showCargoDialog();
+                        },
+                        icon: Icon(Icons.rocket_launch_outlined, size: btnIconSize),
+                        label: Text(
+                          'この星から射出',
+                          style: TextStyle(
+                            fontSize: btnLabelSize,
+                            fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
           ],
-        );
-      },
-    );
-  }
-
-  Widget _buildPip(String attr, Color color, double score, bool isActive, bool isPulsing) {
-    final double size = isPulsing ? 14.0 : (isActive ? 10.0 : 6.0);
-    final double opacity = isPulsing ? 1.0 : (score > 0 ? (isActive ? 1.0 : 0.5) : 0.1);
-    
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 100),
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        color: color.withOpacity(opacity),
-        shape: BoxShape.circle,
-        boxShadow: (isActive || isPulsing) ? [
-          BoxShadow(color: color.withOpacity(0.5), blurRadius: isPulsing ? 8 : 4, spreadRadius: isPulsing ? 2 : 1)
-        ] : null,
+        ),
       ),
     );
   }
 
   Widget _buildCommunicationWindow(double fontSize) {
-    final isMobile = widget.screenSize.width < 600 || widget.screenSize.height < 500;
+    final isMobile =
+        widget.screenSize.width < 600 || widget.screenSize.height < 500;
     final double responsiveFontSize = isMobile ? fontSize * 0.8 : fontSize;
     final double windowWidthScale = isMobile ? 0.7 : 0.4;
-    
+
     return AnimatedBuilder(
-      animation: Listenable.merge([widget.game.gameRuntimeState, GameUI.missionGlitchNotifier]),
+      animation: widget.game.gameRuntimeState,
       builder: (context, child) {
         final state = widget.game.gameRuntimeState;
         final mission = state.currentMission;
         if (mission == null || mission.isEmpty) return const SizedBox.shrink();
 
-        final MissionStyle style = widget.game.missionManager.getMissionStyle();
-        
-        // グリッチ演出用のオフセット
-        final glitchValue = GameUI.missionGlitchNotifier.value;
-        final double noise = glitchValue > 0 ? (glitchValue.toDouble() * style.noiseIntensity) : 0;
-        final double offsetX = noise > 0 ? (glitchValue % 2 == 0 ? noise : -noise) : 0;
-        final double offsetY = noise > 0 ? (glitchValue % 3 == 0 ? noise / 2 : -noise / 2) : 0;
+        final _MissionHudStyle style = _MissionHudStyle.fromMissionText(
+          mission,
+        );
 
         // 日本語の改行を助けるためにゼロ幅スペースを挿入
-        final String rawText = glitchValue > 15 ? "SYSTEM_ERROR" : mission;
-        final String missionText = rawText.split('').join('\u{200B}');
-        
-        return Transform.translate(
-          offset: Offset(offsetX, offsetY),
-          child: Container(
-            constraints: BoxConstraints(maxWidth: widget.screenSize.width * windowWidthScale),
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            decoration: BoxDecoration(
-              color: style.bgColor.withOpacity(0.8),
-              borderRadius: BorderRadius.circular(style.isOperator ? 12 : 2),
-              border: Border.all(
-                color: (glitchValue > 0 && style.hasGlitch) ? Colors.red : (style.isOperator ? Colors.white70 : Colors.white), 
-                width: (glitchValue > 0 && style.hasGlitch) ? 2 : (style.isOperator ? 1.5 : 1)
-              ),
-              boxShadow: style.hasGlitch ? [
-                BoxShadow(color: style.bgColor.withOpacity(0.5), blurRadius: 4, spreadRadius: 1)
-              ] : (style.isOperator ? [
-                BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 4, offset: const Offset(2, 2))
-              ] : null),
+        final String missionText = mission.split('').join('\u{200B}');
+        final blockPad = _statusHudBlockPadding(fontSize);
+        final iconTrailGap = blockPad.left * 0.75;
+
+        return Container(
+          constraints: BoxConstraints(
+            maxWidth: widget.screenSize.width * windowWidthScale,
+          ),
+          padding: blockPad,
+          decoration: BoxDecoration(
+            color: style.bgColor.withOpacity(0.8),
+            borderRadius: BorderRadius.circular(style.isOperator ? 12 : 2),
+            border: Border.all(
+              color: style.isOperator ? Colors.white70 : Colors.white,
+              width: style.isOperator ? 1.5 : 1,
             ),
-            child: Stack(
-              children: [
-                // 走査線エフェクト (地上かつ非オペレーター時のみ)
-                if (!style.isOperator && !widget.game.player.inUnderGround)
-                  Positioned.fill(child: _ScanningLineEffect(erosionLevel: widget.game.missionManager.getErosionRate())),
-                
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    // アイコンの表示
-                    Container(
-                      width: responsiveFontSize * 2.2,
-                      height: responsiveFontSize * 2.2,
-                      margin: const EdgeInsets.only(right: 6),
-                      decoration: BoxDecoration(
-                        color: style.isOperator ? Colors.white.withOpacity(0.8) : Colors.black.withOpacity(0.3),
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white, width: 1),
+            boxShadow:
+                style.hasTerminalShadow
+                    ? [
+                      BoxShadow(
+                        color: style.bgColor.withOpacity(0.5),
+                        blurRadius: 4,
+                        spreadRadius: 1,
                       ),
-                      child: ClipOval(
-                        child: Image.asset(
-                          'assets/images/${style.iconPath}',
-                          errorBuilder: (context, error, stackTrace) => 
-                            Icon(style.isOperator ? Icons.face : Icons.terminal, size: responsiveFontSize * 1.5, color: Colors.white70),
-                        ),
-                      ),
-                    ),
-                    Expanded(
-                      child: Text(
-                        missionText,
-                        style: TextStyle(
-                          fontSize: responsiveFontSize * style.fontSizeScale,
-                          fontWeight: FontWeight.bold,
-                          color: style.color,
-                          fontFamily: 'TRS-Million-Rg',
-                          height: 1.1,
-                          decoration: TextDecoration.none,
-                        ),
-                        softWrap: true,
-                      ),
-                    ),
-                  ],
+                    ]
+                    : (style.isOperator
+                        ? [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.2),
+                            blurRadius: 4,
+                            offset: const Offset(2, 2),
+                          ),
+                        ]
+                        : null),
+          ),
+          child: Stack(
+            children: [
+              // 走査線エフェクト (地上かつ非オペレーター時のみ)
+              if (!style.isOperator && !widget.game.player.inUnderGround)
+                Positioned.fill(
+                  child: _ScanningLineEffect(
+                    erosionLevel: _missionHudErosionRate(widget.game.player),
+                  ),
                 ),
-              ],
-            ),
+
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  // アイコンの表示
+                  Container(
+                    width: responsiveFontSize * 2.2,
+                    height: responsiveFontSize * 2.2,
+                    margin: EdgeInsets.only(right: iconTrailGap),
+                    decoration: BoxDecoration(
+                      color:
+                          style.isOperator
+                              ? Colors.white.withOpacity(0.8)
+                              : Colors.black.withOpacity(0.3),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 1),
+                    ),
+                    child: ClipOval(
+                      child: Image.asset(
+                        'assets/images/${style.iconPath}',
+                        errorBuilder:
+                            (context, error, stackTrace) => Icon(
+                              style.isOperator ? Icons.face : Icons.terminal,
+                              size: responsiveFontSize * 1.5,
+                              color: Colors.white70,
+                            ),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(
+                      missionText,
+                      style: TextStyle(
+                        fontSize: responsiveFontSize * style.fontSizeScale,
+                        fontWeight: FontWeight.bold,
+                        color: style.color,
+                        fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+                        height: 1.1,
+                        decoration: TextDecoration.none,
+                      ),
+                      softWrap: true,
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
         );
       },
@@ -615,14 +1125,18 @@ class _GameUIState extends State<GameUI> {
     return Positioned(
       left: widget.screenSize.width * 0.05,
       bottom: widget.screenSize.height * 0.05,
-      child: GestureDetector(
+      // GestureDetector の Tap と Pan が同一 Arena で競合すると onTap/onTapDown が
+      // ~300ms 付近まで遅延することがあるため、確実に接触と同時に反応させるために Listener を使う。
+      child: Listener(
         behavior: HitTestBehavior.opaque,
-        onTapDown: (details) => _handleDpadTouch(details.localPosition, dpadSize),
-        onTapUp: (_) => _resetDpadStates(), // タップを離した時にリセット
-        onTapCancel: () => _resetDpadStates(), // タップがキャンセルされた時にリセット
-        onPanStart: (details) => _handleDpadTouch(details.localPosition, dpadSize),
-        onPanUpdate: (details) => _handleDpadTouch(details.localPosition, dpadSize),
-        onPanEnd: (_) => _resetDpadStates(),
+        onPointerDown:
+            (e) =>
+                _handleDpadTouch(e.localPosition, dpadSize),
+        onPointerMove:
+            (e) =>
+                _handleDpadTouch(e.localPosition, dpadSize),
+        onPointerUp: (_) => _resetDpadStates(),
+        onPointerCancel: (_) => _resetDpadStates(),
         child: Container(
           width: dpadSize,
           height: dpadSize,
@@ -633,48 +1147,56 @@ class _GameUIState extends State<GameUI> {
           child: Stack(
             alignment: Alignment.center,
             children: [
-              // Up
+              // Up（描画のみ。入力は親の Listener が即時に処理する）
               Positioned(
                 top: 0,
-                child: DirectionButton(
-                  icon: Icons.arrow_circle_up_outlined,
-                  onPressed: (_) {}, // GestureDetectorで処理するため空
-                  stateNotifier: GameUI._upButtonStateNotifier,
-                  buttonSize: buttonSize,
-                  iconSize: iconSize,
+                child: IgnorePointer(
+                  child: DirectionButton(
+                    icon: Icons.arrow_circle_up_outlined,
+                    onPressed: (_) {}, // 親で処理
+                    stateNotifier: GameUI._upButtonStateNotifier,
+                    buttonSize: buttonSize,
+                    iconSize: iconSize,
+                  ),
                 ),
               ),
               // Down
               Positioned(
                 bottom: 0,
-                child: DirectionButton(
-                  icon: Icons.arrow_circle_down_outlined,
-                  onPressed: (_) {},
-                  stateNotifier: GameUI._downButtonStateNotifier,
-                  buttonSize: buttonSize,
-                  iconSize: iconSize,
+                child: IgnorePointer(
+                  child: DirectionButton(
+                    icon: Icons.arrow_circle_down_outlined,
+                    onPressed: (_) {},
+                    stateNotifier: GameUI._downButtonStateNotifier,
+                    buttonSize: buttonSize,
+                    iconSize: iconSize,
+                  ),
                 ),
               ),
               // Left
               Positioned(
                 left: 0,
-                child: DirectionButton(
-                  icon: Icons.arrow_circle_left_outlined,
-                  onPressed: (_) {},
-                  stateNotifier: GameUI._leftButtonStateNotifier,
-                  buttonSize: buttonSize,
-                  iconSize: iconSize,
+                child: IgnorePointer(
+                  child: DirectionButton(
+                    icon: Icons.arrow_circle_left_outlined,
+                    onPressed: (_) {},
+                    stateNotifier: GameUI._leftButtonStateNotifier,
+                    buttonSize: buttonSize,
+                    iconSize: iconSize,
+                  ),
                 ),
               ),
               // Right
               Positioned(
                 right: 0,
-                child: DirectionButton(
-                  icon: Icons.arrow_circle_right_outlined,
-                  onPressed: (_) {},
-                  stateNotifier: GameUI._rightButtonStateNotifier,
-                  buttonSize: buttonSize,
-                  iconSize: iconSize,
+                child: IgnorePointer(
+                  child: DirectionButton(
+                    icon: Icons.arrow_circle_right_outlined,
+                    onPressed: (_) {},
+                    stateNotifier: GameUI._rightButtonStateNotifier,
+                    buttonSize: buttonSize,
+                    iconSize: iconSize,
+                  ),
                 ),
               ),
             ],
@@ -737,7 +1259,8 @@ class _GameUIState extends State<GameUI> {
     if (GameUI._leftButtonStateNotifier.value == DirectionButtonState.pressed) {
       GameUI._leftButtonStateNotifier.value = DirectionButtonState.normal;
     }
-    if (GameUI._rightButtonStateNotifier.value == DirectionButtonState.pressed) {
+    if (GameUI._rightButtonStateNotifier.value ==
+        DirectionButtonState.pressed) {
       GameUI._rightButtonStateNotifier.value = DirectionButtonState.normal;
     }
     // _updateUpButtonStateなどはPlayer側で定期的に呼ばれるか、listenerで同期される
@@ -746,6 +1269,8 @@ class _GameUIState extends State<GameUI> {
   Widget _buildActionButtons(double fontSize) {
     final buttonSize = widget.screenSize.width * 0.07;
     final iconSize = widget.screenSize.width * 0.05;
+    final actionHGapW = widget.screenSize.width * 0.03;
+    final actionRowGapH = widget.screenSize.width * 0.02;
 
     return Positioned(
       right: widget.screenSize.width * 0.05,
@@ -754,80 +1279,98 @@ class _GameUIState extends State<GameUI> {
         valueListenable: widget.game.player.isCarryingItemNotifier,
         builder: (context, isCarrying, child) {
           if (isCarrying) {
-            return _buildCarryingActionButtons(buttonSize, iconSize);
+            return _buildCarryingActionButtons(
+              buttonSize,
+              iconSize,
+              actionHGapW,
+              actionRowGapH,
+            );
           } else {
-            return Row(
+            return Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                // Equipped Item Use Button
-                ValueListenableBuilder<String?>(
-                  valueListenable: GameUI._equippedItemNameNotifier,
-                  builder: (context, itemName, child) {
-                    if (itemName == null) return const SizedBox.shrink();
-                    final item = widget.game.itemBag.items[itemName];
-                    if (item == null) return const SizedBox.shrink();
-                    return AnimatedBuilder(
-                      animation: widget.game.itemBag,
-                      builder: (context, child) {
-                        final count = widget.game.itemBag.getItemCount(itemName);
-                        return Row(
-                          children: [
-                            ActionButton(
-                              imagePath: item.spritePath,
-                              badgeCount: count,
-                              onPressed: () {
-                                item.onUse(widget.game.player);
-                                if (item.type != ItemType.tool) {
-                                  widget.game.itemBag.removeItem(itemName);
-                                }
-                              },
-                              stateNotifier:
-                                  GameUI._equippedItemUseButtonStateNotifier,
-                              buttonSize: buttonSize,
-                              iconSize: iconSize,
-                            ),
-                            SizedBox(width: widget.screenSize.width * 0.03),
-                          ],
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ValueListenableBuilder<(VoidCallback, IconData)?>(
+                      valueListenable: GameUI.interactActionNotifier,
+                      builder: (context, interaction, child) {
+                        return ActionButton(
+                          icon: interaction?.$2,
+                          onPressed: interaction?.$1,
+                          stateNotifier: GameUI._interactButtonStateNotifier,
+                          iconNotifier: GameUI._interactButtonIconNotifier,
+                          buttonSize: buttonSize,
+                          iconSize: iconSize,
                         );
                       },
-                    );
-                  },
-                ),
-                // Dig Button
-                ActionButton(
-                  icon: Icons.keyboard_double_arrow_down_sharp,
-                  onTogglePressed: (isPressed) {
-                    widget.game.player.toggleDigging(isPressed);
-                  },
-                  stateNotifier: GameUI._digButtonStateNotifier,
-                  buttonSize: buttonSize,
-                  iconSize: iconSize,
-                ),
-                SizedBox(width: widget.screenSize.width * 0.03),
-                // Interact Button
-                ValueListenableBuilder<(VoidCallback, IconData)?>(
-                  valueListenable: GameUI.interactActionNotifier,
-                  builder: (context, interaction, child) {
-                    return ActionButton(
-                      icon: interaction?.$2,
-                      onPressed: interaction?.$1,
-                      stateNotifier: GameUI._interactButtonStateNotifier,
-                      iconNotifier: GameUI._interactButtonIconNotifier,
+                    ),
+                    SizedBox(width: actionHGapW),
+                    ActionButton(
+                      icon: Icons.keyboard_double_arrow_up,
+                      onTogglePressed: (isPressed) {
+                        widget.onPressedJumpButton(isPressed);
+                      },
+                      stateNotifier: GameUI._jumpButtonStateNotifier,
                       buttonSize: buttonSize,
                       iconSize: iconSize,
-                    );
-                  },
+                    ),
+                  ],
                 ),
-                SizedBox(width: widget.screenSize.width * 0.03),
-                // Jump Button
-                ActionButton(
-                  icon: Icons.keyboard_double_arrow_up,
-                  onTogglePressed: (isPressed) {
-                    widget.onPressedJumpButton(isPressed);
-                  },
-                  stateNotifier: GameUI._jumpButtonStateNotifier,
-                  buttonSize: buttonSize,
-                  iconSize: iconSize,
+                SizedBox(height: actionRowGapH),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ValueListenableBuilder<String?>(
+                      valueListenable: GameUI._equippedItemNameNotifier,
+                      builder: (context, itemName, child) {
+                        if (itemName == null) {
+                          return const SizedBox.shrink();
+                        }
+                        final item = widget.game.itemBag.items[itemName];
+                        if (item == null) return const SizedBox.shrink();
+                        return AnimatedBuilder(
+                          animation: widget.game.itemBag,
+                          builder: (context, child) {
+                            final count = widget.game.itemBag.getItemCount(
+                              itemName,
+                            );
+                            return Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                ActionButton(
+                                  imagePath: item.spritePath,
+                                  badgeCount: count,
+                                  onPressed: () {
+                                    item.onUse(widget.game.player);
+                                    if (item.type != ItemType.tool) {
+                                      widget.game.itemBag.removeItem(itemName);
+                                    }
+                                  },
+                                  stateNotifier:
+                                      GameUI
+                                          ._equippedItemUseButtonStateNotifier,
+                                  buttonSize: buttonSize,
+                                  iconSize: iconSize,
+                                ),
+                                SizedBox(width: actionHGapW),
+                              ],
+                            );
+                          },
+                        );
+                      },
+                    ),
+                    ActionButton(
+                      icon: Icons.keyboard_double_arrow_down_sharp,
+                      onTogglePressed: (isPressed) {
+                        widget.game.player.toggleDigging(isPressed);
+                      },
+                      stateNotifier: GameUI._digButtonStateNotifier,
+                      buttonSize: buttonSize,
+                      iconSize: iconSize,
+                    ),
+                  ],
                 ),
               ],
             );
@@ -838,206 +1381,377 @@ class _GameUIState extends State<GameUI> {
   }
 
   // 運搬モード時のアクションボタン
-  Widget _buildCarryingActionButtons(double buttonSize, double iconSize) {
-    return Row(
+  Widget _buildCarryingActionButtons(
+    double buttonSize,
+    double iconSize,
+    double actionHGapW,
+    double actionRowGapH,
+  ) {
+    return Column(
       mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        // 収納ボタン
-        ActionButton(
-          icon: Icons.backpack_outlined,
-          onPressed: () {
-            if (widget.game.player.carriedItem != null) {
-              final carriedItem = widget.game.player.carriedItem!;
-              widget.game.player.itemBag.addItem(carriedItem);
-              widget.game.player.stopCarrying();
-            }
-          },
-          stateNotifier: GameUI._storeButtonStateNotifier,
-          buttonSize: buttonSize,
-          iconSize: iconSize,
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ActionButton(
+              icon: Icons.keyboard_double_arrow_up,
+              onTogglePressed: (isPressed) {
+                widget.onPressedJumpButton(isPressed);
+              },
+              stateNotifier: GameUI._jumpButtonStateNotifier,
+              buttonSize: buttonSize,
+              iconSize: iconSize,
+            ),
+          ],
         ),
-        SizedBox(width: widget.screenSize.width * 0.06),
-        // 配置ボタン
-        ActionButton(
-          icon: widget.game.player.iscrouching
-                  ? Icons.place_outlined
-                  : Icons.arrow_forward_outlined,
-          onPressed: () {
-            if (widget.game.player.carriedItem != null) {
-              final carriedItem = widget.game.player.carriedItem!;
-              final player = widget.game.player;
-              // プレイヤーの移動速度（velocity.x）が一定以上なら投げる、そうでなければ置く
-              player.velocity.x.abs() > 10.0
-                  ? player.throwWorldObject(carriedItem)
-                  : player.placeWorldObject(carriedItem);
-            }
-          },
-          stateNotifier: GameUI._placeButtonStateNotifier,
-          buttonSize: buttonSize,
-          iconSize: iconSize,
-        ),
-        SizedBox(width: widget.screenSize.width * 0.03),
-        // Jump Button
-        ActionButton(
-          icon: Icons.keyboard_double_arrow_up,
-          onTogglePressed: (isPressed) {
-            widget.onPressedJumpButton(isPressed);
-          },
-          stateNotifier: GameUI._jumpButtonStateNotifier,
-          buttonSize: buttonSize,
-          iconSize: iconSize,
+        SizedBox(height: actionRowGapH),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ActionButton(
+              icon: Icons.backpack_outlined,
+              onPressed: () {
+                if (widget.game.player.carriedItem != null) {
+                  final carriedItem = widget.game.player.carriedItem!;
+                  widget.game.player.itemBag.addItem(carriedItem);
+                  widget.game.player.stopCarrying();
+                }
+              },
+              stateNotifier: GameUI._storeButtonStateNotifier,
+              buttonSize: buttonSize,
+              iconSize: iconSize,
+            ),
+            SizedBox(width: actionHGapW),
+            ActionButton(
+              icon:
+                  widget.game.player.iscrouching
+                      ? Icons.place_outlined
+                      : Icons.arrow_forward_outlined,
+              onPressed: () {
+                if (widget.game.player.carriedItem != null) {
+                  final carriedItem = widget.game.player.carriedItem!;
+                  final player = widget.game.player;
+                  player.velocity.x.abs() > 10.0
+                      ? player.throwWorldObject(carriedItem)
+                      : player.placeWorldObject(carriedItem);
+                }
+              },
+              stateNotifier: GameUI._placeButtonStateNotifier,
+              buttonSize: buttonSize,
+              iconSize: iconSize,
+            ),
+            SizedBox(width: buttonSize),
+          ],
         ),
       ],
     );
   }
 
-  Widget _buildHpBarContent(double fontSize) {
-    return Container(
-      height: 60, // 高さを固定してレイアウトを安定させる
-      padding: EdgeInsets.fromLTRB(
-        widget.screenSize.width * 0.01,
-        widget.screenSize.height * 0.01,
-        widget.screenSize.width * 0.01,
-        widget.screenSize.height * 0.005,
-      ),
-      decoration: BoxDecoration(
-        color: Colors.grey[300],
-        borderRadius: BorderRadius.circular(5),
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+  /// §7 — 三種残滓の比率バー（赤＝生命・青＝歴史・灰＝無機）。残滓ゼロ時は空トラック。
+  /// ラベルは [_buildCargoHudBlock] 側。
+  Widget _buildCargoRatioBar(double fontSize) {
+    return AnimatedBuilder(
+      animation: widget.game.gameRuntimeState,
+      builder: (context, child) {
+        final state = widget.game.gameRuntimeState;
+        final t = state.totalCargoCount;
+        final life = state.cargoLifeCount;
+        final hist = state.cargoHistoryCount;
+        final ino = state.cargoInorganicCount;
+
+        final Widget track;
+        if (t <= 0) {
+          track = Row(
             children: [
-              // HPゲージ
               Expanded(
-                flex: 1,
-                child: SizedBox(
-                  height: widget.screenSize.height * 0.01,
-                  child: ValueListenableBuilder<double>(
-                    valueListenable: widget.game.player.hpNotifier,
-                    builder: (context, currentHp, child) {
-                      return FractionallySizedBox(
-                        alignment: Alignment.centerLeft,
-                        widthFactor: currentHp / widget.game.player.maxHp,
+                child: ColoredBox(color: Colors.white.withValues(alpha: 0.08)),
+              ),
+            ],
+          );
+        } else {
+          track = Row(
+            children: [
+              if (life > 0)
+                Expanded(
+                  flex: life,
+                  child: Container(color: Colors.redAccent.shade200),
+                ),
+              if (hist > 0)
+                Expanded(
+                  flex: hist,
+                  child: Container(color: Colors.lightBlue.shade300),
+                ),
+              if (ino > 0)
+                Expanded(
+                  flex: ino,
+                  child: Container(color: Colors.blueGrey.shade500),
+                ),
+            ],
+          );
+        }
+
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: SizedBox(
+            key: _cargoRatioBarKey,
+            height: math.max(8.0, fontSize * 0.45),
+            width: double.infinity,
+            child: track,
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildHpBarContent(double fontSize) {
+    final barHeight = math.max(6.0, fontSize * 0.42);
+
+    return AnimatedBuilder(
+      animation: widget.game.gameRuntimeState,
+      builder: (context, _) {
+        final state = widget.game.gameRuntimeState;
+        final bonus = state.hpBonus * state.hpCalibrationScale;
+        final effectiveMaxIntegrity = (widget.game.player.maxIntegrity + bonus)
+            .clamp(1.0, 1e9);
+
+        final inset = _statusHudBlockPadding(fontSize);
+        final headerGap = inset.left * 0.6;
+        final chipPad = headerGap.clamp(4.0, 10.0);
+
+        Widget hudBar({
+          required Widget trackBackground,
+          required ValueListenableBuilder<double> fillBuilder,
+        }) {
+          return ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: SizedBox(
+              height: barHeight,
+              width: double.infinity,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [trackBackground, fillBuilder],
+              ),
+            ),
+          );
+        }
+
+        return Container(
+          padding: inset,
+          decoration: BoxDecoration(
+            color: const Color(0xFF0c1210),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: const Color(0xFF2e7d32).withValues(alpha: 0.55),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF1b5e20).withValues(alpha: 0.22),
+                blurRadius: 10,
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: chipPad,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF143822),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: const Color(0xFF43a047).withValues(alpha: 0.6),
+                      ),
+                    ),
+                    child: Text(
+                      'Integrity',
+                      style: TextStyle(
+                        fontSize: fontSize * 0.72,
+                        fontWeight: FontWeight.bold,
+                        fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+                        letterSpacing: 1.2,
+                        color: const Color(0xFFc8e6c9),
+                      ),
+                    ),
+                  ),
+                  SizedBox(width: headerGap),
+                  Expanded(
+                    child: ValueListenableBuilder<double>(
+                      valueListenable: widget.game.player.integrityNotifier,
+                      builder: (context, current, child) {
+                        final shown = GameRuntimeState.quantizeIntegrityHalf(
+                          current,
+                        );
+                        final maxShown = GameRuntimeState.quantizeIntegrityHalf(
+                          effectiveMaxIntegrity,
+                        );
+                        return Text(
+                          '${shown.toInt()} / ${maxShown.toInt()}',
+                          textAlign: TextAlign.right,
+                          style: TextStyle(
+                            fontSize: fontSize * 0.85,
+                            fontWeight: FontWeight.bold,
+                            fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+                            letterSpacing: 0.5,
+                            color: const Color(0xFF81c784),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              SizedBox(height: fontSize * 0.35),
+              hudBar(
+                trackBackground: const ColoredBox(color: Color(0xFF152620)),
+                fillBuilder: ValueListenableBuilder<double>(
+                  valueListenable: widget.game.player.integrityNotifier,
+                  builder: (context, current, _) {
+                    final ratio = (current / effectiveMaxIntegrity).clamp(
+                      0.0,
+                      1.0,
+                    );
+                    return Align(
+                      alignment: Alignment.centerLeft,
+                      child: FractionallySizedBox(
+                        widthFactor: ratio,
+                        heightFactor: 1,
                         child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.red,
-                            borderRadius: BorderRadius.circular(10),
+                          decoration: const BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [Color(0xFF1b5e20), Color(0xFF66bb6a)],
+                            ),
                           ),
                         ),
-                      );
-                    },
+                      ),
+                    );
+                  },
+                ),
+              ),
+              SizedBox(height: fontSize * 0.35),
+              hudBar(
+                trackBackground: const ColoredBox(color: Color(0xFF151022)),
+                fillBuilder: ValueListenableBuilder<double>(
+                  valueListenable: widget.game.player.stressNotifier,
+                  builder: (context, currentStress, _) {
+                    final cap = widget.game.player.effectiveMaxStress;
+                    final ratio =
+                        cap > 1e-9
+                            ? (currentStress / cap).clamp(0.0, 1.0)
+                            : 0.0;
+                    return Align(
+                      alignment: Alignment.centerLeft,
+                      child: FractionallySizedBox(
+                        widthFactor: ratio,
+                        heightFactor: 1,
+                        child: Container(
+                          decoration: const BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                Color.fromARGB(255, 40, 25, 95),
+                                Color.fromARGB(255, 110, 80, 210),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              SizedBox(height: fontSize * 0.28),
+              ValueListenableBuilder<double>(
+                valueListenable: widget.game.player.stressNotifier,
+                builder: (context, stress, _) {
+                  final cap = widget.game.player.effectiveMaxStress;
+                  final pct =
+                      cap > 1e-9
+                          ? ((stress / cap) * 100).clamp(0, 100).round()
+                          : 0;
+                  final high = cap > 1e-9 && stress >= cap * 0.8;
+                  return Align(
+                    alignment: Alignment.centerRight,
+                    child: Text(
+                      'Stress: $pct %',
+                      style: TextStyle(
+                        fontSize: fontSize * 0.78,
+                        fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+                        letterSpacing: 0.5,
+                        shadows:
+                            high
+                                ? [
+                                  Shadow(
+                                    color: Colors.red.withValues(alpha: 0.65),
+                                    blurRadius: 6,
+                                  ),
+                                ]
+                                : null,
+                        color:
+                            high
+                                ? Colors.redAccent.shade100
+                                : const Color.fromARGB(230, 149, 117, 222),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildDigitalClockContent(double fontSize) {
+    final blockPad = _statusHudBlockPadding(fontSize);
+    final dateTimeGap = blockPad.left * 1.2;
+    final clockFontSize = fontSize * 1.2;
+
+    return Container(
+      padding: blockPad,
+      decoration: BoxDecoration(
+        color: Colors.black87,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: AnimatedBuilder(
+        animation: widget.timeService,
+        builder: (context, child) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.start,
+            children: [
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  widget.timeService.getFormattedDay(),
+                  style: TextStyle(
+                    fontSize: clockFontSize,
+                    fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+                    letterSpacing: 5,
+                    color: Colors.greenAccent.shade700,
                   ),
                 ),
               ),
-              // ストレスゲージ
-              Expanded(
-                flex: 1,
-                child: SizedBox(
-                  height: widget.screenSize.height * 0.01,
-                  child: ValueListenableBuilder<double>(
-                    valueListenable: widget.game.player.stressNotifier,
-                    builder: (context, currentStress, child) {
-                      return FractionallySizedBox(
-                        alignment: Alignment.centerLeft,
-                        widthFactor:
-                            currentStress / widget.game.player.maxStress,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: const Color.fromARGB(122, 61, 32, 230),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                        ),
-                      );
-                    },
+              SizedBox(width: dateTimeGap),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  widget.timeService.getFormattedTime(),
+                  style: TextStyle(
+                    fontSize: clockFontSize,
+                    fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+                    letterSpacing: 5,
+                    color: Colors.greenAccent.shade700,
                   ),
-                ),
-              ),
-              // HPとStressのテキスト
-              Expanded(
-                flex: 5,
-                child: Row(
-                  children: [
-                    Container(
-                      padding: EdgeInsets.symmetric(horizontal: constraints.maxWidth * 0.03),
-                      decoration: BoxDecoration(
-                        color: Colors.red,
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        'Health',
-                        style: TextStyle(
-                          fontSize: fontSize,
-                          fontWeight: FontWeight.bold,
-                          fontFamily: 'TRS-Million-Rg',
-                          letterSpacing: 2,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                    Container(
-                      padding: EdgeInsets.symmetric(horizontal: constraints.maxWidth * 0.03),
-                      child: ValueListenableBuilder<double>(
-                        valueListenable: widget.game.player.hpNotifier,
-                        builder: (context, currentHp, child) {
-                          return Text(
-                            '${currentHp.toInt()}',
-                            style: TextStyle(
-                              fontSize: fontSize,
-                              fontWeight: FontWeight.bold,
-                              fontFamily: 'TRS-Million-Rg',
-                              letterSpacing: 2,
-                              color: Colors.red,
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(
-                flex: 5,
-                child: Row(
-                  children: [
-                    Container(
-                      padding: EdgeInsets.symmetric(horizontal: constraints.maxWidth * 0.03),
-                      decoration: BoxDecoration(
-                        color: const Color.fromARGB(122, 61, 32, 230),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        'Stress',
-                        style: TextStyle(
-                          fontSize: fontSize,
-                          fontWeight: FontWeight.bold,
-                          fontFamily: 'TRS-Million-Rg',
-                          letterSpacing: 2,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                    Container(
-                      padding: EdgeInsets.symmetric(horizontal: constraints.maxWidth * 0.03),
-                      child: ValueListenableBuilder<double>(
-                        valueListenable: widget.game.player.stressNotifier,
-                        builder: (context, currentStress, child) {
-                          return Text(
-                            '${currentStress.toInt()} / ${widget.game.player.maxStress.toInt()}',
-                            style: TextStyle(
-                              fontSize: fontSize,
-                              fontWeight: FontWeight.bold,
-                              fontFamily: 'TRS-Million-Rg',
-                              letterSpacing: 2,
-                              color: const Color.fromARGB(122, 61, 32, 230),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
                 ),
               ),
             ],
@@ -1047,146 +1761,213 @@ class _GameUIState extends State<GameUI> {
     );
   }
 
-  Widget _buildDigitalClockContent(double fontSize) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final clockFontSize = fontSize * 1.2; // fontSizeを基準にする
-        return Container(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          decoration: BoxDecoration(
-            color: Colors.black87,
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: AnimatedBuilder(
-            animation: widget.timeService,
+  Widget _buildPointsContent(double fontSize) {
+    final blockPad = _statusHudBlockPadding(fontSize);
+    final iconTextGap = blockPad.left * 0.6;
+    final groupGap = blockPad.left * 1.5;
+    final iconSize = fontSize * 1.5;
+    final pointFontSize = fontSize;
+
+    return Container(
+      padding: blockPad,
+      decoration: BoxDecoration(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          AnimatedBuilder(
+            animation: widget.game.player.currencyNotifier,
             builder: (context, child) {
               return Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Padding(
-                    padding: EdgeInsets.symmetric(horizontal: constraints.maxWidth * 0.03),
-                    child: FittedBox(
-                      child: Text(
-                        widget.timeService.getFormattedDay(),
-                        style: TextStyle(
-                          fontSize: clockFontSize,
-                          fontFamily: 'TRS-Million-Rg',
-                          letterSpacing: 5,
-                          color: Colors.greenAccent.shade700,
-                        ),
-                      ),
-                    ),
+                  Image.asset(
+                    'assets/images/money.png',
+                    width: iconSize,
+                    height: iconSize,
                   ),
-                  Padding(
-                    padding: EdgeInsets.symmetric(horizontal: constraints.maxWidth * 0.03),
-                    child: FittedBox(
-                      child: Text(
-                        widget.timeService.getFormattedTime(),
-                        style: TextStyle(
-                          fontSize: clockFontSize,
-                          fontFamily: 'TRS-Million-Rg',
-                          letterSpacing: 5,
-                          color: Colors.greenAccent.shade700,
+                  SizedBox(width: iconTextGap),
+                  Text(
+                    '${widget.game.player.currencyNotifier.value}',
+                    style: TextStyle(
+                      fontSize: pointFontSize,
+                      fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+                      letterSpacing: 5,
+                      color: Colors.white,
+                      shadows: const [
+                        Shadow(
+                          color: Colors.black,
+                          offset: Offset(1, 1),
+                          blurRadius: 1,
                         ),
-                      ),
+                      ],
                     ),
                   ),
                 ],
               );
             },
           ),
-        );
-      },
+          SizedBox(width: groupGap),
+          AnimatedBuilder(
+            animation: widget.game.player.miningPointsNotifier,
+            builder: (context, child) {
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Image.asset(
+                    'assets/images/shovel.png',
+                    width: iconSize,
+                    height: iconSize,
+                  ),
+                  SizedBox(width: iconTextGap),
+                  Text(
+                    '${widget.game.player.currentMiningPoints}',
+                    style: TextStyle(
+                      fontSize: pointFontSize,
+                      fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+                      letterSpacing: 5,
+                      color: Colors.white,
+                      shadows: const [
+                        Shadow(
+                          color: Colors.black,
+                          offset: Offset(1, 1),
+                          blurRadius: 1,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _buildPointsContent(double fontSize) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final iconSize = fontSize * 1.5;
-        final pointFontSize = fontSize;
-
-        return Container(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          decoration: BoxDecoration(
-            color: Colors.transparent,
-            borderRadius: BorderRadius.circular(10),
+  Widget _buildAutomationShopEntryButton(
+    double fontSize, {
+    double uiScale = 1.0,
+  }) {
+    return AnimatedBuilder(
+      animation: widget.game.gameRuntimeState,
+      builder: (context, _) {
+        final s = widget.game.gameRuntimeState;
+        if (!s.showAutomationShopEntryInHud) {
+          return const SizedBox.shrink();
+        }
+        final highlight = s.automationContractC2;
+        return ElevatedButton(
+          onPressed: () {
+            widget.windowManager.showWindow(
+              GameWindowType.automationShop,
+              AutomationShopWindow(
+                game: widget.game,
+                windowManager: widget.windowManager,
+              ),
+            );
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor:
+                highlight ? Colors.deepPurple.shade800 : Colors.teal.shade900,
+            padding: EdgeInsets.all(widget.screenSize.width * 0.01 * uiScale),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(25 * uiScale),
+            ),
+            side: BorderSide(
+              color: highlight ? Colors.purpleAccent : Colors.tealAccent,
+            ),
           ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              AnimatedBuilder(
-                animation: widget.game.player.currencyNotifier,
-                builder: (context, child) {
-                  return Row(
-                    children: [
-                      Image.asset(
-                        'assets/images/money.png',
-                        width: iconSize,
-                        height: iconSize,
-                      ),
-                      SizedBox(width: constraints.maxWidth * 0.02),
-                      Text(
-                        '${widget.game.player.currencyNotifier.value}',
-                        style: TextStyle(
-                          fontSize: pointFontSize,
-                          fontFamily: 'TRS-Million-Rg',
-                          letterSpacing: 5,
-                          color: Colors.white,
-                          shadows: const [
-                            Shadow(
-                              color: Colors.black,
-                              offset: Offset(1, 1),
-                              blurRadius: 1,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              ),
-              AnimatedBuilder(
-                animation: widget.game.player.miningPointsNotifier,
-                builder: (context, child) {
-                  return Row(
-                    children: [
-                      Image.asset(
-                        'assets/images/shovel.png',
-                        width: iconSize,
-                        height: iconSize,
-                      ),
-                      SizedBox(width: constraints.maxWidth * 0.02),
-                      Text(
-                        '${widget.game.player.currentMiningPoints}',
-                        style: TextStyle(
-                          fontSize: pointFontSize,
-                          fontFamily: 'TRS-Million-Rg',
-                          letterSpacing: 5,
-                          color: Colors.white,
-                          shadows: const [
-                            Shadow(
-                              color: Colors.black,
-                              offset: Offset(1, 1),
-                              blurRadius: 1,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              ),
-            ],
+          child: Icon(
+            Icons.smart_toy_outlined,
+            color: Colors.white,
+            size: widget.screenSize.width * 0.06 * uiScale,
           ),
         );
       },
     );
   }
 
-  Widget _buildPauseButton(double fontSize) {
+  bool _anyRecipeCraftable() {
+    final bag = widget.game.itemBag;
+    final state = widget.game.gameRuntimeState;
+    for (final recipe in CraftingSystem.recipes) {
+      if (CraftingSystem.canCraft(recipe, bag, state)) return true;
+    }
+    return false;
+  }
+
+  Widget _buildCraftingButton(double fontSize, {double uiScale = 1.0}) {
+    return AnimatedBuilder(
+      animation: Listenable.merge([
+        widget.game.itemBag,
+        widget.game.gameRuntimeState,
+      ]),
+      builder: (context, _) {
+        final canCraftAny = _anyRecipeCraftable();
+        return ElevatedButton(
+          onPressed: () {
+            widget.windowManager.showWindow(
+              GameWindowType.crafting,
+              CraftingWindow(
+                windowManager: widget.windowManager,
+                itemBag: widget.game.itemBag,
+                state: widget.game.gameRuntimeState,
+              ),
+            );
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: canCraftAny
+                ? Colors.indigo.shade900
+                : Colors.blueGrey.shade800,
+            padding: EdgeInsets.all(widget.screenSize.width * 0.01 * uiScale),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(25 * uiScale),
+            ),
+            side: BorderSide(
+              color: canCraftAny
+                  ? Colors.indigoAccent
+                  : Colors.blueGrey.shade600,
+            ),
+          ),
+          child: Icon(
+            Icons.handyman_outlined,
+            color: canCraftAny ? Colors.white : Colors.white54,
+            size: widget.screenSize.width * 0.06 * uiScale,
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildCodexButton(double fontSize, {double uiScale = 1.0}) {
+    return ElevatedButton(
+      onPressed: () {
+        widget.windowManager.showWindow(
+          GameWindowType.codex,
+          CodexWindow(game: widget.game, windowManager: widget.windowManager),
+        );
+      },
+      style: ElevatedButton.styleFrom(
+        backgroundColor: Colors.indigo.shade900,
+        padding: EdgeInsets.all(widget.screenSize.width * 0.01 * uiScale),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(25 * uiScale),
+        ),
+      ),
+      child: Icon(
+        Icons.menu_book_outlined,
+        color: Colors.white,
+        size: widget.screenSize.width * 0.06 * uiScale,
+      ),
+    );
+  }
+
+  Widget _buildPauseButton(double fontSize, {double uiScale = 1.0}) {
     return ElevatedButton(
       onPressed: () {
         widget.windowManager.showWindow(
@@ -1200,18 +1981,20 @@ class _GameUIState extends State<GameUI> {
       },
       style: ElevatedButton.styleFrom(
         backgroundColor: Colors.blueAccent,
-        padding: EdgeInsets.all(widget.screenSize.width * 0.02),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        padding: EdgeInsets.all(widget.screenSize.width * 0.01 * uiScale),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(25 * uiScale),
+        ),
       ),
       child: Icon(
         Icons.pause,
         color: Colors.white,
-        size: widget.screenSize.width * 0.03,
+        size: widget.screenSize.width * 0.06 * uiScale,
       ),
     );
   }
 
-  Widget _buildItemBagButton(double fontSize) {
+  Widget _buildItemBagButton(double fontSize, {double uiScale = 1.0}) {
     return ElevatedButton(
       onPressed: () {
         widget.windowManager.showWindow(
@@ -1225,70 +2008,53 @@ class _GameUIState extends State<GameUI> {
       },
       style: ElevatedButton.styleFrom(
         backgroundColor: const Color.fromARGB(255, 141, 75, 0),
-        padding: EdgeInsets.all(widget.screenSize.width * 0.02),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        padding: EdgeInsets.all(widget.screenSize.width * 0.01 * uiScale),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(25 * uiScale),
+        ),
       ),
       child: Icon(
         Icons.backpack,
         color: Colors.white,
-        size: widget.screenSize.width * 0.03,
-      ),
-    );
-  }
-
-  Widget _buildCalibrationButton(double fontSize) {
-    return ElevatedButton(
-      onPressed: () {
-        widget.windowManager.showWindow(
-          GameWindowType.calibration,
-          CalibrationWindow(
-            windowManager: widget.windowManager,
-            state: widget.game.gameRuntimeState,
-          ),
-        );
-      },
-      style: ElevatedButton.styleFrom(
-        backgroundColor: Colors.blueGrey[800],
-        padding: EdgeInsets.all(widget.screenSize.width * 0.02),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        side: const BorderSide(color: Colors.blueAccent, width: 1),
-      ),
-      child: Icon(
-        Icons.tune,
-        color: Colors.white,
-        size: widget.screenSize.width * 0.03,
+        size: widget.screenSize.width * 0.06 * uiScale,
       ),
     );
   }
 
   Widget _buildTopRightButtons(double fontSize) {
+    const double uiScale = 2.0 / 3.0 * 0.75;
+    final double gap = widget.screenSize.height * 0.01 * uiScale;
     return Positioned(
       top: widget.screenSize.height * 0.02,
       right: widget.screenSize.width * 0.02,
-      child: Column(
+      child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _buildPauseButton(fontSize),
-          SizedBox(height: widget.screenSize.height * 0.01),
-          _buildItemBagButton(fontSize),
-          SizedBox(height: widget.screenSize.height * 0.01),
-          _buildCalibrationButton(fontSize),
-          SizedBox(height: widget.screenSize.height * 0.01),
-          _buildTestTextBoxButton(fontSize),
+          _buildTestTextBoxButton(fontSize, uiScale: uiScale),
+          SizedBox(width: gap),
+          _buildItemBagButton(fontSize, uiScale: uiScale),
+          SizedBox(width: gap),
+          _buildCraftingButton(fontSize, uiScale: uiScale),
+          SizedBox(width: gap),
+          _buildCodexButton(fontSize, uiScale: uiScale),
+          SizedBox(width: gap),
+          _buildAutomationShopEntryButton(fontSize, uiScale: uiScale),
+          SizedBox(width: gap),
+          _buildPauseButton(fontSize, uiScale: uiScale),
         ],
       ),
     );
   }
 
-  Widget _buildTestTextBoxButton(double fontSize) {
+  Widget _buildTestTextBoxButton(double fontSize, {double uiScale = 1.0}) {
     return ElevatedButton(
       onPressed: () {
         widget.windowManager.showWindow(
           GameWindowType.message,
           MessageWindow(
             messages: ['開発者の特権を使用します。(アイテムをランダムに生成する)'],
-            fontSize: fontSize,
-            onFinish: () {
+            fontSize: fontSize * uiScale,
+            onClosed: () async {
               widget.windowManager.hideWindow();
               ItemFactory.spawnTestItems(widget.game, widget.game.player);
             },
@@ -1297,14 +2063,65 @@ class _GameUIState extends State<GameUI> {
       },
       style: ElevatedButton.styleFrom(
         backgroundColor: Colors.purple,
-        padding: EdgeInsets.all(widget.screenSize.width * 0.02),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        padding: EdgeInsets.all(widget.screenSize.width * 0.01 * uiScale),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(25 * uiScale),
+        ),
       ),
       child: Icon(
         Icons.text_fields,
         color: Colors.white,
-        size: widget.screenSize.width * 0.03,
+        size: widget.screenSize.width * 0.06 * uiScale,
       ),
+    );
+  }
+}
+
+/// [GameRuntimeState.currentMission] 用の簡易スタイル（`mission_manager` 廃止後の代替）。
+double _missionHudErosionRate(Player player) {
+  final m = player.maxIntegrity;
+  if (m <= 0) return 0;
+  return (1.0 - (player.currentIntegrity / m)).clamp(0.0, 1.0);
+}
+
+class _MissionHudStyle {
+  final Color bgColor;
+  final Color color;
+  final String iconPath;
+  final bool isOperator;
+  final bool hasTerminalShadow;
+  final double fontSizeScale;
+
+  const _MissionHudStyle({
+    required this.bgColor,
+    required this.color,
+    required this.iconPath,
+    required this.isOperator,
+    required this.hasTerminalShadow,
+    required this.fontSizeScale,
+  });
+
+  static _MissionHudStyle fromMissionText(String? mission) {
+    final text = mission ?? '';
+    final operatorStyle =
+        text.contains('運用') || text.contains('父') || text.contains('オペレーター');
+    if (operatorStyle) {
+      return const _MissionHudStyle(
+        bgColor: Color(0xFF1a237e),
+        color: Colors.white,
+        iconPath: 'operator_face.png',
+        isOperator: true,
+        hasTerminalShadow: false,
+        fontSizeScale: 1.05,
+      );
+    }
+    return const _MissionHudStyle(
+      bgColor: Colors.black87,
+      color: Color(0xFF64FFDA),
+      iconPath: 'terminal_hint.png',
+      isOperator: false,
+      hasTerminalShadow: true,
+      fontSizeScale: 0.95,
     );
   }
 }
@@ -1413,24 +2230,28 @@ class _DirectionButtonState extends State<DirectionButton>
             break;
         }
 
-        return GestureDetector(
-          onTapDown: (_) {
-            if (state != DirectionButtonState.disabled) {
-              widget.onPressed(true);
-              widget.stateNotifier.value = DirectionButtonState.pressed;
+        return Listener(
+          behavior: HitTestBehavior.opaque,
+          onPointerDown: (_) {
+            if (widget.stateNotifier.value == DirectionButtonState.disabled) {
+              return;
             }
+            widget.onPressed(true);
+            widget.stateNotifier.value = DirectionButtonState.pressed;
           },
-          onTapUp: (_) {
-            if (state != DirectionButtonState.disabled) {
-              widget.onPressed(false);
-              widget.stateNotifier.value = DirectionButtonState.normal;
+          onPointerUp: (_) {
+            if (widget.stateNotifier.value == DirectionButtonState.disabled) {
+              return;
             }
+            widget.onPressed(false);
+            widget.stateNotifier.value = DirectionButtonState.normal;
           },
-          onTapCancel: () {
-            if (state != DirectionButtonState.disabled) {
-              widget.onPressed(false);
-              widget.stateNotifier.value = DirectionButtonState.normal;
+          onPointerCancel: (_) {
+            if (widget.stateNotifier.value == DirectionButtonState.disabled) {
+              return;
             }
+            widget.onPressed(false);
+            widget.stateNotifier.value = DirectionButtonState.normal;
           },
           child: Stack(
             alignment: Alignment.center,
@@ -1571,43 +2392,35 @@ class _ActionButtonState extends State<ActionButton>
             break;
         }
 
-        return GestureDetector(
-          onTap:
-              state != ActionButtonState.disabled && widget.onPressed != null
-                  ? () {
-                    widget.onPressed!();
-                  }
-                  : null,
-          onTapDown:
-              widget.onTogglePressed != null &&
-                      state != ActionButtonState.disabled
-                  ? (_) {
-                    widget.onTogglePressed!(true);
-                    widget.stateNotifier.value = ActionButtonState.pressed;
-                  }
-                  : null,
-          onTapUp:
-              widget.onTogglePressed != null &&
-                      state != ActionButtonState.disabled
-                  ? (_) {
-                    widget.onTogglePressed!(false);
-                    widget.stateNotifier.value = ActionButtonState.normal;
-                  }
-                  : null,
-          onTapCancel:
-              widget.onTogglePressed != null &&
-                      state != ActionButtonState.disabled
-                  ? () {
-                    widget.onTogglePressed!(false);
-                    widget.stateNotifier.value = ActionButtonState.normal;
-                  }
-                  : null,
-          onLongPress:
-              state != ActionButtonState.disabled && widget.onLongPress != null
-                  ? () {
-                    widget.onLongPress!();
-                  }
-                  : null,
+        final tactile = Listener(
+          behavior: HitTestBehavior.opaque,
+          onPointerDown: (_) {
+            if (widget.stateNotifier.value == ActionButtonState.disabled) {
+              return;
+            }
+            if (widget.onTogglePressed != null) {
+              widget.onTogglePressed!(true);
+              widget.stateNotifier.value = ActionButtonState.pressed;
+            } else if (widget.onPressed != null) {
+              widget.onPressed!();
+            }
+          },
+          onPointerUp: (_) {
+            if (widget.onTogglePressed == null) return;
+            if (widget.stateNotifier.value == ActionButtonState.disabled) {
+              return;
+            }
+            widget.onTogglePressed!(false);
+            widget.stateNotifier.value = ActionButtonState.normal;
+          },
+          onPointerCancel: (_) {
+            if (widget.onTogglePressed == null) return;
+            if (widget.stateNotifier.value == ActionButtonState.disabled) {
+              return;
+            }
+            widget.onTogglePressed!(false);
+            widget.stateNotifier.value = ActionButtonState.normal;
+          },
           child: Stack(
             alignment: Alignment.center,
             children: [
@@ -1670,7 +2483,7 @@ class _ActionButtonState extends State<ActionButton>
                           color: Colors.white,
                           fontSize: widget.buttonSize * 0.2,
                           fontWeight: FontWeight.bold,
-                          fontFamily: 'TRS-Million-Rg',
+                          fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
                         ),
                       ),
                     ),
@@ -1679,6 +2492,20 @@ class _ActionButtonState extends State<ActionButton>
             ],
           ),
         );
+
+        if (widget.onLongPress != null) {
+          return GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onLongPress: () {
+              if (widget.stateNotifier.value == ActionButtonState.disabled) {
+                return;
+              }
+              widget.onLongPress!();
+            },
+            child: tactile,
+          );
+        }
+        return tactile;
       },
     );
   }

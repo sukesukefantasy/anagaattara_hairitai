@@ -1,6 +1,7 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flame/components.dart';
 import 'item.dart';
+import '../../main.dart' show MyGame;
 import '../../system/storage/game_runtime_state.dart';
 
 /// 収集したアイテムを管理するクラス
@@ -13,9 +14,26 @@ class ItemBag extends ChangeNotifier {
 
   final GameRuntimeState _gameRuntimeState;
 
+  /// バッグ内 [Item] はワールドに乗らないため [HasGameReference.game] を明示設定する。
+  MyGame? _boundGame;
+
   ItemBag({required GameRuntimeState gameRuntimeState})
     : _gameRuntimeState = gameRuntimeState {
     _loadFromSaveData(); // 初期化時にセーブデータからロード
+  }
+
+  /// [MyGame.onLoad] など、ゲームインスタンスが有効になった直後に一度呼ぶ。
+  void bindToGame(MyGame game) {
+    _boundGame = game;
+    _attachGameToAllDetails();
+  }
+
+  void _attachGameToAllDetails() {
+    final g = _boundGame;
+    if (g == null) return;
+    for (final item in _itemDetails.values) {
+      item.game = g;
+    }
   }
 
   /// 全ての収集済みアイテムの情報を取得
@@ -44,11 +62,15 @@ class ItemBag extends ChangeNotifier {
         _itemDetails[name] = item;
       }
     });
+    _attachGameToAllDetails();
     notifyListeners();
   }
 
   /// アイテムを取得し、バッグに追加するメソッド
   void addItem(Item item) {
+    if (_boundGame != null) {
+      item.game = _boundGame;
+    }
     // 名前をキーとしてカウントを増やす
     _itemCounts.update(item.name, (value) => value + 1, ifAbsent: () => 1);
     // 初めて取得するアイテムの場合、詳細情報を保存

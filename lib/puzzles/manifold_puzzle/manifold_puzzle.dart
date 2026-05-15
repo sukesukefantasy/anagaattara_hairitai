@@ -93,17 +93,6 @@ class ManifoldPuzzle extends PuzzleBase {
       'outdoor_true': {'name': '中枢演算コア', 'sprite': 'ai_icon.png'},
     };
 
-    // Stage 6 の特殊アイテム取得
-    if (stageId == 'outdoor_despair') {
-      final attr = activeAttribute ?? GameRuntimeState.routeNormal;
-      switch (attr) {
-        case GameRuntimeState.routeViolence: routeItems['outdoor_despair'] = {'name': '殲滅完了コード', 'sprite': 'forbidden_data.png'}; break;
-        case GameRuntimeState.routeEmpathy: routeItems['outdoor_despair'] = {'name': '心のバックアップ', 'sprite': 'warm_memory.png'}; break;
-        case GameRuntimeState.routePhilosophy: routeItems['outdoor_despair'] = {'name': '真実へのアクセスキー', 'sprite': 'ai_icon.png'}; break;
-        case GameRuntimeState.routeEfficiency: routeItems['outdoor_despair'] = {'name': '最適化完了ログ', 'sprite': 'energy_cube.png'}; break;
-      }
-    }
-
     var targetItem = routeItems[stageId];
 
     if (targetItem != null) {
@@ -152,7 +141,7 @@ class _ManifoldPuzzleWidgetState extends State<_ManifoldPuzzleWidget> {
     return LayoutBuilder(builder: (context, constraints) {
       final size = Size(constraints.maxWidth, constraints.maxHeight);
       // パーツサイズを従来の約2倍に (0.2 -> 0.4)
-      final pieceSize = (size.shortestSide * 0.4).clamp(80.0, 160.0);
+      final pieceSize = (size.shortestSide * 0.2).clamp(40.0, 80.0);
 
       return Stack(
         children: [

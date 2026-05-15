@@ -1,9 +1,9 @@
-import 'package:flame/components.dart';
+﻿import 'package:flame/components.dart';
 import 'building.dart';
-import 'package:flutter_soloud/flutter_soloud.dart';
 import 'package:flame/collisions.dart';
+import '../../common/physics/physics_step_obstacle.dart';
 
-class Station extends Building {
+class Station extends Building with PhysicsStepObstacleMixin {
   late SpriteComponent _buildingSprite;
   bool _isPlayerNear = false;
   late PolygonHitbox platformHitbox;
@@ -38,7 +38,7 @@ class Station extends Building {
     // 建物の本体
     _buildingSprite = SpriteComponent(
       sprite: buildingBodySprite,
-      size: buildingBodySprite.srcSize * 2,
+      size: buildingBodySprite.srcSize,
     );
     add(_buildingSprite);
 
@@ -72,6 +72,15 @@ class Station extends Building {
     // このコンポーネント全体のサイズを設定
     size = _buildingSprite.size;
   }
+
+  /// 屋根状オブジェクト全体ではなく、足場への段差のみを乗り越え対象とする
+  @override
+  double get physicsStepClearHeight =>
+      (_buildingSprite.size.y - 53 * 2).clamp(1.0, 2048.0);
+
+  /// プラットフォーム上端のワールド Y
+  @override
+  double get physicsStepSurfaceTopWorldY => absolutePosition.y + 53 * 2;
 
   /* void _updateInteractAction() {
     if (_isPlayerNear) {

@@ -1,15 +1,16 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:flame/components.dart';
-import '../window_manager.dart';
-import '../../component/item/item_bag.dart';
-import '../../component/player.dart';
-import '../../main.dart';
+
 import '../../component/item/item.dart';
+import '../../component/item/item_bag.dart';
+import '../../main.dart';
+import '../window_manager.dart';
+import 'window_base.dart';
 
 class ShopWindow extends StatefulWidget {
   final WindowManager windowManager;
   final ItemBag itemBag;
-  final MyGame game; // お金とプレイヤー情報にアクセスするため
+  final MyGame game;
 
   const ShopWindow({
     super.key,
@@ -22,346 +23,440 @@ class ShopWindow extends StatefulWidget {
   State<ShopWindow> createState() => _ShopWindowContentState();
 }
 
-class _ShopWindowContentState extends State<ShopWindow> {
-  // 仮の販売アイテムリスト
+class _ShopWindowContentState extends State<ShopWindow>
+    with GameWindowResponsiveMixin {
+  static const int _maxQtyPerPurchase = 99;
+
+  /// [ItemFactory._itemDefinitions] のキー。省略時も [name] を使うため通常は冗長だが明示用。
+  static String resolveFactoryKey(Map<String, dynamic> row) {
+    return (row['factoryKey'] as String?) ?? (row['name'] as String);
+  }
+
+  static String resolveDisplayTitle(Map<String, dynamic> row) {
+    return (row['displayName'] as String?) ?? (row['name'] as String);
+  }
+
+  /// `name` は常にインベントリ／ファクトリの正式キー（案 A）
   static final List<Map<String, dynamic>> _shopItems = [
     {
       'name': '栄養剤',
       'description': 'HPを100回復します',
       'spritePath': 'health_potion.png',
       'price': 50,
-      'itemType': ItemType.health,
-      'healAmount': 100.0,
     },
     {
-      'name': '紅茶の力',
+      'name': 'お茶の力',
+      'displayName': '紅茶の力',
       'description': 'ストレスを20軽減し、最大ストレス値を増加します',
       'spritePath': 'green_cha.png',
       'price': 70,
-      'itemType': ItemType.stress,
-      'stressReduction': 20.0,
     },
     {
       'name': 'レッド・ブリ',
-      'description': '使用するとキマリます。1時間の間、ストレスを無効にします',
+      'description': '使用するとキマります。1時間の間、ストレスを無効にします',
       'spritePath': 'blue_red.png',
       'price': 460,
-      'itemType': ItemType.powerUp,
-      'stressReduction': 20.0,
     },
     {
       'name': '採掘の気力',
       'description': '採掘ポイントを5増やします',
       'spritePath': 'shovel.png',
       'price': 120,
-      'itemType': ItemType.custom,
-      'effect': (Player player) {
-        // 仮の効果：採掘ポイントを少し増やすなど
-        player.updateMiningPoints(1);
-        player.addMaxStress(5.0); // 例としてストレス耐性も少し上げる
-        debugPrint('採掘ポイントを5増やしました！');
-      },
-      'value': 1,
     },
     {
-      'name': '希少な鉱石',
+      'name': '石',
+      'displayName': '希少な鉱石',
       'description': 'この星の地層から採取された、未知の組成を持つ鉱石。',
       'spritePath': 'stone.png',
       'price': 1,
-      'itemType': ItemType.collection,
-      'effect': (Player player) {
-        debugPrint('希少な鉱石を買った！');
-      },
-      'value': 1,
+    },
+    {
+      'name': '自動化キット',
+      'description':
+          '設置して手を動かすと通貨と採掘ポイントが貯まる。強化すると自動化できる。',
+      'spritePath': 'energy_cube.png',
+      'price': 80,
     },
   ];
 
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: Center(
-        child: Container(
-          width: widget.windowManager.screenWidth * 0.7, // 画面幅の70%
-          height: widget.windowManager.screenHeight * 0.9, // 画面高さの90%
-          decoration: BoxDecoration(
-            color: Colors.lightGreen[800], // ショップの背景色
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: Colors.white, width: 2),
+  void _showShopItemDetailDialog(
+    BuildContext dialogContext,
+    Map<String, dynamic> shopItem,
+  ) {
+    final isMobile = getIsMobile(widget.windowManager);
+    final title = resolveDisplayTitle(shopItem);
+
+    showDialog<void>(
+      context: dialogContext,
+      builder: (BuildContext innerContext) {
+        return AlertDialog(
+          backgroundColor: Colors.lightGreen[700],
+          title: Text(
+            title,
+            style: TextStyle(
+              fontSize: isMobile ? 18 : widget.windowManager.screenHeight * 0.03,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+              fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+            ),
           ),
-          child: Column(
-            children: [
-              Padding(
-                padding: EdgeInsets.symmetric(
-                  horizontal: widget.windowManager.screenWidth * 0.02,
-                  vertical: widget.windowManager.screenHeight * 0.01,
-                ), // 画面幅の4%
-                child: Stack(
-                  children: [
-                    Align(
-                      alignment: Alignment.center,
-                      child: Text(
-                        'SHOP',
-                        style: TextStyle(
-                          fontSize:
-                              widget.windowManager.screenWidth *
-                              0.02, // 画面高さの5%
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                          fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
-                          letterSpacing: 5,
-                        ),
-                      ),
-                    ),
-                    /* Align(
-                      alignment: Alignment.topRight,
-                      child: IconButton(
-                        icon: Icon(
-                          Icons.close,
-                          color: Colors.white,
-                          size: widget.windowManager.screenWidth * 0.013, // 画面幅の6%
-                        ),
-                        onPressed: () {
-                          widget.windowManager.hideWindow();
-                        },
-                      ),
-                    ), */
-                  ],
+          content: Text(
+            shopItem['description'] as String,
+            style: TextStyle(
+              fontSize: isMobile ? 14 : widget.windowManager.screenHeight * 0.025,
+              color: Colors.white70,
+              fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(innerContext).pop(),
+              child: Text(
+                'close',
+                style: TextStyle(
+                  fontSize: isMobile ? 14 : widget.windowManager.screenWidth * 0.02,
+                  color: Colors.white,
+                  fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
                 ),
               ),
-              Padding(
-                padding: EdgeInsets.symmetric(
-                  horizontal: widget.windowManager.screenWidth * 0.03,
-                ), // 画面幅の3%
-                child: AnimatedBuilder(
-                  animation: widget.game.player.currencyNotifier, // お金の変化を監視
-                  builder: (context, child) {
-                    return Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        Image.asset(
-                          'assets/images/money.png',
-                          width: widget.windowManager.screenWidth * 0.1,
-                          height: widget.windowManager.screenHeight * 0.1,
-                          fit: BoxFit.contain,
-                        ),
-                        SizedBox(
-                          width: widget.windowManager.screenWidth * 0.01,
-                        ), // 画面幅の1%
-                        Text(
-                          '${widget.game.player.moneyPoints}',
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _openQuantityPurchaseSheet(Map<String, dynamic> shopItem) {
+    final int price = shopItem['price'] as int;
+    final player = widget.game.player;
+    final maxByMoney = price > 0 ? player.moneyPoints ~/ price : 0;
+    final maxQty =
+        maxByMoney.clamp(0, _maxQtyPerPurchase);
+    if (maxQty < 1) return;
+
+    final isMobile = getIsMobile(widget.windowManager);
+    final title = resolveDisplayTitle(shopItem);
+
+    showDialog<void>(
+      context: context,
+      builder: (BuildContext outerContext) {
+        int qty = 1;
+        return StatefulBuilder(
+          builder: (context, localSetState) {
+            final total = price * qty;
+            return AlertDialog(
+              backgroundColor: Colors.lightGreen[700],
+              title: Text(
+                '$title の購入',
+                style: TextStyle(
+                  fontSize:
+                      isMobile ? 18 : widget.windowManager.screenHeight * 0.03,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                  fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+                ),
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.remove, color: Colors.white),
+                        onPressed: () =>
+                            localSetState(() => qty = (qty - 1).clamp(1, maxQty)),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: Text(
+                          '$qty',
                           style: TextStyle(
-                            fontSize:
-                                widget.windowManager.screenHeight *
-                                0.03, // 画面高さの3%
+                            fontSize: isMobile ? 20 : widget.windowManager.screenHeight * 0.035,
                             color: Colors.white,
                             fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
                           ),
                         ),
-                      ],
-                    );
-                  },
-                ),
-              ),
-              Expanded(
-                child: ListView.builder(
-                  itemCount: _shopItems.length,
-                  itemBuilder: (context, index) {
-                    final shopItem = _shopItems[index];
-                    final itemName = shopItem['name'];
-                    final itemPrice = shopItem['price'];
-                    final itemSpritePath = shopItem['spritePath'];
-                    final isAffordable =
-                        widget.game.player.moneyPoints >= itemPrice;
-
-                    return Card(
-                      margin: EdgeInsets.symmetric(
-                        horizontal: widget.windowManager.screenWidth * 0.02,
-                        vertical: widget.windowManager.screenHeight * 0.01,
                       ),
-                      color: Colors.lightGreen[600],
-                      child: Padding(
-                        padding: EdgeInsets.all(
-                          widget.windowManager.screenWidth * 0.01,
-                        ), // 画面幅の2%
-                        child: Row(
-                          children: [
-                            Image.asset(
-                              'assets/images/$itemSpritePath',
-                              width: widget.windowManager.screenWidth * 0.1,
-                              height: widget.windowManager.screenHeight * 0.1,
-                              fit: BoxFit.contain,
-                              errorBuilder: (context, error, stackTrace) {
-                                return Icon(
-                                  Icons.broken_image,
-                                  size:
-                                      widget.windowManager.screenWidth *
-                                      0.1, // 画面幅の10%
-                                  color: Colors.grey,
-                                );
-                              },
-                            ),
-                            SizedBox(
-                              width: widget.windowManager.screenWidth * 0.01,
-                            ),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    itemName,
-                                    style: TextStyle(
-                                      fontSize:
-                                          widget.windowManager.screenHeight *
-                                          0.03, // 画面高さの2.8%
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.white,
-                                      fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
-                                    ),
-                                  ),
-                                  Text(
-                                    shopItem['description'],
-                                    style: TextStyle(
-                                      fontSize:
-                                          widget.windowManager.screenHeight *
-                                          0.025, // 画面高さの2%
-                                      color: Colors.white70,
-                                      fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            SizedBox(
-                              width: widget.windowManager.screenWidth * 0.01,
-                            ),
-                            Column(
-                              children: [
-                                Text(
-                                  '$itemPrice G',
-                                  style: TextStyle(
-                                    fontSize:
-                                        widget.windowManager.screenHeight *
-                                        0.03, // 画面高さの2.8%
-                                    fontWeight: FontWeight.bold,
-                                    color:
-                                        isAffordable
-                                            ? Colors.amberAccent
-                                            : Colors.redAccent,
-                                    fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
-                                  ),
-                                ),
-                                ElevatedButton(
-                                  onPressed:
-                                      isAffordable
-                                          ? () {
-                                            _purchaseItem(
-                                              shopItem,
-                                            ); // 購入処理を呼び出す
-                                          }
-                                          : null, // お金が足りない場合はボタンを無効化
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor:
-                                        isAffordable
-                                            ? Colors.blueAccent
-                                            : Colors.grey,
-                                    padding: EdgeInsets.symmetric(
-                                      horizontal:
-                                          widget.windowManager.screenWidth *
-                                          0.025, // 画面幅の2.5%
-                                      vertical:
-                                          widget.windowManager.screenHeight *
-                                          0.01,
-                                    ),
-                                  ),
-                                  child: Text(
-                                    isAffordable ? 'Buy' : 'Not enough',
-                                    style: TextStyle(
-                                      fontSize:
-                                          widget.windowManager.screenHeight *
-                                          0.025, // 画面高さの2.2%
-                                      color: Colors.white,
-                                      fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
+                      IconButton(
+                        icon: const Icon(Icons.add, color: Colors.white),
+                        onPressed: () =>
+                            localSetState(() => qty = (qty + 1).clamp(1, maxQty)),
                       ),
-                    );
-                  },
-                ),
-              ),
-              Padding(
-                padding: EdgeInsets.symmetric(
-                  horizontal: widget.windowManager.screenWidth * 0.02,
-                  vertical: widget.windowManager.screenHeight * 0.02,
-                ), // 画面幅の4%
-                child: ElevatedButton(
-                  onPressed: () {
-                    widget.windowManager.hideWindow();
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blueAccent,
-                    padding: EdgeInsets.symmetric(
-                      horizontal:
-                          widget.windowManager.screenWidth * 0.05, // 画面幅の5%
-                      vertical:
-                          widget.windowManager.screenHeight * 0.02, // 画面高さの2%
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
+                    ],
+                  ),
+                  Text(
+                    '合計 $total G（単価 $price）',
+                    style: TextStyle(
+                      fontSize: isMobile ? 14 : widget.windowManager.screenHeight * 0.025,
+                      color: Colors.white70,
+                      fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
                     ),
                   ),
+                ],
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(outerContext).pop(),
                   child: Text(
-                    'Close',
+                    'キャンセル',
                     style: TextStyle(
                       fontSize:
-                          widget.windowManager.screenHeight *
-                          0.035, // 画面高さの3.5%
+                          isMobile ? 14 : widget.windowManager.screenWidth * 0.02,
                       color: Colors.white,
                       fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
                     ),
                   ),
                 ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+                TextButton(
+                  onPressed:
+                      widget.game.player.moneyPoints >= total
+                          ? () {
+                            Navigator.of(outerContext).pop();
+                            _completePurchase(shopItem, qty);
+                          }
+                          : null,
+                  child: Text(
+                    '購入',
+                    style: TextStyle(
+                      fontSize:
+                          isMobile ? 14 : widget.windowManager.screenWidth * 0.02,
+                      color: Colors.amberAccent,
+                      fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    ).then((_) {
+      if (mounted) setState(() {});
+    });
   }
 
-  // アイテム購入処理
-  void _purchaseItem(Map<String, dynamic> shopItem) {
-    final player = widget.game.player;
+  void _completePurchase(Map<String, dynamic> shopItem, int qty) {
+    final factoryKey = resolveFactoryKey(shopItem);
     final int price = shopItem['price'] as int;
-    if (player.moneyPoints < price) {
-      debugPrint('お金が足りません！');
+
+    final Item? prototype =
+        ItemFactory.createItemByName(factoryKey, Vector2.zero());
+    if (prototype == null) {
+      debugPrint(
+        'ShopWindow: アイテム生成に失敗したため購入を中止: factoryKey=$factoryKey',
+      );
       return;
     }
 
-    // お金を減らす
-    player.updateMoneyPoints(-price);
-    debugPrint('${shopItem['name']} を購入しました。-$price G');
-
-    // アイテムをPlayerのItemBagに追加
-    final String itemName = shopItem['name'] as String;
-    final Item? purchasedItem = ItemFactory.createItemByName(
-      itemName,
-      Vector2.zero(),
-    );
-
-    if (purchasedItem != null) {
-      widget.itemBag.addItem(purchasedItem);
-      debugPrint('$itemName をアイテムバッグに追加しました。');
-    } else {
-      debugPrint('アイテムの生成に失敗しました: $itemName');
+    final player = widget.game.player;
+    final int total = price * qty;
+    if (player.moneyPoints < total) {
+      debugPrint('ShopWindow: 所持金が不足しているため購入を中止');
+      return;
     }
 
-    // 購入後、表示を更新
-    setState(() {}); // StatefulWidgetにすることでsetStateが利用可能に
+    player.updateMoneyPoints(-total);
+
+    final displayName = resolveDisplayTitle(shopItem);
+    debugPrint('$displayName ×$qty を購入しました。-$total G');
+
+    for (int i = 0; i < qty; i++) {
+      final Item? purchasedItem =
+          ItemFactory.createItemByName(factoryKey, Vector2.zero());
+      if (purchasedItem != null) {
+        widget.itemBag.addItem(purchasedItem);
+      } else {
+        debugPrint(
+          'ShopWindow: 個別生成に失敗 (factoryKey=$factoryKey index=$i)',
+        );
+      }
+    }
+
+    setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isMobile = getIsMobile(widget.windowManager);
+    final screenWidth = widget.windowManager.screenWidth;
+    final screenHeight = widget.windowManager.screenHeight;
+
+    return GameWindow(
+      windowManager: widget.windowManager,
+      title: 'SHOP',
+      backgroundColor: Colors.lightGreen[800],
+      child: Column(
+        children: [
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: screenWidth * 0.03),
+            child: AnimatedBuilder(
+              animation: widget.game.player.currencyNotifier,
+              builder: (context, child) {
+                return Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Image.asset(
+                      'assets/images/money.png',
+                      width: isMobile ? 40 : screenWidth * 0.1,
+                      height: isMobile ? 40 : screenHeight * 0.1,
+                      fit: BoxFit.contain,
+                    ),
+                    SizedBox(width: screenWidth * 0.01),
+                    Text(
+                      '${widget.game.player.moneyPoints}',
+                      style: TextStyle(
+                        fontSize: isMobile ? 16 : screenHeight * 0.03,
+                        color: Colors.white,
+                        fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+          Expanded(
+            child: ListView.builder(
+              itemCount: _shopItems.length,
+              itemBuilder: (context, index) {
+                final shopItem = _shopItems[index];
+                final title = resolveDisplayTitle(shopItem);
+                final itemPrice = shopItem['price'] as int;
+                final itemSpritePath = shopItem['spritePath'] as String;
+                final isAffordable =
+                    widget.game.player.moneyPoints >= itemPrice;
+
+                return Card(
+                  margin: EdgeInsets.symmetric(
+                    horizontal: screenWidth * 0.02,
+                    vertical: screenHeight * 0.005,
+                  ),
+                  color: Colors.lightGreen[600],
+                  child: Padding(
+                    padding: EdgeInsets.all(isMobile ? 8 : screenWidth * 0.01),
+                    child: Row(
+                      children: [
+                        GestureDetector(
+                          onTap: () =>
+                              _showShopItemDetailDialog(context, shopItem),
+                          child: Image.asset(
+                            'assets/images/$itemSpritePath',
+                            width: isMobile ? 50 : screenWidth * 0.1,
+                            height: isMobile ? 50 : screenHeight * 0.1,
+                            fit: BoxFit.contain,
+                            errorBuilder: (context, error, stackTrace) {
+                              return Icon(
+                                Icons.broken_image,
+                                size: isMobile ? 40 : 50,
+                                color: Colors.grey,
+                              );
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                title,
+                                style: TextStyle(
+                                  fontSize: isMobile ? 14 : screenHeight * 0.03,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                  fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+                                ),
+                              ),
+                              if (!isMobile)
+                                Text(
+                                  shopItem['description'] as String,
+                                  style: TextStyle(
+                                    fontSize: screenHeight * 0.025,
+                                    color: Colors.white70,
+                                    fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        Column(
+                          children: [
+                            Text(
+                              '$itemPrice G',
+                              style: TextStyle(
+                                fontSize: isMobile ? 14 : screenHeight * 0.03,
+                                fontWeight: FontWeight.bold,
+                                color: isAffordable
+                                    ? Colors.amberAccent
+                                    : Colors.redAccent,
+                                fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+                              ),
+                            ),
+                            ElevatedButton(
+                              onPressed: isAffordable
+                                  ? () => _openQuantityPurchaseSheet(shopItem)
+                                  : null,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: isAffordable
+                                    ? Colors.blueAccent
+                                    : Colors.grey,
+                                padding: EdgeInsets.symmetric(
+                                  horizontal:
+                                      isMobile ? 12 : screenWidth * 0.025,
+                                  vertical:
+                                      isMobile ? 6 : screenHeight * 0.01,
+                                ),
+                                minimumSize: Size.zero,
+                              ),
+                              child: Text(
+                                isAffordable ? 'Buy' : '...',
+                                style: TextStyle(
+                                  fontSize:
+                                      isMobile ? 12 : screenHeight * 0.025,
+                                  color: Colors.white,
+                                  fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: screenWidth * 0.02,
+              vertical: screenHeight * 0.01,
+            ),
+            child: ElevatedButton(
+              onPressed: () => widget.windowManager.hideWindow(),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blueAccent,
+                padding: EdgeInsets.symmetric(
+                  horizontal: isMobile ? 20 : screenWidth * 0.05,
+                  vertical: isMobile ? 10 : screenHeight * 0.02,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              child: Text(
+                'Close',
+                style: TextStyle(
+                  fontSize: isMobile ? 14 : screenHeight * 0.035,
+                  color: Colors.white,
+                  fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

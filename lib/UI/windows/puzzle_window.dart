@@ -2,8 +2,9 @@
 import '../../main.dart';
 import '../../puzzles/puzzle_base.dart';
 import '../window_manager.dart';
+import 'window_base.dart';
 
-class PuzzleWindow extends StatelessWidget {
+class PuzzleWindow extends StatelessWidget with GameWindowResponsiveMixin {
   final WindowManager windowManager;
   final MyGame game;
   final PuzzleBase puzzle;
@@ -19,53 +20,24 @@ class PuzzleWindow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 画面の向きに応じてサイズを調整 (スマホの横向きなどを考慮)
-    final bool isSmallScreen = windowManager.screenWidth < 600;
+    final isMobile = getIsMobile(windowManager);
     
-    return Container(
-      width: windowManager.screenWidth * (isSmallScreen ? 0.95 : 0.85),
-      height: windowManager.screenHeight * (isSmallScreen ? 0.95 : 0.9),
-      decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.95),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.blueAccent.withOpacity(0.5), width: 2),
-        boxShadow: [
-          BoxShadow(color: Colors.blueAccent.withOpacity(0.3), blurRadius: 30, spreadRadius: 5),
-        ],
-      ),
+    return GameWindow(
+      windowManager: windowManager,
+      title: puzzle.title,
+      showCloseButton: true,
+      backgroundColor: Colors.black.withOpacity(0.95),
+      widthFactor: 0.85,
+      heightFactor: 0.9,
+      mobileWidthFactor: 0.95,
+      mobileHeightFactor: 0.95,
       child: Column(
         children: [
-          // ヘッダー (サイズを縮小)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Text(
-                    puzzle.title,
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: isSmallScreen ? 18 : 24,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close, color: Colors.white),
-                  onPressed: () => windowManager.hideWindow(),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                ),
-              ],
-            ),
-          ),
           // パズル本体
           Expanded(
             child: Padding(
               padding: EdgeInsets.symmetric(
-                horizontal: isSmallScreen ? 8.0 : 24.0,
+                horizontal: isMobile ? 8.0 : 24.0,
                 vertical: 8.0
               ),
               child: puzzle.buildWidget(context, game, () {
@@ -81,7 +53,8 @@ class PuzzleWindow extends StatelessWidget {
               puzzle.description,
               style: TextStyle(
                 color: Colors.white70,
-                fontSize: isSmallScreen ? 8 : 11
+                fontSize: isMobile ? 10 : 12,
+                fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
               ),
               textAlign: TextAlign.center,
             ),

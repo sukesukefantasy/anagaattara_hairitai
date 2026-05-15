@@ -6,12 +6,19 @@ import 'package:flutter_soloud/flutter_soloud.dart';
 import 'package:flame/particles.dart';
 
 import '../../../../main.dart';
+import '../collision/collision_family.dart';
 import '../../item/item.dart';
+import '../../game_stage/building/bed.dart';
 import '../../../system/storage/game_runtime_state.dart';
+import '../hitboxes/interact_hitbox.dart';
+import '../../effect/residue_pickup.dart';
+import '../../effect/residue_effect.dart';
 
+class UnderGround extends PositionComponent
+    with CollisionCallbacks, HasGameReference<MyGame>, HasCollisionFamily {
+  @override
+  CollisionFamily get collisionFamily => CollisionFamily.terrain;
 
-class UnderGround extends RectangleComponent
-    with CollisionCallbacks, HasGameReference<MyGame> {
   late final Sprite _underGroundSprite;
   late final Sprite _dugAreaSprite;
   late final Sprite _stoneSprite;
@@ -20,6 +27,10 @@ class UnderGround extends RectangleComponent
   final Set<Vector2> dugAreas = {};
   static const double penetrationThreshold = 2.0;
   final Set<double> _diggableEntranceXPositions = {}; // 採掘可能入口のX座標を保存
+  
+  late final Sprite _terminalSprite;
+  late final Sprite _createPointSprite;
+  late final Sprite _repairPointSprite;
 
   final Random _random = Random();
   final overlayPaint =
@@ -148,6 +159,13 @@ class UnderGround extends RectangleComponent
       _stoneSprite = await Sprite.load('stone.png');
       debugPrint('UnderGround: _stoneSprite loaded.');
 
+      _terminalSprite = await Sprite.load('CITY_MEGA.png',
+          srcPosition: Vector2(899, 85), srcSize: Vector2(26, 27));
+      _createPointSprite = await Sprite.load('CITY_MEGA.png',
+          srcPosition: Vector2(897, 66), srcSize: Vector2(30, 14));
+      _repairPointSprite = await Sprite.load('CITY_MEGA.png',
+          srcPosition: Vector2(768, 118), srcSize: Vector2(32, 26));
+
       // SoLoud の初期化状態を確認
       _digAudioSource = await game.audioManager.loadAndCacheSound(
         _digSoundFile,
@@ -159,8 +177,8 @@ class UnderGround extends RectangleComponent
       debugPrint(
         'Error loading assets in UnderGround.onLoad: $e. Make sure sound and image files exist.',
       );
-      // ここでエラーを再スローするか、リカバリロジックを実装することも検討
     }
+    
     // 地下のY座標を地面のすぐ下に配置する
     position = Vector2(
       -MyGame.worldWidth,
@@ -169,7 +187,17 @@ class UnderGround extends RectangleComponent
     updateHitboxes();
 
     // 聖域のアンカー：「意味を忘れないためのメモ」を配置（未所持の場合）
+    // プレイヤーが最初に入る可能性が高い X=-500 付近に配置
     _spawnAnchorItem();
+
+    // 惑星調査日誌（アーカイブ端末）の配置
+    _spawnDiaryTerminal();
+
+    // 意志力補充（聖域）ポイントの配置
+    _spawnReclaimPoints();
+
+    // ベッドの配置
+    _spawnBed();
 
     _playSoundEffectWithSoloud();
     _spawnDiggingParticles(Vector2.zero()); // 初期化用（表示されない）
@@ -180,24 +208,230 @@ class UnderGround extends RectangleComponent
     // すでに所持しているか、ワールドに存在する場合はスキップ
     if ((state.itemCounts['意味を忘れないためのメモ'] ?? 0) > 0) return;
     
-    // 最初の掘削地点付近、または入口付近に配置
+    // 最初の掘削地点付近 (X=-500) に配置 (親コンポーネント UnderGround からの相対座標)
+    // UnderGroundのXは -MyGame.worldWidth (-3000) なので、ワールド座標 -500 は相対座標で 2500
     final anchorItem = ItemFactory.createItemByName(
       '意味を忘れないためのメモ',
-      position + Vector2(UnderGround.digAreaSize * 2, UnderGround.digAreaSize * 2),
+      Vector2(2500 + UnderGround.digAreaSize * 2, UnderGround.digAreaSize * 2),
     );
     if (anchorItem != null) {
-      game.world.add(anchorItem);
+      add(anchorItem); // game.world ではなく add(this) で子にする
       debugPrint('UnderGround: Anchor item spawned at ${anchorItem.position}');
     }
 
     // おじさんの手書きノート（アーカイブ）を配置
     final noteItem = ItemFactory.createItemByName(
       'おじさんの手書きノート',
-      position + Vector2(UnderGround.digAreaSize * 4, UnderGround.digAreaSize * 2),
+      Vector2(2500 + UnderGround.digAreaSize * 4, UnderGround.digAreaSize * 2),
     );
     if (noteItem != null) {
-      game.world.add(noteItem);
+      add(noteItem);
     }
+  }
+
+  void _spawnDiaryTerminal() {
+    // X=-500 付近に配置 (親コンポーネント UnderGround からの相対座標)
+    final terminalPos = Vector2(2500 + UnderGround.digAreaSize, UnderGround.digAreaSize * 3);
+    
+    // 端末の見た目（仮）
+    // TODO: 画像挿入 (アーカイブ端末)
+    final terminal = SpriteComponent(
+      sprite: _terminalSprite,
+      position: terminalPos,
+      size: Vector2(48, 48),
+    );
+    add(terminal);
+
+    terminal.add(InteractHitbox(
+      position: Vector2.zero(),
+      size: terminal.size,
+      onInteract: () {
+        _showDiaryMenu();
+      },
+      icon: Icons.menu_book,
+    ));
+  }
+
+  void _spawnReclaimPoints() {
+    // 創造ポイント (親コンポーネント UnderGround からの相対座標)
+    final createPos = Vector2(2500 + UnderGround.digAreaSize * 3, UnderGround.digAreaSize * 3);
+    // TODO: 画像挿入 (創造の祭壇)
+    final createPoint = SpriteComponent(
+      sprite: _createPointSprite, // 仮
+      position: createPos,
+      size: Vector2(48, 48),
+    );
+    add(createPoint);
+    createPoint.add(InteractHitbox(
+      position: Vector2.zero(),
+      size: createPoint.size,
+      onInteract: () => _showReclaimMenu('create'),
+      icon: Icons.build,
+    ));
+
+    // 修復ポイント (親コンポーネント UnderGround からの相対座標)
+    final repairPos = Vector2(2500 + UnderGround.digAreaSize * 8, UnderGround.digAreaSize * 3);
+    // TODO: 画像挿入 (修復の机)
+    final repairPoint = SpriteComponent(
+      sprite: _repairPointSprite, // 仮
+      position: repairPos,
+      size: Vector2(48, 48),
+    );
+    add(repairPoint);
+    repairPoint.add(InteractHitbox(
+      position: Vector2.zero(),
+      size: repairPoint.size,
+      onInteract: () => _showReclaimMenu('repair'),
+      icon: Icons.auto_fix_high,
+    ));
+  }
+
+  void _spawnBed() {
+    // X=-500 付近に配置 (親コンポーネント UnderGround からの相対座標)
+    final bedPos = Vector2(2500 - UnderGround.digAreaSize * 2, UnderGround.digAreaSize * 2);
+    final bed = Bed(
+      position: bedPos,
+      size: Vector2(64, 32),
+    );
+    add(bed);
+  }
+
+  void _showReclaimMenu(String type) {
+    final state = game.gameRuntimeState;
+    if (state.currentWillpower >= state.maxWillCoreValue) {
+      game.windowManager.showDialog(["「意志の核は十分に満たされています。今はこれ以上の儀式は必要ありません。」"]);
+      return;
+    }
+
+    if (type == 'create') {
+      final hasMaterials = game.player.itemBag.getItemCount('石') >= 3 || game.player.itemBag.getItemCount('棒') >= 3;
+      game.windowManager.showDialog(
+        ["[創造の祭壇]", "「拾い集めたガラクタから、何か新しい形を生み出しますか？」", "（材料：石または棒 ×3）"],
+        options: ["創造する", "やめる"],
+        onSelect: (index) {
+          if (index == 0) {
+            if (hasMaterials) {
+              if (game.player.itemBag.getItemCount('石') >= 3) {
+                for (int i = 0; i < 3; i++) game.player.itemBag.removeItem('石');
+              } else {
+                for (int i = 0; i < 3; i++) game.player.itemBag.removeItem('棒');
+              }
+              state.reclaimWillpower(GameRuntimeState.willCoreUnit);
+              game.windowManager.showDialog(["「……無心に手を動かし、形なきものに形を与えた。意志の核が静かに輝きを取り戻した。」"]);
+            } else {
+              game.windowManager.showDialog(["「材料が足りません。」"]);
+            }
+          }
+        },
+      );
+    } else if (type == 'repair') {
+      final hasRelic = game.player.itemBag.getItemCount('意味を忘れないためのメモ') > 0 || game.player.itemBag.getItemCount('おじさんの手書きノート') > 0;
+      game.windowManager.showDialog(
+        ["[修復の机]", "「父の遺品や、大切な思い出の品を丁寧に手入れしますか？」"],
+        options: ["修復する", "やめる"],
+        onSelect: (index) {
+          if (index == 0) {
+            if (hasRelic) {
+              state.reclaimWillpower(GameRuntimeState.willCoreUnit * 1.5); // 旧30相当（max10スケール）
+              game.windowManager.showDialog(["「……傷ついた品を磨き、かつての持ち主の想いに触れた。意志の核が温かな光を放ち始めた。」"]);
+            } else {
+              game.windowManager.showDialog(["「修復すべき思い出の品を持っていません。」"]);
+            }
+          }
+        },
+      );
+    }
+  }
+
+  void _showDiaryMenu() {
+    final List<String> options = ["日誌を読む", "日誌を復元する", "今日の出来事を記す", "閉じる"];
+    
+    game.windowManager.showDialog(
+      ["[惑星調査日誌アーカイブ]", "「……未復元のデータが検出されました。復元には『破損したメモリ』が必要です。」"],
+      options: options,
+      onSelect: (index) {
+        if (index == 0) {
+          _showUnlockedEntries();
+        } else if (index == 1) {
+          _tryUnlockEntry();
+        } else if (index == 2) {
+          _memorizeAction();
+        }
+      },
+    );
+  }
+
+  void _memorizeAction() {
+    final state = game.gameRuntimeState;
+    if (state.currentWillpower >= state.maxWillCoreValue) {
+      game.windowManager.showDialog(["「……今はこれ以上、記すべき言葉が見当たりません。」"]);
+      return;
+    }
+
+    game.windowManager.showDialog(
+      ["[日誌への加筆]", "「今日起きた理不尽な出来事や、星への反抗心を日誌に書き留めますか？」"],
+      options: ["記す", "やめる"],
+      onSelect: (index) {
+        if (index == 0) {
+          state.reclaimWillpower(GameRuntimeState.willCoreUnit * 0.75); // 旧15相当
+          game.windowManager.showDialog(["「……ペンを走らせ、自分の言葉で世界を定義し直した。意志の核が鋭い光を宿した。」"]);
+        }
+      },
+    );
+  }
+
+  void _showUnlockedEntries() {
+    final state = game.gameRuntimeState;
+    if (state.unlockedDiaryEntries.isEmpty) {
+      game.windowManager.showDialog(["「……閲覧可能な日誌はありません。」"]);
+      return;
+    }
+
+    final List<String> options = [...state.unlockedDiaryEntries, "戻る"];
+    game.windowManager.showDialog(
+      ["「閲覧する項目を選択してください。」"],
+      options: options,
+      onSelect: (index) {
+        if (index < state.unlockedDiaryEntries.length) {
+          final entryId = state.unlockedDiaryEntries[index];
+          final text = GameRuntimeState.uncleDiaryEntries[entryId] ?? "（データ破損）";
+          game.windowManager.showDialog(["[$entryId]", text]);
+        }
+      },
+    );
+  }
+
+  void _tryUnlockEntry() {
+    final state = game.gameRuntimeState;
+    final hasMemory = game.player.itemBag.getItemCount('破損したメモリ') > 0;
+
+    if (!hasMemory) {
+      game.windowManager.showDialog(["「……『破損したメモリ』が不足しています。」"]);
+      return;
+    }
+
+    // まだ解放されていないエントリを探す
+    final allEntries = GameRuntimeState.uncleDiaryEntries.keys.toList();
+    final lockedEntries = allEntries.where((e) => !state.unlockedDiaryEntries.contains(e)).toList();
+
+    if (lockedEntries.isEmpty) {
+      game.windowManager.showDialog(["「……すべてのデータは既に復元されています。」"]);
+      return;
+    }
+
+    final nextEntry = lockedEntries.first;
+    game.player.itemBag.removeItem('破損したメモリ');
+    state.unlockedDiaryEntries.add(nextEntry);
+
+    ResiduePickup.emitCargo(
+        game, ResiduePickup.worldEmitOrigin(game.player), history: 1);
+
+    state.saveGame();
+
+    game.windowManager.showDialog([
+      "「……データの復元に成功しました。」",
+      "「新規ログ：$nextEntry がアーカイブに追加されました。」"
+    ]);
   }
 
   void addDugArea(Vector2 position) {
@@ -214,12 +448,15 @@ class UnderGround extends RectangleComponent
       game.gameRuntimeState.dugAreas[sceneId]!.add('${dugAreaWorldPos.x},${dugAreaWorldPos.y}');
       
       // 哲学ルート進行：地下を掘る行為は好奇心・探求心とみなす
-      game.missionManager.onAction(GameRuntimeState.routePhilosophy, 0.5);
+      // TODO: 属性進行ロジックの再設計
       
       //debugPrint('addDugArea: $position');
       updateHitboxes();
       _playSoundEffectWithSoloud();
       _spawnDiggingParticles(dugAreaWorldPos); // dugAreaWorldPos を渡す
+
+      // 無機資源の残滓（黒破片）を漏出させる
+      ResidueEffect.spawnInorganic(game, dugAreaWorldPos, count: 5);
 
       // "希少な鉱石"アイテムを2~4個ランダムに生成
       final int stoneCount = _random.nextInt(3) + 2; // (0~2) + 2 = 2~4
@@ -432,6 +669,7 @@ class UnderGround extends RectangleComponent
 
   @override
   void render(Canvas canvas) {
+    // super.render(canvas); // RectangleComponentのデフォルト描画（白ボックス）を避けるためコメントアウト
     if (game.player.inUnderGround) {
       // 背景描画
       final repeatCount = (size.x / _underGroundSprite.srcSize.x).ceil();

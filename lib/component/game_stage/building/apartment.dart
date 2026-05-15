@@ -53,7 +53,7 @@ class Apartment extends Building {
 
     _buildingSprite = SpriteComponent(
       sprite: buildingBodySprite,
-      size: buildingBodySprite.srcSize * 2,
+      size: buildingBodySprite.srcSize,
     );
     add(_buildingSprite);
 

@@ -1,7 +1,7 @@
 ﻿// 建物の静的定義ファイル building_data.dart を元に扉の位置などを定義・調整するファイル
 
 import 'package:flame/components.dart';
-import '../../../main.dart'; // MyGameをインポート
+// import '../../../main.dart'; // MyGameをインポート
 
 typedef ExitPointCalculator =
     Vector2 Function(
@@ -13,7 +13,7 @@ typedef ExitPointCalculator =
 
 class BuildingDefinition {
   final String type;
-  final Vector2 defaultSize; // 各建物のデフォルトのサイズ（静的）... スプライトのsrcSize * 2 を使用している。
+  final Vector2 defaultSize; // 各建物のデフォルトのサイズ（静的）... スプライトのsrcSize を使用している。
   final ExitPointCalculator exitPointCalculator;
 
   const BuildingDefinition({
@@ -26,6 +26,24 @@ class BuildingDefinition {
 class BuildingDefinitions {
   static final Map<String, Map<String, BuildingDefinition>>
   allSceneDefinitions = {
+    // プロローグ用の建物定義
+    'outdoor_0': {
+      'home': BuildingDefinition(
+        type: 'apartment', // アパートを家として流用
+        defaultSize: Vector2(212, 440),
+        exitPointCalculator: (pos, size, pSize, gSize) => Vector2(pos.x + size.x / 2 - pSize.x / 2, gSize.y - pSize.y),
+      ),
+      'garage': BuildingDefinition(
+        type: 'shop', // ショップをガレージとして流用
+        defaultSize: Vector2(362, 190),
+        exitPointCalculator: (pos, size, pSize, gSize) => Vector2(pos.x + size.x / 2 - pSize.x / 2, gSize.y - pSize.y),
+      ),
+      'station': BuildingDefinition(
+        type: 'station',
+        defaultSize: Vector2(542, 122),
+        exitPointCalculator: (pos, size, pSize, gSize) => Vector2(pos.x + size.x / 2 - pSize.x / 2, gSize.y - pSize.y),
+      ),
+    },
     // ステージ1用の建物定義
     'outdoor_1': {
       'health_center': BuildingDefinition(
@@ -131,31 +149,27 @@ class BuildingDefinitions {
     'outdoor_2': {
       'health_center': BuildingDefinition(
         type: 'health_center',
-        defaultSize: Vector2(320, 306), // HealthCenterのサイズ
+        defaultSize: Vector2(320, 306),
         exitPointCalculator:
-            (
-              buildingOutdoorPosition,
-              buildingSize,
-              playerSize,
-              gameCanvasSize,
-            ) => Vector2(
-              buildingOutdoorPosition.x + buildingSize.x / 2 - playerSize.x / 2,
-              gameCanvasSize.y - playerSize.y,
-            ),
+            (pos, size, pSize, gSize) => Vector2(pos.x + size.x / 2 - pSize.x / 2, gSize.y - pSize.y),
+      ),
+      'shop': BuildingDefinition(
+        type: 'shop',
+        defaultSize: Vector2(362, 190),
+        exitPointCalculator:
+            (pos, size, pSize, gSize) => Vector2(pos.x + size.x / 2 - pSize.x / 2, gSize.y - pSize.y),
       ),
       'station': BuildingDefinition(
         type: 'station',
-        defaultSize: Vector2(542, 122), // Stationのサイズ (271 * 2, 61 * 2)
+        defaultSize: Vector2(542, 122),
         exitPointCalculator:
-            (
-              buildingOutdoorPosition,
-              buildingSize,
-              playerSize,
-              gameCanvasSize,
-            ) => Vector2(
-              buildingOutdoorPosition.x + buildingSize.x / 2 - playerSize.x / 2,
-              gameCanvasSize.y - playerSize.y,
-            ),
+            (pos, size, pSize, gSize) => Vector2(pos.x + size.x / 2 - pSize.x / 2, gSize.y - pSize.y),
+      ),
+      'apartment': BuildingDefinition(
+        type: 'apartment',
+        defaultSize: Vector2(212, 442),
+        exitPointCalculator:
+            (pos, size, pSize, gSize) => Vector2(pos.x + size.x / 2 - pSize.x / 2, gSize.y - pSize.y),
       ),
     },
     'outdoor_3': {
@@ -165,9 +179,21 @@ class BuildingDefinitions {
         exitPointCalculator:
             (pos, size, pSize, gSize) => Vector2(pos.x + size.x / 2 - pSize.x / 2, gSize.y - pSize.y),
       ),
+      'shop': BuildingDefinition(
+        type: 'shop',
+        defaultSize: Vector2(362, 190),
+        exitPointCalculator:
+            (pos, size, pSize, gSize) => Vector2(pos.x + size.x / 2 - pSize.x / 2, gSize.y - pSize.y),
+      ),
       'station': BuildingDefinition(
         type: 'station',
         defaultSize: Vector2(542, 122),
+        exitPointCalculator:
+            (pos, size, pSize, gSize) => Vector2(pos.x + size.x / 2 - pSize.x / 2, gSize.y - pSize.y),
+      ),
+      'apartment': BuildingDefinition(
+        type: 'apartment',
+        defaultSize: Vector2(212, 442),
         exitPointCalculator:
             (pos, size, pSize, gSize) => Vector2(pos.x + size.x / 2 - pSize.x / 2, gSize.y - pSize.y),
       ),
@@ -179,9 +205,21 @@ class BuildingDefinitions {
         exitPointCalculator:
             (pos, size, pSize, gSize) => Vector2(pos.x + size.x / 2 - pSize.x / 2, gSize.y - pSize.y),
       ),
+      'shop': BuildingDefinition(
+        type: 'shop',
+        defaultSize: Vector2(362, 190),
+        exitPointCalculator:
+            (pos, size, pSize, gSize) => Vector2(pos.x + size.x / 2 - pSize.x / 2, gSize.y - pSize.y),
+      ),
       'station': BuildingDefinition(
         type: 'station',
         defaultSize: Vector2(542, 122),
+        exitPointCalculator:
+            (pos, size, pSize, gSize) => Vector2(pos.x + size.x / 2 - pSize.x / 2, gSize.y - pSize.y),
+      ),
+      'apartment': BuildingDefinition(
+        type: 'apartment',
+        defaultSize: Vector2(212, 442),
         exitPointCalculator:
             (pos, size, pSize, gSize) => Vector2(pos.x + size.x / 2 - pSize.x / 2, gSize.y - pSize.y),
       ),
@@ -208,6 +246,9 @@ class BuildingDefinitions {
         exitPointCalculator: (pos, size, pSize, gSize) => Vector2(pos.x + size.x / 2 - pSize.x / 2, gSize.y - pSize.y),
       ),
     },
+    'outdoor_true_corridor': {},
+    'outdoor_true_vault': {},
+    'outdoor_true_finale': {},
     'outdoor_despair': {
       // 最終ステージのため駅はなし
       'apartment': BuildingDefinition(

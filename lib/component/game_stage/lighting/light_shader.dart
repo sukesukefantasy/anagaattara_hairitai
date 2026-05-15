@@ -1,4 +1,4 @@
-import 'package:flame/components.dart';
+﻿import 'package:flame/components.dart';
 import 'package:flame/experimental.dart'; // ShaderComponentをインポート
 import 'package:flutter/material.dart';
 import 'dart:ui' as ui;
@@ -44,6 +44,11 @@ class LightingOverlayComponent extends RectangleComponent
   @override
   void update(double dt) {
     super.update(dt);
+
+    // ビューポートのサイズに合わせて自身のサイズを更新
+    if (size != game.size) {
+      size = game.size;
+    }
 
     // シェーダーにUniformsを設定
     _updateLightingShaderUniforms();

@@ -45,6 +45,7 @@ class Shop extends Building {
     }
 
     // --- スプライトの読み込み ---
+    // TODO: 画像挿入 (建物スプライト)
 
     // 建物本体のスプライト
     final buildingBodySprite = await Sprite.load(
@@ -72,7 +73,7 @@ class Shop extends Building {
     // 建物の本体
     _buildingSprite = SpriteComponent(
       sprite: buildingBodySprite,
-      size: buildingBodySprite.srcSize * 2,
+      size: buildingBodySprite.srcSize,
     );
     add(_buildingSprite);
 
