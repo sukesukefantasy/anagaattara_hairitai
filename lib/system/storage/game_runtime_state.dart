@@ -1,4 +1,5 @@
-﻿import 'package:anagaattara_hairitai/system/storage/save_data.dart';
+﻿import 'package:anagaattara_hairitai/component/common/terrain/terrain_field.dart';
+import 'package:anagaattara_hairitai/system/storage/save_data.dart';
 import 'package:anagaattara_hairitai/system/stage_micro_log.dart';
 import 'package:anagaattara_hairitai/system/codex/codex_snapshot.dart';
 import 'package:flutter/foundation.dart'; // debugPrintのためにインポート
@@ -141,6 +142,9 @@ class GameRuntimeState extends ChangeNotifier {
 
   // 地下の採掘状況
   Map<String, List<String>> dugAreas = {};
+
+  /// 経路ベース掘削（シーンIDごと）
+  Map<String, List<CarveStamp>> carveStamps = {};
 
   // 建物配置の永続化
   Map<String, Map<String, double>> buildingPlacements = {};
@@ -954,6 +958,12 @@ class GameRuntimeState extends ChangeNotifier {
     scenarioCount = data.scenarioCount;
     dayCount = data.dayCount;
     dugAreas = Map<String, List<String>>.from(data.dugAreas);
+    carveStamps = data.carveStamps.map(
+      (key, list) => MapEntry(
+        key,
+        list.map((m) => CarveStamp.fromJson(m)).toList(),
+      ),
+    );
     hasShownCompassToday = data.hasShownCompassToday;
     buildingPlacements = Map<String, Map<String, double>>.from(data.buildingPlacements.map(
       (key, value) => MapEntry(key, Map<String, double>.from(value)),
@@ -1073,6 +1083,12 @@ class GameRuntimeState extends ChangeNotifier {
       scenarioCount: scenarioCount,
       dayCount: dayCount,
       dugAreas: dugAreas,
+      carveStamps: carveStamps.map(
+        (key, stamps) => MapEntry(
+          key,
+          stamps.map((s) => s.toJson()).toList(),
+        ),
+      ),
       hasShownCompassToday: hasShownCompassToday,
       buildingPlacements: Map<String, Map<String, double>>.from(buildingPlacements.map(
         (key, value) => MapEntry(key, Map<String, double>.from(value)),

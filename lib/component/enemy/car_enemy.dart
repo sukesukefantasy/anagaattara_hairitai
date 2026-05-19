@@ -55,15 +55,17 @@ class CarEnemy extends EnemyBase {
   }
 
   @override
+  void preparePhysicsVelocity(double dt) {
+    velocity.x = speed * direction;
+  }
+
+  @override
   void update(double dt) {
     super.update(dt);
     _performMovement(dt);
   }
 
   void _performMovement(double dt) {
-    // 水平移動
-    position.x += speed * dt * direction;
-
     final playerDistance = (position - game.player.position).length;
 
     if (playerDistance < AudioManager.maxDistance) {

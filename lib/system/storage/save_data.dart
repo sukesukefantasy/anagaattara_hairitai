@@ -35,6 +35,9 @@ class SaveData {
   // 地下の採掘状況（シーンIDごとの座標文字列リスト）
   Map<String, List<String>> dugAreas;
 
+  /// 経路ベース掘削スタンプ（シーンID → [{x,y,r}, ...]）
+  Map<String, List<Map<String, dynamic>>> carveStamps;
+
   bool hasShownCompassToday; // 今日の羅針盤を表示したか
   Map<String, Map<String, double>> buildingPlacements; // シーンごとの建物配置 (sceneId -> {buildingType: x})
   Map<String, int> destructibleHealths; // 破壊可能オブジェクトの状態 (uniqueId -> health)
@@ -154,6 +157,7 @@ class SaveData {
     this.scenarioCount = 1,
     this.dayCount = 1,
     Map<String, List<String>>? dugAreas,
+    Map<String, List<Map<String, dynamic>>>? carveStamps,
     this.hasShownCompassToday = false,
     Map<String, Map<String, double>>? buildingPlacements,
     Map<String, int>? destructibleHealths,
@@ -206,6 +210,7 @@ class SaveData {
     this.sentLifeScenarioBaseline = 0,
   }) : itemCounts = itemCounts ?? {},
        dugAreas = dugAreas ?? {},
+       carveStamps = carveStamps ?? {},
        buildingPlacements = buildingPlacements ?? {},
        destructibleHealths = destructibleHealths ?? {},
        satisfiedNpcIds = satisfiedNpcIds ?? [],
@@ -245,6 +250,14 @@ class SaveData {
       dayCount: json['dayCount'] as int? ?? 1,
       dugAreas: (json['dugAreas'] as Map<String, dynamic>?)?.map(
             (key, value) => MapEntry(key, List<String>.from(value as List)),
+          ),
+      carveStamps: (json['carveStamps'] as Map<String, dynamic>?)?.map(
+            (key, value) => MapEntry(
+              key,
+              (value as List)
+                  .map((e) => Map<String, dynamic>.from(e as Map))
+                  .toList(),
+            ),
           ),
       hasShownCompassToday: json['hasShownCompassToday'] as bool? ?? false,
       buildingPlacements: (json['buildingPlacements'] as Map<String, dynamic>?)?.map(
@@ -339,6 +352,7 @@ class SaveData {
       'scenarioCount': scenarioCount,
       'dayCount': dayCount,
       'dugAreas': dugAreas,
+      'carveStamps': carveStamps,
       'hasShownCompassToday': hasShownCompassToday,
       'buildingPlacements': buildingPlacements,
       'destructibleHealths': destructibleHealths,

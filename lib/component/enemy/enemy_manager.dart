@@ -5,6 +5,7 @@ import '../../../main.dart';
 import 'car_enemy.dart';
 import 'walking_enemy.dart';
 import 'enemy_base.dart'; // EnemyBaseをインポート
+
 class EnemyManager {
   final Random _random = Random();
   final double _spawnInterval = 0.2; // 敵をスポーンさせる間隔（秒）を1.5から0.5に短縮

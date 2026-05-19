@@ -2,6 +2,7 @@
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 import 'dart:math';
+import 'dart:ui' show Offset, Path, Picture, PictureRecorder, Rect;
 import 'package:flutter_soloud/flutter_soloud.dart';
 import 'package:flame/particles.dart';
 
@@ -13,6 +14,11 @@ import '../../../system/storage/game_runtime_state.dart';
 import '../hitboxes/interact_hitbox.dart';
 import '../../effect/residue_pickup.dart';
 import '../../effect/residue_effect.dart';
+import '../terrain/composite_terrain_field.dart';
+import '../terrain/grid_terrain_field.dart';
+import '../terrain/stamp_terrain_field.dart';
+import '../physics/physics_body_queries.dart';
+import '../terrain/terrain_field.dart';
 
 class UnderGround extends PositionComponent
     with CollisionCallbacks, HasGameReference<MyGame>, HasCollisionFamily {
@@ -20,7 +26,6 @@ class UnderGround extends PositionComponent
   CollisionFamily get collisionFamily => CollisionFamily.terrain;
 
   late final Sprite _underGroundSprite;
-  late final Sprite _dugAreaSprite;
   late final Sprite _stoneSprite;
   static const double underGroundHeight = 1024.0;
   static const double digAreaSize = 64.0;
@@ -44,6 +49,24 @@ class UnderGround extends PositionComponent
   final String _digSoundFile = 'assets/audio/rock_break.mp3';
 
   final double _groundHeight;
+
+  late CompositeTerrainField terrainField;
+  late GridTerrainField _gridField;
+  late StampTerrainField _stampField;
+
+  late final Paint _tunnelFillPaint;
+
+  Picture? _tunnelPicture;
+  bool _tunnelPictureDirty = true;
+  bool _carvePersistPending = false;
+  double _persistCooldown = 0;
+  static const double _persistIntervalSec = 2.5;
+
+  List<CarveStamp> get carveStamps => _stampField.stamps;
+
+  /// プレイヤー物理ヒットボックスに合わせたトンネル半径（掘削・通行・描画で共有）。
+  double passageRadiusForPlayer() =>
+      PhysicsBodyQueries.passageRadiusForBody(game.player);
 
   Set<double> get diggableEntranceXPositions => _diggableEntranceXPositions;
 
@@ -154,8 +177,6 @@ class UnderGround extends PositionComponent
     try {
       _underGroundSprite = await Sprite.load('concrete_ground.png');
       debugPrint('UnderGround: _underGroundSprite loaded.');
-      _dugAreaSprite = await Sprite.load('dugArea.png');
-      debugPrint('UnderGround: _dugAreaSprite loaded.');
       _stoneSprite = await Sprite.load('stone.png');
       debugPrint('UnderGround: _stoneSprite loaded.');
 
@@ -184,7 +205,21 @@ class UnderGround extends PositionComponent
       -MyGame.worldWidth,
       game.initialGameCanvasSize.y + _groundHeight,
     );
-    updateHitboxes();
+    _tunnelFillPaint = Paint()
+      ..color = const Color(0xFF4A3F32)
+      ..blendMode = BlendMode.srcOver
+      ..isAntiAlias = true;
+
+    _rebuildTerrainField();
+
+    // 掘削・接触検知用（地形ブロックは [terrainField] が担当）
+    add(
+      RectangleHitbox(
+        size: size,
+        collisionType: CollisionType.passive,
+        isSolid: false,
+      ),
+    );
 
     // 聖域のアンカー：「意味を忘れないためのメモ」を配置（未所持の場合）
     // プレイヤーが最初に入る可能性が高い X=-500 付近に配置
@@ -439,19 +474,18 @@ class UnderGround extends PositionComponent
     // _getGridCellTopLeftWorldを使用して、そのworld positionが属するセルのworld positionを特定する
     final dugAreaWorldPos = getGridCellTopLeftWorld(position);
 
-    if (!dugAreas.contains(dugAreaWorldPos)) {
+      if (!dugAreas.contains(dugAreaWorldPos)) {
       dugAreas.add(dugAreaWorldPos);
-      
+
       // GameRuntimeStateに保存
       final sceneId = game.sceneManager.currentSceneId;
       game.gameRuntimeState.dugAreas[sceneId] ??= [];
       game.gameRuntimeState.dugAreas[sceneId]!.add('${dugAreaWorldPos.x},${dugAreaWorldPos.y}');
-      
-      // 哲学ルート進行：地下を掘る行為は好奇心・探求心とみなす
-      // TODO: 属性進行ロジックの再設計
-      
-      //debugPrint('addDugArea: $position');
-      updateHitboxes();
+
+      carveAt(
+        dugAreaWorldPos + Vector2.all(digAreaSize / 2),
+        passageRadiusForPlayer(),
+      );
       _playSoundEffectWithSoloud();
       _spawnDiggingParticles(dugAreaWorldPos); // dugAreaWorldPos を渡す
 
@@ -577,9 +611,101 @@ class UnderGround extends PositionComponent
     );
   }
 
-  bool isDug(Vector2 position) {
-    // _getGridCellTopLeftWorldでグリッドセルのワールド座標を取得し、それがdugAreasに含まれるか確認
-    return dugAreas.contains(getGridCellTopLeftWorld(position));
+  bool isDug(Vector2 position) => terrainField.isPassable(position);
+
+  Rect get undergroundBounds => Rect.fromLTWH(position.x, position.y, size.x, size.y);
+
+  List<CarveStamp> _stampsFromSave() {
+    final sceneId = game.sceneManager.currentSceneId;
+    final saved = game.gameRuntimeState.carveStamps[sceneId];
+    if (saved == null) return [];
+    return List<CarveStamp>.from(saved);
+  }
+
+  void _rebuildTerrainField() {
+    final bounds = undergroundBounds;
+    _gridField = GridTerrainField(
+      undergroundBounds: bounds,
+      dugCells: dugAreas,
+      cellTopLeftOf: getGridCellTopLeftWorld,
+    );
+    final stamps = _stampsFromSave();
+    if (stamps.isEmpty) {
+      for (final cell in dugAreas) {
+        stamps.add(
+          CarveStamp(
+            x: cell.x + digAreaSize / 2,
+            y: cell.y + digAreaSize / 2,
+            radius: digAreaSize * 0.55,
+          ),
+        );
+      }
+    }
+    _stampField = StampTerrainField(
+      undergroundBounds: bounds,
+      stamps: stamps,
+    );
+    terrainField = CompositeTerrainField(
+      undergroundBounds: bounds,
+      grid: _gridField,
+      stamps: _stampField,
+    );
+  }
+
+  void _persistCarveStamps() {
+    final sceneId = game.sceneManager.currentSceneId;
+    game.gameRuntimeState.carveStamps[sceneId] =
+        List<CarveStamp>.from(_stampField.stamps);
+    _carvePersistPending = false;
+    _persistCooldown = 0;
+  }
+
+  void _schedulePersist() {
+    _carvePersistPending = true;
+  }
+
+  /// プレイヤー周囲をリアルタイムで1か所だけ掘る（グリッド単位ではない）。
+  bool carveAt(Vector2 worldCenter, double radius) {
+    if (!_stampField.carveCircleDeduped(worldCenter, radius)) {
+      return false;
+    }
+    _tunnelPictureDirty = true;
+    _schedulePersist();
+    return true;
+  }
+
+  /// 足元から前方へカプセル状に掘削（見た目の二重円を避ける）。
+  void carveCapsule(Vector2 worldA, Vector2 worldB, double radius) {
+    final before = _stampField.stamps.length;
+    terrainField.carveCapsule(worldA, worldB, radius);
+    if (_stampField.stamps.length != before) {
+      _tunnelPictureDirty = true;
+      _schedulePersist();
+    }
+  }
+
+  @Deprecated('Use carveAt or carveCapsule')
+  void carvePassageSegment(Vector2 worldA, Vector2 worldB, double radius) {
+    carveCapsule(worldA, worldB, radius);
+  }
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    if (_carvePersistPending) {
+      _persistCooldown += dt;
+      if (_persistCooldown >= _persistIntervalSec) {
+        _persistCarveStamps();
+      }
+    }
+  }
+
+  @override
+  void onRemove() {
+    if (_carvePersistPending) {
+      _persistCarveStamps();
+    }
+    super.onRemove();
   }
 
   // プレイヤーが採掘可能入口の近くにいるかを判定するメソッド
@@ -623,45 +749,8 @@ class UnderGround extends PositionComponent
     return false;
   }
 
-  void updateHitboxes() {
-    // UnderGroundのヒットボックスのみを削除
-    children.whereType<RectangleHitbox>().forEach((hitbox) {
-      if (hitbox.parent == this) {
-        hitbox.removeFromParent();
-      }
-    });
-
-    // 掘削されていない部分のヒットボックスを再構築
-    // dugAreasにないすべてのグリッドセルに対してヒットボックスを作成
-    final allPossibleAreas = <Vector2>{};
-    // ここでのループはUnderGroundのローカル座標系で考える
-    for (double y = 0; y < size.y; y += digAreaSize) {
-      for (double x = 0; x < size.x; x += digAreaSize) {
-        // ローカル座標でグリッドセルの左上隅を計算
-        final cellLocalX = x;
-        final cellLocalY = y;
-        // ワールド座標に変換
-        final cellWorldX = cellLocalX + position.x;
-        final cellWorldY = cellLocalY + position.y;
-        allPossibleAreas.add(Vector2(cellWorldX, cellWorldY)); // ワールド座標で保存
-      }
-    }
-
-    // 掘削されたエリアを考慮してヒットボックスを追加
-    for (final areaWorldPos in allPossibleAreas) {
-      if (!dugAreas.contains(areaWorldPos)) {
-        // 掘削されていないエリアにのみヒットボックスを追加
-        // ヒットボックスはUnderGroundの子供として追加されるため、positionはUnderGroundからの相対座標で指定
-        final hitbox = RectangleHitbox(
-          position: areaWorldPos - position, // ローカル座標に変換して追加
-          size: Vector2.all(digAreaSize), // 掘削エリアのサイズに合わせる
-          collisionType: CollisionType.passive,
-          isSolid: true,
-        );
-        add(hitbox);
-      }
-    }
-  }
+  @Deprecated('地形ブロックは TerrainField + KinematicMovement が担当')
+  void updateHitboxes() {}
 
   void resetPositions(Vector2 gameSize) {
     position.y = gameSize.y + _groundHeight;
@@ -686,23 +775,72 @@ class UnderGround extends PositionComponent
         // 地下のどこかにアーカイブが存在するという演出
       }
 
-      // 掘削済みエリアを描画
-      for (final area in dugAreas) {
-        // areaはワールド座標なので、UnderGroundのローカル座標に変換して描画
-        final localX = area.x - position.x;
-        final localY = area.y - position.y;
-
-        if (localX >= 0 &&
-            localX <= size.x &&
-            localY >= 0 &&
-            localY <= size.y) {
-          _dugAreaSprite.render(
-            canvas,
-            position: Vector2(localX, localY), // ローカル座標で描画
-            size: Vector2(digAreaSize, digAreaSize),
-          );
-        }
+      if (_tunnelPictureDirty || _tunnelPicture == null) {
+        _rebuildTunnelPictureCache();
+      }
+      final pic = _tunnelPicture;
+      if (pic != null) {
+        canvas.drawPicture(pic);
       }
     }
+  }
+
+  void _rebuildTunnelPictureCache() {
+    final recorder = PictureRecorder();
+    final cacheCanvas = Canvas(recorder);
+
+    for (final stamp in carveStamps) {
+      final lx = stamp.x - position.x;
+      final ly = stamp.y - position.y;
+      if (lx + stamp.radius < 0 ||
+          ly + stamp.radius < 0 ||
+          lx - stamp.radius > size.x ||
+          ly - stamp.radius > size.y) {
+        continue;
+      }
+      final seed = stamp.x.hashCode ^ stamp.y.hashCode;
+      cacheCanvas.drawPath(
+        _jaggedCirclePath(Offset(lx, ly), stamp.radius, seed),
+        _tunnelFillPaint,
+      );
+    }
+
+    // 旧セーブのグリッドのみ（スタンプ未移行分）
+    if (_stampField.stamps.isEmpty) {
+      final gridRadius = passageRadiusForPlayer();
+      for (final cell in dugAreas) {
+        final lx = cell.x + digAreaSize / 2 - position.x;
+        final ly = cell.y + digAreaSize / 2 - position.y;
+        final seed = cell.x.hashCode ^ cell.y.hashCode;
+        cacheCanvas.drawPath(
+          _jaggedCirclePath(Offset(lx, ly), gridRadius, seed),
+          _tunnelFillPaint,
+        );
+      }
+    }
+
+    _tunnelPicture = recorder.endRecording();
+    _tunnelPictureDirty = false;
+  }
+
+  /// 見た目のみギザギザ（当たりは円スタンプのまま）。
+  Path _jaggedCirclePath(Offset center, double radius, int seed) {
+    const vertexCount = 10;
+    final rand = Random(seed);
+    final path = Path();
+    for (var i = 0; i < vertexCount; i++) {
+      final angle = 2 * pi * i / vertexCount;
+      final wobble = radius * 0.08 * (rand.nextDouble() * 2 - 1);
+      final r = radius + wobble;
+      final x = center.dx + cos(angle) * r;
+      final y = center.dy + sin(angle) * r;
+      if (i == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
+    }
+    path.close();
+    return path;
   }
 }

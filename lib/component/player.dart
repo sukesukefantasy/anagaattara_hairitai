@@ -6,7 +6,9 @@ import 'dart:ui' show lerpDouble;
 import '../main.dart';
 import '../UI/game_ui.dart';
 import 'game_stage/building/station.dart';
+import 'common/physics/kinematic_movement.dart';
 import 'common/physics/physics_step_obstacle.dart';
+import 'common/physics/small_step_traversal.dart';
 import 'common/collision/collision_family.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
 import 'game_stage/building/destructible_object.dart';
@@ -16,7 +18,7 @@ import 'item/item_bag.dart';
 import 'item/item.dart';
 import '../scene/abstract_outdoor_scene.dart'; // AbstractOutdoorSceneをインポート
 import 'enemy/enemy_base.dart';
-import 'common/underground/underground.dart';
+import 'common/terrain/terrain_field.dart';
 import '../scene/game_scene.dart'; // GameSceneをインポート
 import '../game_manager/audio_manager.dart'; // Add this line
 import '../system/storage/game_runtime_state.dart'; // GameRuntimeStateをインポート
@@ -67,6 +69,7 @@ class Player extends SpriteAnimationComponent
   static const double speed = 180.0;
   static const double powerOfPlayer = 1.25;
   static const double gravity = 700.0;
+  static const double maxFallSpeed = 1400.0;
   static const double jumpForce = -250.0; // 少し弱める
   static const double maxJumpTime = 0.25; // ジャンプ持続時間の最大値
 
@@ -201,6 +204,10 @@ class Player extends SpriteAnimationComponent
   Vector2 _lastMoveDirection = Vector2(-1.0, 0.0); // 最後に移動した方向(初期値は左)
   bool canDig = false; // 採掘可能かどうかを示すプロパティを追加
 
+  /// 方向入力しながら採掘するとき、何フレームに1回スタンプを刻むか
+  static const int digCarveIntervalFrames = 6;
+  int _digCarveFrameCounter = 0;
+
   double _idleTimer = 0.0; // アイドル状態の時間を計測するタイマー
   static const double _idleThreshold = 3.0; // 4秒
 
@@ -210,8 +217,10 @@ class Player extends SpriteAnimationComponent
   bool _enableVerticalMovement = true;
 
   final Set<PositionComponent> _solidCollisions = {};
-  bool _physicsStepOverActive = false;
-  PositionComponent? _physicsStepOverTarget;
+  final Set<PositionComponent> _ignoredHorizontalSolidRoots = {};
+  final SmallStepState _smallStepState = SmallStepState();
+
+  bool get isSmallStepActive => _smallStepState.lastLiftApplied > 0;
   final Set<EnemyBase> _collidingEnemies = {};
   final Set<Item> _activeLadders = {}; // 接触中のはしごを保持
 
@@ -519,13 +528,24 @@ class Player extends SpriteAnimationComponent
   void update(double dt) {
     super.update(dt);
 
+    SmallStepTraversal.endFrame(
+      _smallStepState,
+      _ignoredHorizontalSolidRoots,
+    );
+
     if (!game.gameRuntimeState.isAutoPlay) {
       game.gameRuntimeState.tickAutomationAutoPickup(dt);
     }
 
     if (gameRuntimeState.isAutoPlay) {
       _performAutoPlay(dt);
-      _handleUnderGroundAndGroundCollisionLogic(dt);
+      _applyKinematicMovement(dt);
+      _handleUnderGroundPostMove(dt);
+      final playerDx = position.x - _lastPlayerX;
+      if (playerDx != 0) {
+        game.cameraController.updateBackgroundParallax(playerDx);
+      }
+      _lastPlayerX = position.x;
       return;
     }
 
@@ -678,37 +698,17 @@ class Player extends SpriteAnimationComponent
 
     final outdoorScene =
         game.sceneManager.currentScene is AbstractOutdoorScene;
-    final steppingMove = outdoorScene &&
-        _physicsStepOverActive &&
-        !isDigging &&
-        !iscrouching &&
-        !isOnLadder &&
-        _enableHorizontalPhysics &&
-        _enableVerticalMovement;
 
     // 水平方向の移動
     if (_enableHorizontalPhysics) {
-      if (steppingMove) {
-        double stepBase = effectiveSpeed;
-        if (isRunning) {
-          stepBase *= 1.5;
-        }
-        velocity.x = 0;
-        velocity.y = -stepBase * 0.5;
-        if (_lastMoveDirection.x > 0 || isMovingRight) {
-          animation = jumpingRightAnimation;
-        } else if (_lastMoveDirection.x < 0 || isMovingLeft) {
-          animation = jumpingLeftAnimation;
+      if (isDigging) {
+        // 掘削中は押している方向にのみ移動（横掘り・縦掘り）
+        final digSpeed = effectiveSpeed * 0.35;
+        if (isMovingRight) {
+          velocity.x = digSpeed;
+        } else if (isMovingLeft) {
+          velocity.x = -digSpeed;
         } else {
-          animation = jumpingAnimation;
-        }
-      } else if (isDigging) {
-        // 掘削中の水平移動速度
-        if (inUnderGround) {
-          velocity.x =
-              (isMovingRight ? effectiveSpeed * 0.5 : (isMovingLeft ? -effectiveSpeed * 0.5 : 0));
-        } else {
-          // 地上での掘削中の水平移動は無効
           velocity.x = 0;
         }
         animation = diggingAnimation;
@@ -747,9 +747,7 @@ class Player extends SpriteAnimationComponent
       }
     }
 
-    double horizontalDx = velocity.x * dt;
-    if (!steppingMove &&
-        outdoorScene &&
+    if (outdoorScene &&
         !isDigging &&
         !iscrouching &&
         !isOnLadder &&
@@ -758,35 +756,32 @@ class Player extends SpriteAnimationComponent
         isOnGround) {
       final intent = velocity.x.sign.toInt();
       if (intent != 0 && velocity.x.abs() > 1.0) {
-        final obstacle = _findPlayerPhysicsStepWallPredicted(horizontalDx, intent);
-        if (obstacle != null) {
-          _physicsStepOverActive = true;
-          _physicsStepOverTarget = obstacle;
-          double stepBase = effectiveSpeed;
-          if (isRunning) {
-            stepBase *= 1.5;
-          }
-          velocity.x = 0;
-          velocity.y = -stepBase * 0.5;
-          horizontalDx = 0;
+        final horizontalDx = velocity.x * dt;
+        var stepBase = effectiveSpeed;
+        if (isRunning) {
+          stepBase *= 1.5;
         }
+        final outdoor =
+            game.sceneManager.currentScene is AbstractOutdoorScene
+                ? game.sceneManager.currentScene! as AbstractOutdoorScene
+                : null;
+        SmallStepTraversal.tryBegin(
+          state: _smallStepState,
+          body: this,
+          intent: intent,
+          solidCandidates: _solidCollisions,
+          ignoredHorizontalRoots: _ignoredHorizontalSolidRoots,
+          velocity: velocity,
+          basisSpeed: stepBase,
+          terrain: outdoor?.underGround.terrainField,
+          horizontalDxAttempt: horizontalDx,
+        );
       }
     }
 
-    // 明示的に水平位置を更新
-    position.x += horizontalDx;
-
     // 垂直方向の移動 (重力、ジャンプ、および掘削)
     if (_enableVerticalMovement) {
-      final steppingVertical = outdoorScene &&
-          _physicsStepOverActive &&
-          !isDigging &&
-          !isOnLadder;
-
-      if (steppingVertical) {
-        position.y += velocity.y * dt;
-        _tryFinishPhysicsStepOverPlayer();
-      } else if (isDigging) {
+      if (isDigging) {
         // 掘削中は重力は通常無視され、垂直速度は直接制御される
         if (isMovingDown) {
           velocity.y = effectiveSpeed * 0.25; // 下に掘る
@@ -915,9 +910,12 @@ class Player extends SpriteAnimationComponent
         }
       }
 
-      // 全ての計算後に最終的な垂直速度を適用
-      if (!steppingVertical) {
-        position.y += velocity.y * dt;
+      if (!isOnLadder &&
+          _enableHorizontalPhysics &&
+          _enableVerticalMovement) {
+        _applyKinematicMovement(dt);
+      } else if (!isOnLadder) {
+        position.y += velocity.y * KinematicMovement.clampPhysicsDt(dt);
       }
 
       // 運搬中のアイテムをプレイヤーの頭上に固定
@@ -962,8 +960,125 @@ class Player extends SpriteAnimationComponent
       Vector2(0.0, 1.0), // 2Dゲームにおける上方向
     );
 
-    _handleUnderGroundAndGroundCollisionLogic(dt);
+    _handleUnderGroundPostMove(dt);
   }
+
+  Vector2 _feetWorldPosition() =>
+      Vector2(absoluteCenter.x, absoluteCenter.y + size.y / 2);
+
+  /// 採掘スタンプの基準（足元より [size.y / 2] 上）。
+  Vector2 _digCarveOriginWorldPosition() =>
+      Vector2(absoluteCenter.x, absoluteCenter.y);
+
+  void _applyKinematicMovement(double dt) {
+    final currentScene = game.sceneManager.currentScene;
+    final outdoor =
+        currentScene is AbstractOutdoorScene ? currentScene : null;
+
+    Rect? groundSlabRect;
+    if (outdoor?.ground != null) {
+      groundSlabRect = PhysicsStepQueries.absoluteAabb(outdoor!.ground!);
+    }
+
+    final slabs = <Rect>[];
+    for (final raw in _solidCollisions) {
+      if (!raw.isMounted) continue;
+      final root = PhysicsStepQueries.solidRoot(raw);
+      if (_ignoredHorizontalSolidRoots.contains(root)) continue;
+      for (final slab in KinematicMovement.collectTerrainSlabs([raw])) {
+        if (isDigging &&
+            groundSlabRect != null &&
+            _rectsNearlyEqual(slab, groundSlabRect)) {
+          continue;
+        }
+        slabs.add(slab);
+      }
+    }
+
+    // 採掘中は岩盤で止めない
+    final TerrainField? terrain =
+        outdoor != null && !isDigging ? outdoor.underGround.terrainField : null;
+
+    if (outdoor != null && groundSlabRect != null && !isDigging) {
+      slabs.add(groundSlabRect);
+    }
+
+    final result = KinematicMovement.integrate(
+      body: this,
+      velocity: velocity,
+      dt: dt,
+      config: KinematicConfig(
+        gravity: effectiveGravity,
+        maxFallSpeed: maxFallSpeed,
+        maxHorizontalSpeed: effectiveSpeed * 2.5,
+        applyGravity: _applyGravity && !_isJumping && !isDigging,
+        enableHorizontal: _enableHorizontalPhysics && !iscrouching,
+        enableVertical: true,
+        startOnGround: isDigging ? false : isOnGround,
+        enableFootSnap: !isDigging,
+      ),
+      terrain: terrain,
+      staticSlabs: slabs,
+    );
+
+    if (isDigging) {
+      isOnGround = false;
+      if (outdoor != null) {
+        _tickDigCarve(outdoor);
+      }
+    } else {
+      _digCarveFrameCounter = 0;
+      isOnGround = result.isOnGround;
+      if (isOnGround && velocity.y > 0) {
+        velocity.y = 0;
+        _isJumping = false;
+      }
+    }
+  }
+
+  /// 6フレームに1回、足元と掘削速度に応じた前方へスタンプを刻む。
+  void _tickDigCarve(AbstractOutdoorScene outdoor) {
+    final dir = _digDirectionVector();
+    if (dir == null) {
+      _digCarveFrameCounter = 0;
+      return;
+    }
+
+    _digCarveFrameCounter++;
+    if (_digCarveFrameCounter < digCarveIntervalFrames) {
+      return;
+    }
+    _digCarveFrameCounter = 0;
+
+    final ug = outdoor.underGround;
+    final radius = ug.passageRadiusForPlayer();
+    final origin = _digCarveOriginWorldPosition();
+
+    final digSpeed = effectiveSpeed * 0.35;
+    final lookAhead = max(
+      20.0,
+      digSpeed * digCarveIntervalFrames / 60.0,
+    );
+    final ahead = origin + dir * lookAhead;
+    ug.carveCapsule(origin, ahead, radius);
+  }
+
+  Vector2? _digDirectionVector() {
+    if (isMovingDown) return Vector2(0, 1);
+    if (isMovingUp) return Vector2(0, -1);
+    if (isMovingRight) return Vector2(1, 0);
+    if (isMovingLeft) return Vector2(-1, 0);
+    return null;
+  }
+
+  static bool _rectsNearlyEqual(Rect a, Rect b) =>
+      (a.left - b.left).abs() < 2 &&
+      (a.top - b.top).abs() < 2 &&
+      (a.width - b.width).abs() < 2 &&
+      (a.height - b.height).abs() < 2;
+
+  Vector2 _feetFromCenter(Vector2 center) =>
+      Vector2(center.x, center.y + size.y / 2);
 
   // オートプレイ用のロジック
   void _performAutoPlay(double dt) {
@@ -974,14 +1089,8 @@ class Player extends SpriteAnimationComponent
     isMovingDown = false;
 
     // 通常の移動処理
-    velocity.x = effectiveSpeed * 0.7; // 少しゆっくり歩く
+    velocity.x = effectiveSpeed * 0.7;
     animation = movingRightAnimation;
-    position.x += velocity.x * dt;
-
-    // パララックス更新
-    final double playerDx = velocity.x * dt;
-    game.cameraController.updateBackgroundParallax(playerDx);
-    _lastPlayerX = position.x;
 
     // 崖（世界の右端）に到達したらリセット（飛び降り または 帰還）
     if (position.x > 1000) { 
@@ -1182,6 +1291,9 @@ class Player extends SpriteAnimationComponent
 
   void toggleDigging([bool? diggingState]) {
     isDigging = diggingState ?? !isDigging;
+    if (!isDigging) {
+      _digCarveFrameCounter = 0;
+    }
     final bool isDiggingOnGround = diggingState != null && diggingState;
 
     // 依存ルートの演出：採掘モーションの高速化
@@ -1577,153 +1689,20 @@ class Player extends SpriteAnimationComponent
 
   // 衝突ロジック メソッド ==============================================================================
 
-  PositionComponent? _findPlayerPhysicsStepWallPredicted(
-    double dxAttempt,
-    int intentSign,
-  ) {
-    if (intentSign == 0 || dxAttempt.abs() < 1e-6) return null;
-    final base = PhysicsStepQueries.absoluteAabb(this);
-    final shifted = Rect.fromLTRB(
-      base.left + dxAttempt,
-      base.top,
-      base.right + dxAttempt,
-      base.bottom,
-    );
-
-    for (final raw in _solidCollisions) {
-      final root = PhysicsStepQueries.solidRoot(raw);
-      if (root is! PhysicsStepObstacleMixin) continue;
-      if (root.physicsStepClearHeight > size.y / 2) continue;
-
-      final solidRect = PhysicsStepQueries.absoluteAabb(root);
-      if (!shifted.overlaps(solidRect)) continue;
-
-      final ox = PhysicsStepQueries.axisOverlap(
-        shifted.left,
-        shifted.right,
-        solidRect.left,
-        solidRect.right,
-      );
-      final oy = PhysicsStepQueries.axisOverlap(
-        shifted.top,
-        shifted.bottom,
-        solidRect.top,
-        solidRect.bottom,
-      );
-      if (ox <= 0 || oy <= 0) continue;
-      if (ox >= oy) continue;
-
-      final towardWall = solidRect.center.dx >= shifted.center.dx ? 1 : -1;
-      if (intentSign != towardWall) continue;
-
-      return root;
-    }
-    return null;
-  }
-
-  void _tryFinishPhysicsStepOverPlayer() {
-    final t = _physicsStepOverTarget;
-    if (t == null || !t.isMounted || t is! PhysicsStepObstacleMixin) {
-      _physicsStepOverActive = false;
-      _physicsStepOverTarget = null;
-      return;
-    }
-    final feetBottom = PhysicsStepQueries.absoluteAabb(this).bottom;
-    if (feetBottom <= t.physicsStepSurfaceTopWorldY + 10) {
-      _physicsStepOverActive = false;
-      _physicsStepOverTarget = null;
-    }
-  }
-
-  void _handleUnderGroundAndGroundCollisionLogic(double dt) {
+  void _handleUnderGroundPostMove(double dt) {
     final currentScene = game.sceneManager.currentScene;
     if (currentScene is! AbstractOutdoorScene) {
-      return; // 屋外シーン以外では処理しない
+      return;
     }
-    final outdoorScene = currentScene; // AbstractOutdoorScene型であることが保証される
+    final ground = currentScene.groundComponent;
+    if (ground == null) return;
 
-    final ground = outdoorScene.groundComponent; // outdoorSceneから取得
-    final underGround = outdoorScene.underGround; // outdoorSceneから取得
-
-    // 次のフレームの中心位置
-    Vector2 predictedPosition = position + velocity * dt;
-
-    // 掘削中でない場合のみ、未採掘ブロックとの衝突を処理
-    if (inUnderGround && !isDigging) {
-      Vector2 predictedPlayerHitboxEdge = Vector2.copy(
-        predictedPosition,
-      ); // predictedPositionのコピーを作成
-
-      if (isMovingRight) {
-        predictedPlayerHitboxEdge.x = predictedPosition.x + 15;
-      }
-      if (isMovingLeft) {
-        predictedPlayerHitboxEdge.x = predictedPosition.x - 15;
-      }
-
-      // 方向に応じた予測衝突座標
-      double blockEdgeWorldX = 0;
-      // 貫通しているかのフラグ
-      bool isPenetratingX = false;
-      // 方向に応じた押し返しの量
-      double pushBackAmountX = 0;
-
-      if (!underGround.isDug(predictedPlayerHitboxEdge)) {
-        if (isMovingRight) {
-          blockEdgeWorldX =
-              underGround.getGridCellTopLeftWorld(predictedPosition).x +
-              UnderGround.digAreaSize;
-          isPenetratingX = predictedPlayerHitboxEdge.x > blockEdgeWorldX;
-          pushBackAmountX = -15;
-        }
-        if (isMovingLeft) {
-          blockEdgeWorldX =
-              underGround.getGridCellTopLeftWorld(predictedPosition).x;
-          isPenetratingX = predictedPlayerHitboxEdge.x < blockEdgeWorldX;
-          pushBackAmountX = 15;
-        }
-
-        if (isPenetratingX) {
-          velocity.x = 0;
-          position.x = blockEdgeWorldX + pushBackAmountX;
-        }
-      }
-
-      // 地形に頭突きしたときの処理 ------------------------------------------------------- //
-      final playerHeadY = position.y - (size.y / 2);
-      final blockAtHead = underGround.getGridCellTopLeftWorld(
-        Vector2(absoluteCenter.x, playerHeadY),
-      );
-
-      // 地上に頭突きしたときの処理
-      if (playerHeadY <= ground!.position.y + ground.groundHeight + 5 &&
-          velocity.y < 0) {
-        position.y = ground.position.y - (size.y / 2);
-        debugPrint('地上に頭突きしたときの処理');
-      }
-
-      // 未採掘エリアに頭突きしたときの処理
-      if (!underGround.isDug(blockAtHead)) {
-        velocity.y = 0;
-        position.y = blockAtHead.y + UnderGround.digAreaSize + (size.y / 2);
-      }
-
-      // 採掘済みエリアで足が浮いていたら重力を効かせる -------------------------------- //
-      final playerFootY = position.y + 25;
-      final blockAtFoot = underGround.getGridCellTopLeftWorld(
-        Vector2(absoluteCenter.x, playerFootY),
-      );
-      if (!underGround.isDug(blockAtFoot)) {
-        velocity.y = 0;
-        position.y = blockAtFoot.y - 23;
-      }
-    } else if (inUnderGround &&
-        isDigging &&
-        velocity.y < 0 &&
-        predictedPosition.y < ground!.position.y + ground.groundHeight) {
-      // --- 採掘中は地表に出ない --- //
+    if (inUnderGround && isDigging && velocity.y < 0) {
       final groundBottomY = ground.position.y + ground.groundHeight;
-      position.y = groundBottomY;
+      if (position.y < groundBottomY) {
+        position.y = groundBottomY;
+        velocity.y = 0;
+      }
     }
 
     // アイテム吸引 (Efficiency能力)

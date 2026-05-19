@@ -116,7 +116,6 @@ abstract class EnemyBase extends SpriteAnimationComponent
   void update(double dt) {
     super.update(dt);
 
-    // 物理（重力・着地・壁補正）を先に処理してから移動ロジックへ
     updatePhysics(dt);
 
     // velocity の水平減衰（ノックバックの摩擦）

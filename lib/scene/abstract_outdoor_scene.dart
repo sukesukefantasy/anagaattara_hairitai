@@ -713,12 +713,18 @@ abstract class AbstractOutdoorScene extends GameScene {
   }
 
   void updateDigAreas(Player player) {
-    if (player.isDigging && player.inUnderGround) {
-      if (player.position.y < game.initialGameCanvasSize.y) { 
-        return;
-      }
-      _underGround?.addDugArea(player.absoluteCenter); // nullチェックを追加
+    if (!player.isDigging) return;
+    if (_underGround == null) return;
+
+    if (!player.inUnderGround && !player.isMovingDown) return;
+
+    if (player.inUnderGround &&
+        player.position.y < game.initialGameCanvasSize.y) {
+      return;
     }
+
+    // 衝突コールバック用: 採掘エフェクト付きのグリッド登録（移動掘削は carveAt）
+    _underGround!.addDugArea(player.absoluteCenter);
   }
 
   bool isDug(Vector2 position) {

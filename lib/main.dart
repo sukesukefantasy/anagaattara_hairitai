@@ -24,6 +24,7 @@ import 'UI/windows/title_window.dart';
 import 'UI/windows/loading_window.dart';
 import 'scene/scene_manager.dart';
 import 'scene/abstract_outdoor_scene.dart';
+import 'component/common/physics/kinematic_movement.dart';
 import 'component/common/underground/underground.dart';
 import 'game_manager/audio_manager.dart';
 import 'scene/game_scene.dart';
@@ -678,7 +679,8 @@ class MyGame extends FlameGame
 
   @override
   void update(double dt) {
-    super.update(dt);
+    final physicsDt = KinematicMovement.clampPhysicsDt(dt);
+    super.update(physicsDt);
 
     audioManager.update(dt);
     timeService.update(dt);
