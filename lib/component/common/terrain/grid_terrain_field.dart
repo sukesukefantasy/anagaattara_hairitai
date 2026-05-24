@@ -20,6 +20,10 @@ class GridTerrainField implements TerrainField {
   });
 
   @override
+  bool isBlockedHorizontal(Rect worldAabb, {int moveSign = 0}) =>
+      isBlocked(worldAabb);
+
+  @override
   bool isBlocked(Rect worldAabb) {
     if (!worldAabb.overlaps(undergroundBounds)) {
       return false;

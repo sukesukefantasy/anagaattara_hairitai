@@ -21,6 +21,9 @@ class EnemyManager {
     return game.initialGameCanvasSize.y + 2;
   }
 
+  /// 歩行者の質量（プレイヤー [Player.mass] 前後のばらつき）。
+  double _rollWalkingEnemyMass() => 36 + _random.nextDouble() * 12;
+
   // スケジュール定義
   static const Map<int, Map<int, Map<String, dynamic>>> _schedule = {
     // 月曜から金曜 (1-5)
@@ -330,6 +333,7 @@ class EnemyManager {
           _feetSpawnY, // Anchor.bottomCenterに合わせたY座標（地面に揃える）
         ),
         direction: direction,
+        mass: _rollWalkingEnemyMass(),
         walkCycleSpeed: walkCycleSpeed,
       );
     } else {
@@ -384,6 +388,7 @@ class EnemyManager {
           _feetSpawnY, // Anchor.bottomCenterに合わせたY座標（地面に揃える）
         ),
         direction: finalDirection,
+        mass: _rollWalkingEnemyMass(),
         walkCycleSpeed: walkCycleSpeed,
       );
     } else {

@@ -1,4 +1,5 @@
 ﻿import 'package:flutter/material.dart';
+import 'responsive_ui_font.dart';
 import 'windows/message_window.dart';
 import 'windows/true_vault_dial_window.dart';
 import '../main.dart';
@@ -55,8 +56,8 @@ class WindowManager extends ChangeNotifier {
   double get currentWindowWidth => screenWidth;
   double get currentWindowHeight => screenHeight;
 
-  // 画面幅と高さに基づいた統一フォントサイズ
-  double get fontSize => (screenWidth < 600 || screenHeight < 500) ? 12.0 : 16.0;
+  // 画面幅と高さに基づいた統一フォントサイズ（MessageWindow 等）
+  double get fontSize => gameUiBaseFontSize(screenWidth, screenHeight);
 
   // コンストラクタで画面サイズを受け取る
   WindowManager({required this.screenWidth, required this.screenHeight});
@@ -147,6 +148,13 @@ class WindowManager extends ChangeNotifier {
 
   void changeWindow(GameWindowType type) {
     _currentWindowType = type;
+    notifyListeners();
+  }
+
+  /// オーバーレイのみ閉じる（メッセージキューは保持）。
+  void hideOverlay() {
+    _currentWindowType = GameWindowType.none;
+    _currentWindowContent = null;
     notifyListeners();
   }
 

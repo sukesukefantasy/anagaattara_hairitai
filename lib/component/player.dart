@@ -7,6 +7,9 @@ import '../main.dart';
 import '../UI/game_ui.dart';
 import 'game_stage/building/station.dart';
 import 'common/physics/kinematic_movement.dart';
+import 'common/physics/knockback_config.dart';
+import 'common/physics/entity_physics_mixin.dart';
+import 'common/physics/physics_body_queries.dart';
 import 'common/physics/physics_step_obstacle.dart';
 import 'common/physics/small_step_traversal.dart';
 import 'common/collision/collision_family.dart';
@@ -19,12 +22,14 @@ import 'item/item.dart';
 import '../scene/abstract_outdoor_scene.dart'; // AbstractOutdoorSceneをインポート
 import 'enemy/enemy_base.dart';
 import 'common/terrain/terrain_field.dart';
-import '../scene/game_scene.dart'; // GameSceneをインポート
 import '../game_manager/audio_manager.dart'; // Add this line
 import '../system/storage/game_runtime_state.dart'; // GameRuntimeStateをインポート
 import 'npc/npc.dart';
 import '../component/effect/hp_low_effect.dart';
 import '../component/effect/drowsiness_effect.dart';
+import 'game_stage/lighting/light_receiver.dart';
+import 'game_stage/lighting/lighting_participation.dart';
+import 'game_stage/lighting/lighting_participant.dart';
 import '../component/effect/residue_effect.dart'; // Add this line
 import 'effect/residue_pickup.dart';
 import 'player_cargo_terminal.dart';
@@ -62,11 +67,37 @@ class MiningPointsNotifier extends ChangeNotifier {
 }
 
 class Player extends SpriteAnimationComponent
-    with CollisionCallbacks, HasGameReference<MyGame>, HasCollisionFamily {
+    with
+        CollisionCallbacks,
+        HasGameReference<MyGame>,
+        HasCollisionFamily,
+        LightingParticipant,
+        LightReceiver {
   @override
   CollisionFamily get collisionFamily => CollisionFamily.player;
 
+  @override
+  LightingParticipation get lightingParticipation =>
+      LightingParticipation.full;
+
+  @override
+  List<SpriteAnimation> get lightingMaskAnimations => [
+    idleFrontAnimation,
+    idleLeftAnimation,
+    idleRightAnimation,
+    movingLeftAnimation,
+    movingRightAnimation,
+    jumpingAnimation,
+    jumpingLeftAnimation,
+    jumpingRightAnimation,
+    fallingAnimation,
+    crouchingAnimation,
+    diggingAnimation,
+  ];
+
   static const double speed = 180.0;
+  /// プレイヤーの質量（ノックバック等の物理計算に使用）。
+  static const double mass = KnockbackConfig.playerMass;
   static const double powerOfPlayer = 1.25;
   static const double gravity = 700.0;
   static const double maxFallSpeed = 1400.0;
@@ -167,17 +198,36 @@ class Player extends SpriteAnimationComponent
   int get currentMiningPoints => miningPointsNotifier.value;
 
   Vector2 get facingDirection {
-    if (isMovingLeft) {
-      _lastMoveDirection.x = -1;
-      return Vector2(-1, 0);
+    if (isMovingUp) return Vector2(0, -1);
+    if (isMovingDown) return Vector2(0, 1);
+    if (isMovingLeft) return Vector2(-1, 0);
+    if (isMovingRight) return Vector2(1, 0);
+    if (_lastMoveDirection.y != 0) {
+      return Vector2(0, _lastMoveDirection.y.sign);
+    }
+    if (_lastMoveDirection.x != 0) {
+      return Vector2(_lastMoveDirection.x.sign, 0);
+    }
+    return Vector2(_lastMoveDirection.x.sign, 0);
+  }
+
+  /// D-pad 入力から最後の向きを更新（地下・空中・採掘中を含む）。
+  void _syncLastMoveDirectionFromInput() {
+    if (isDigging) {
+      final digDir = _digDirectionVector();
+      if (digDir != null) {
+        _lastMoveDirection.setFrom(digDir);
+        return;
+      }
+    }
+    if (isMovingUp) {
+      _lastMoveDirection.setValues(0, -1);
+    } else if (isMovingDown) {
+      _lastMoveDirection.setValues(0, 1);
+    } else if (isMovingLeft) {
+      _lastMoveDirection.setValues(-1, 0);
     } else if (isMovingRight) {
-      _lastMoveDirection.x = 1;
-      return Vector2(1, 0);
-    } else if (_lastMoveDirection.x != 0) {
-      return Vector2(_lastMoveDirection.x.sign, 0);
-    } else {
-      // アイドル状態の場合、_lastMoveDirection.xを水平方向として返す
-      return Vector2(_lastMoveDirection.x.sign, 0);
+      _lastMoveDirection.setValues(1, 0);
     }
   }
 
@@ -223,6 +273,17 @@ class Player extends SpriteAnimationComponent
   bool get isSmallStepActive => _smallStepState.lastLiftApplied > 0;
   final Set<EnemyBase> _collidingEnemies = {};
   final Set<Item> _activeLadders = {}; // 接触中のはしごを保持
+
+  /// 外部ノックバック中は [update] が velocity.x を入力で上書きしない。
+  double _knockbackTimer = 0.0;
+
+  /// 同一相手からの接触ノックバッククールダウン（秒）。
+  final Map<int, double> _contactKnockbackCooldownBySource = {};
+
+  /// 敵接触時の残滓バーストクールダウン（秒）。
+  double _contactResidueBurstCooldown = 0.0;
+
+  bool get isUnderKnockback => _knockbackTimer > 0;
 
   // インタラクション関連のプロパティを追加
   bool canInteract = false;
@@ -271,6 +332,7 @@ class Player extends SpriteAnimationComponent
   // ダメージ表現用のフラグとタイマー
   bool _isTintedRed = false;
   double _tintTimer = 0.0;
+  ColorFilter? _ambientColorFilter;
 
   // movingAnimationの最終フレームインデックスを追跡
   int _lastMovingAnimationFrameIndex = -1;
@@ -324,12 +386,18 @@ class Player extends SpriteAnimationComponent
     // 静止状態のアニメーション（1-2フレーム） -> idleFrontAnimation
     idleFrontAnimation = SpriteAnimation.fromFrameData(
       spriteSheet01,
-      SpriteAnimationData.variable(
-        amount: 2,
-        stepTimes: [2, 0.4],
-        textureSize: Vector2.all(50),
-        loop: true,
-      ),
+      SpriteAnimationData([
+        SpriteAnimationFrameData(
+          srcPosition: Vector2.zero(),
+          srcSize: Vector2.all(50),
+          stepTime: 2,
+        ),
+        SpriteAnimationFrameData(
+          srcPosition: Vector2(50, 0),
+          srcSize: Vector2(49, 50),
+          stepTime: 0.4,
+        ),
+      ], loop: true),
     );
 
     // 左向き静止アニメーション（3フレーム）
@@ -345,23 +413,21 @@ class Player extends SpriteAnimationComponent
       loop: true,
     );
 
-    // 左向き歩行アニメーション（4-5フレーム）
-    final movingLeftSprites = [
-      Sprite(
-        spriteSheet01,
-        srcPosition: Vector2(50 * 3, 0), // 4番目のフレーム (インデックス3)
-        srcSize: Vector2.all(50),
-      ),
-      Sprite(
-        spriteSheet01,
-        srcPosition: Vector2(50 * 4, 0), // 5番目のフレーム (インデックス4)
-        srcSize: Vector2.all(50),
-      ),
-    ];
-    movingLeftAnimation = SpriteAnimation.spriteList(
-      movingLeftSprites,
-      stepTime: 0.2,
-      loop: true,
+    // 左向き歩行アニメーション（4-5フレーム）。5列目は隣フレーム bleed 回避で 49px。
+    movingLeftAnimation = SpriteAnimation.fromFrameData(
+      spriteSheet01,
+      SpriteAnimationData([
+        SpriteAnimationFrameData(
+          srcPosition: Vector2(50 * 3, 0),
+          srcSize: Vector2.all(50),
+          stepTime: 0.2,
+        ),
+        SpriteAnimationFrameData(
+          srcPosition: Vector2(50 * 4, 0),
+          srcSize: Vector2(49, 50),
+          stepTime: 0.2,
+        ),
+      ], loop: true),
     );
 
     // 右向き静止アニメーション（6フレーム）
@@ -528,6 +594,14 @@ class Player extends SpriteAnimationComponent
   void update(double dt) {
     super.update(dt);
 
+    if (_knockbackTimer > 0) {
+      _knockbackTimer -= dt;
+    }
+    if (_contactResidueBurstCooldown > 0) {
+      _contactResidueBurstCooldown -= dt;
+    }
+    _tickContactKnockbackCooldowns(dt);
+
     SmallStepTraversal.endFrame(
       _smallStepState,
       _ignoredHorizontalSolidRoots,
@@ -541,21 +615,11 @@ class Player extends SpriteAnimationComponent
       _performAutoPlay(dt);
       _applyKinematicMovement(dt);
       _handleUnderGroundPostMove(dt);
-      final playerDx = position.x - _lastPlayerX;
-      if (playerDx != 0) {
-        game.cameraController.updateBackgroundParallax(playerDx);
-      }
       _lastPlayerX = position.x;
       return;
     }
 
-    final double currentPlayerX = position.x;
-    final double playerDx = currentPlayerX - _lastPlayerX;
-    if (playerDx != 0) {
-      // プレイヤーが移動した場合のみ背景を更新
-      game.cameraController.updateBackgroundParallax(playerDx);
-    }
-    _lastPlayerX = currentPlayerX; // 現在のX座標を更新
+    _lastPlayerX = position.x;
 
     // 外的刺激（ストレス）値の自動回復
     updateStress(currentStress - 5 * dt);
@@ -648,7 +712,7 @@ class Player extends SpriteAnimationComponent
       _tintTimer -= dt;
       if (_tintTimer <= 0) {
         _isTintedRed = false;
-        paint.colorFilter = null; // フィルターを解除
+        _applyActiveColorFilter();
       }
     }
 
@@ -684,7 +748,9 @@ class Player extends SpriteAnimationComponent
         animation = idleFrontAnimation; // 正面向き静止アニメーションに設定
       } else {
         // 4秒未満のアイドル時は最後に移動した方向のアニメーション
-        if (_lastMoveDirection.x > 0) {
+        if (_lastMoveDirection.y < 0 || _lastMoveDirection.y > 0) {
+          animation = idleFrontAnimation; // 上下向き後のアイドル
+        } else if (_lastMoveDirection.x > 0) {
           animation = idleRightAnimation; // 右向き静止
         } else if (_lastMoveDirection.x < 0) {
           animation = idleLeftAnimation; // 左向き静止
@@ -704,21 +770,25 @@ class Player extends SpriteAnimationComponent
       if (isDigging) {
         // 掘削中は押している方向にのみ移動（横掘り・縦掘り）
         final digSpeed = effectiveSpeed * 0.35;
-        if (isMovingRight) {
-          velocity.x = digSpeed;
-        } else if (isMovingLeft) {
-          velocity.x = -digSpeed;
-        } else {
-          velocity.x = 0;
+        if (!isUnderKnockback) {
+          if (isMovingRight) {
+            velocity.x = digSpeed;
+          } else if (isMovingLeft) {
+            velocity.x = -digSpeed;
+          } else {
+            velocity.x = 0;
+          }
         }
         animation = diggingAnimation;
       } else if (iscrouching) {
         // しゃがみ状態の水平移動速度
-        if (velocity.x.abs() > 0.1) {
-          // 完全に停止するまでのしきい値
-          velocity.x *= 0.9;
-        } else {
-          velocity.x = 0;
+        if (!isUnderKnockback) {
+          if (velocity.x.abs() > 0.1) {
+            // 完全に停止するまでのしきい値
+            velocity.x *= 0.9;
+          } else {
+            velocity.x = 0;
+          }
         }
         animation = crouchingAnimation;
       } else {
@@ -727,18 +797,20 @@ class Player extends SpriteAnimationComponent
         if (isRunning) {
           currentBaseSpeed *= 1.5; // ダッシュ時は1.5倍
         }
-        velocity.x = (isMovingRight ? currentBaseSpeed : (isMovingLeft ? -currentBaseSpeed : 0));
+        if (!isUnderKnockback) {
+          velocity.x = (isMovingRight ? currentBaseSpeed : (isMovingLeft ? -currentBaseSpeed : 0));
+        }
 
         if (isMovingRight) {
           animation = movingRightAnimation;
-          _lastMoveDirection.x = 1.0;
         } else if (isMovingLeft) {
           animation = movingLeftAnimation;
-          _lastMoveDirection.x = -1.0;
         }
       }
     } else {
-      velocity.x = 0;
+      if (!isUnderKnockback) {
+        velocity.x = 0;
+      }
       if (isDigging) {
         animation = diggingAnimation;
       } else {
@@ -753,7 +825,7 @@ class Player extends SpriteAnimationComponent
         !isOnLadder &&
         _enableHorizontalPhysics &&
         _enableVerticalMovement &&
-        isOnGround) {
+        (isOnGround || inUnderGround)) {
       final intent = velocity.x.sign.toInt();
       if (intent != 0 && velocity.x.abs() > 1.0) {
         final horizontalDx = velocity.x * dt;
@@ -802,7 +874,14 @@ class Player extends SpriteAnimationComponent
         isOnGround = false; // 積極的に掘削中は、通常の物理的な「地面にいる」状態ではない
       } else if (isOnLadder) {
         // はしご移動
-        if (isMovingUp) {
+        if (_isJumping) {
+          if (isJumpButtonPressed && _jumpTime < maxJumpTime) {
+            _jumpTime += dt;
+            velocity.y = jumpForce;
+          } else {
+            _isJumping = false;
+          }
+        } else if (isMovingUp) {
           velocity.y = -effectiveSpeed;
         } else if (isMovingDown) {
           velocity.y = effectiveSpeed;
@@ -844,26 +923,16 @@ class Player extends SpriteAnimationComponent
           }
         }
 
-        // まずは重力による影響を計算
-        if (_applyGravity && !_isJumping) {
-          double gravityForce = effectiveGravity;
-
-          velocity.y += gravityForce * dt;
-        }
-
         // isOnGroundの判定は、_solidCollisionsと現在の垂直速度に基づく
-        bool newIsOnGround = false; // 新しいisOnGroundの状態を一時的に保持
+        bool newIsOnGround = false;
 
-        // プレイヤーの足元に幅を持つ当たり判定を作成
         final Rect playerFootRect = Rect.fromLTWH(
-          absolutePosition.x -
-              size.x * 0.05, // プレイヤーの中心から幅の半分だけ左にオフセット (幅0.1の半分)
-          absolutePosition.y + size.y / 2, // プレイヤーの足元の最下部に正確に合わせる
-          size.x * 0.1, // プレイヤーの幅の10%を使用
-          2, // 厚み
+          absolutePosition.x - size.x * 0.05,
+          absolutePosition.y + size.y / 2,
+          size.x * 0.1,
+          2,
         );
 
-        // _solidCollisions内の各衝突をチェック
         for (final collision in _solidCollisions) {
           if (collision.toRect().overlaps(playerFootRect)) {
             newIsOnGround = true;
@@ -871,13 +940,12 @@ class Player extends SpriteAnimationComponent
           }
         }
 
-        // 垂直速度が0以上かつ下向きの速度がある場合は接地とみなす
         if (newIsOnGround && velocity.y >= 0) {
-          velocity.y = 0; // 地面にいる場合は垂直速度を0に固定
-          _isJumping = false; // 着地したのでジャンプ終了
+          velocity.y = 0;
+          _isJumping = false;
         }
 
-        isOnGround = newIsOnGround; // 新しい接地状態を適用
+        isOnGround = newIsOnGround;
 
         // アニメーションの切り替え: ジャンプ、落下、静止、移動
         if (!isOnGround) {
@@ -890,22 +958,15 @@ class Player extends SpriteAnimationComponent
             } else {
               animation = jumpingAnimation;
             }
-          } else if (velocity.y > 50) {
+          } else if (velocity.y > 150) {
             // 落下中
             animation = fallingAnimation;
           }
         } else if (!isDigging && !iscrouching) {
-          // 地上にいて掘削中でなく、しゃがみ中でもない場合
-          // 地上にいて掘削中でない場合
           if (isMovingRight) {
             animation = movingRightAnimation;
-            _lastMoveDirection.x = 1.0;
           } else if (isMovingLeft) {
             animation = movingLeftAnimation;
-            _lastMoveDirection.x = -1.0;
-          } else {
-            // 移動していない場合、アニメーションはアイドルタイマーによって決定される
-            // ここでは何もしない
           }
         }
       }
@@ -914,13 +975,15 @@ class Player extends SpriteAnimationComponent
           _enableHorizontalPhysics &&
           _enableVerticalMovement) {
         _applyKinematicMovement(dt);
-      } else if (!isOnLadder) {
+      } else if (isOnLadder) {
+        _applyLadderKinematicMovement(dt);
+      } else {
         position.y += velocity.y * KinematicMovement.clampPhysicsDt(dt);
       }
 
-      // 運搬中のアイテムをプレイヤーの頭上に固定
+      // 運搬中のアイテムをプレイヤー頭上に固定（ワールド座標）
       if (carriedItem != null) {
-        carriedItem!.position = Vector2(size.x / 2, 0);
+        _syncCarriedItemWorldPosition();
       }
     }
 
@@ -943,15 +1006,17 @@ class Player extends SpriteAnimationComponent
       }
     }
 
+    // 向き保存は _syncLastMoveDirectionFromInput のみが担当（速度で上書きしない）
+    _syncLastMoveDirectionFromInput();
+
     // プレイヤーの向きに応じてリスナーの 'at' ベクトルを設定
-    Vector2 listenerAt;
+    final Vector2 listenerAt;
     if (velocity.x != 0) {
-      // 水平移動がある場合
-      listenerAt = Vector2(velocity.x.sign, 0.0); // 移動方向に合わせる
-      _lastMoveDirection = listenerAt; // 最後の移動方向を更新
+      listenerAt = Vector2(velocity.x.sign, 0.0);
+    } else if (velocity.y != 0) {
+      listenerAt = Vector2(0.0, velocity.y.sign);
     } else {
-      // 移動していない場合は、最後に移動していた方向を維持
-      listenerAt = _lastMoveDirection;
+      listenerAt = facingDirection;
     }
 
     game.audioManager.updateListener(
@@ -970,7 +1035,11 @@ class Player extends SpriteAnimationComponent
   Vector2 _digCarveOriginWorldPosition() =>
       Vector2(absoluteCenter.x, absoluteCenter.y);
 
-  void _applyKinematicMovement(double dt) {
+  ({
+    List<Rect> slabs,
+    List<Rect> floorSlabList,
+    TerrainField? terrain,
+  }) _collectKinematicCollisionContext() {
     final currentScene = game.sceneManager.currentScene;
     final outdoor =
         currentScene is AbstractOutdoorScene ? currentScene : null;
@@ -981,10 +1050,16 @@ class Player extends SpriteAnimationComponent
     }
 
     final slabs = <Rect>[];
+    final floorSlabList = <Rect>[];
+    final ug = outdoor?.underGround;
+    if (ug != null) {
+      _solidCollisions.remove(ug);
+    }
     for (final raw in _solidCollisions) {
       if (!raw.isMounted) continue;
       final root = PhysicsStepQueries.solidRoot(raw);
       if (_ignoredHorizontalSolidRoots.contains(root)) continue;
+      if (ug != null && identical(root, ug)) continue;
       for (final slab in KinematicMovement.collectTerrainSlabs([raw])) {
         if (isDigging &&
             groundSlabRect != null &&
@@ -995,13 +1070,23 @@ class Player extends SpriteAnimationComponent
       }
     }
 
-    // 採掘中は岩盤で止めない
     final TerrainField? terrain =
         outdoor != null && !isDigging ? outdoor.underGround.terrainField : null;
 
     if (outdoor != null && groundSlabRect != null && !isDigging) {
       slabs.add(groundSlabRect);
     }
+
+    if (ug != null && inUnderGround && !isDigging) {
+      floorSlabList.addAll(ug.floorSlabs());
+      slabs.addAll(floorSlabList);
+    }
+
+    return (slabs: slabs, floorSlabList: floorSlabList, terrain: terrain);
+  }
+
+  void _applyKinematicMovement(double dt) {
+    final collision = _collectKinematicCollisionContext();
 
     final result = KinematicMovement.integrate(
       body: this,
@@ -1017,13 +1102,17 @@ class Player extends SpriteAnimationComponent
         startOnGround: isDigging ? false : isOnGround,
         enableFootSnap: !isDigging,
       ),
-      terrain: terrain,
-      staticSlabs: slabs,
+      terrain: collision.terrain,
+      staticSlabs: collision.slabs,
+      preferredFootSlabs: collision.floorSlabList,
+      oneWaySlabs: collision.floorSlabList,
+      dropThroughOneWaySlabs: iscrouching && inUnderGround,
     );
 
     if (isDigging) {
       isOnGround = false;
-      if (outdoor != null) {
+      final outdoor = game.sceneManager.currentScene;
+      if (outdoor is AbstractOutdoorScene) {
         _tickDigCarve(outdoor);
       }
     } else {
@@ -1033,6 +1122,41 @@ class Player extends SpriteAnimationComponent
         velocity.y = 0;
         _isJumping = false;
       }
+    }
+  }
+
+  /// はしご上の移動（地形・slab 衝突あり、重力なし）。
+  void _applyLadderKinematicMovement(double dt) {
+    final collision = _collectKinematicCollisionContext();
+
+    final result = KinematicMovement.integrate(
+      body: this,
+      velocity: velocity,
+      dt: dt,
+      config: KinematicConfig(
+        gravity: effectiveGravity,
+        maxFallSpeed: maxFallSpeed,
+        maxHorizontalSpeed: effectiveSpeed * 2.5,
+        applyGravity: false,
+        enableHorizontal: _enableHorizontalPhysics && !iscrouching,
+        enableVertical: true,
+        startOnGround: isOnGround,
+        enableFootSnap: true,
+      ),
+      terrain: collision.terrain,
+      staticSlabs: collision.slabs,
+      preferredFootSlabs: collision.floorSlabList,
+      oneWaySlabs: collision.floorSlabList,
+      dropThroughOneWaySlabs: false,
+    );
+
+    isOnGround = result.isOnGround;
+    if (result.hitCeiling && velocity.y < 0) {
+      velocity.y = 0;
+      _isJumping = false;
+    }
+    if (isOnGround && velocity.y > 0) {
+      velocity.y = 0;
     }
   }
 
@@ -1051,7 +1175,6 @@ class Player extends SpriteAnimationComponent
     _digCarveFrameCounter = 0;
 
     final ug = outdoor.underGround;
-    final radius = ug.passageRadiusForPlayer();
     final origin = _digCarveOriginWorldPosition();
 
     final digSpeed = effectiveSpeed * 0.35;
@@ -1060,7 +1183,7 @@ class Player extends SpriteAnimationComponent
       digSpeed * digCarveIntervalFrames / 60.0,
     );
     final ahead = origin + dir * lookAhead;
-    ug.carveCapsule(origin, ahead, radius);
+    ug.carveCapsule(origin, ahead, ug.passageRadiusForPlayer());
   }
 
   Vector2? _digDirectionVector() {
@@ -1246,12 +1369,12 @@ class Player extends SpriteAnimationComponent
     }
 
     for (final enemy in enemies) {
-      if (enemy.toAbsoluteRect().overlaps(attackRect)) {
+      if (PhysicsBodyQueries.physicsAabb(enemy).overlaps(attackRect)) {
         debugPrint('Melee Hit: Enemy at ${enemy.position}');
 
         final equippedItemName = itemBag.equippedItemName;
         double itemAttackPower = 0.0;
-        double itemMass = 0.5; // デフォルトの重さ（素手想定）
+        double itemMass = KnockbackConfig.meleeBareHandMass;
 
         if (equippedItemName != null) {
           final tempItem = ItemFactory.createItemByName(equippedItemName, Vector2.zero());
@@ -1262,9 +1385,11 @@ class Player extends SpriteAnimationComponent
         }
 
         final damage = powerOfPlayer * (itemAttackPower + itemMass * 2.0);
-        final impulse = Vector2(
-          facingDirection.x * 300 * scale * (itemMass + 0.5),
-          -50 * scale * (itemMass + 0.5),
+        final impulse = KnockbackConfig.meleeImpulse(
+          itemMass: itemMass,
+          enemyMass: enemy.mass,
+          facingX: facingDirection.x,
+          scale: scale,
         );
 
         enemy.hitByMelee(damage, impulse);
@@ -1383,7 +1508,8 @@ class Player extends SpriteAnimationComponent
   }
 
   void _updateIscrouching() {
-    iscrouching = GameUI.downButtonPressedNotifier.value && !isDigging;
+    iscrouching =
+        GameUI.downButtonPressedNotifier.value && !isDigging && !isOnLadder;
   }
 
   // ステータス管理メソッド ==============================================================================
@@ -1467,14 +1593,40 @@ class Player extends SpriteAnimationComponent
   }
 
   // アイテム運搬メソッド --------------------------------------------------------------------------------
+  void _syncCarriedItemWorldPosition() {
+    if (carriedItem == null) return;
+    carriedItem!.syncDisplayAnchor();
+    // Item は Anchor.center — position はスプライト中心のワールド座標
+    carriedItem!.position = Vector2(
+      absoluteCenter.x,
+      absoluteCenter.y - size.y / 2,
+    );
+  }
+
   // アイテム運搬を開始するメソッド
   Future<void> startCarrying(Item item) async {
     debugPrint('Player: startCarrying called for ${item.name}');
+
+    var carryItem = item;
+    if (ItemFactory.isLanternLightItem(item)) {
+      if (item.isMounted) {
+        item.removeFromParent();
+      }
+      final lantern = ItemFactory.createPlacedWorldItemByName(
+        item.name,
+        Vector2.zero(),
+      );
+      if (lantern != null) {
+        lantern.syncDisplayAnchor();
+        carryItem = lantern;
+      }
+    }
+
     // 運搬アイテムの重複チェック
     if (carriedItem != null) {
       if (carriedItem!.name == item.name) {
         // 同じアイテムをすでに持っている場合は、位置だけ再設定して早期リターン
-        carriedItem!.position = Vector2(size.x / 2, -30);
+        _syncCarriedItemWorldPosition();
         isCarryingItemNotifier.value = true;
         debugPrint('Player: Already carrying ${item.name}, updated position.');
         return;
@@ -1484,54 +1636,64 @@ class Player extends SpriteAnimationComponent
     }
 
     // 物理挙動を無効にする
-    item.physicsBehavior.setEnabled(false);
-    item.physicsBehavior.velocity = Vector2.zero();
+    carryItem.physicsBehavior.setEnabled(false);
+    carryItem.physicsBehavior.velocity = Vector2.zero();
 
     // インベントリからアイテムを消費（初期化時のロード時は、すでにバッグにないはず）
-    if (itemBag.getItemCount(item.name) > 0) {
-      itemBag.removeItem(item.name);
+    if (itemBag.getItemCount(carryItem.name) > 0) {
+      itemBag.removeItem(carryItem.name);
     }
 
-    // プレイヤーの子として追加
-    if (item.isMounted) {
-      debugPrint('Player: Item ${item.name} was already mounted, removing from parent.');
-      item.removeFromParent();
+    // ワールドに追加（置く/投げと同じ absoluteCenter 基準で追従）
+    if (carryItem.isMounted) {
+      debugPrint(
+        'Player: Item ${carryItem.name} was already mounted, removing from parent.',
+      );
+      carryItem.removeFromParent();
     }
-    
-    debugPrint('Player: Adding item ${item.name} to player children.');
-    await add(item); 
-    
-    // アンカーを中央にし、プレイヤーの頭上に配置
-    item.anchor = Anchor.center;
-    item.position = Vector2(size.x / 2, -30); // プレイヤーの頭上(Playerの中心からの相対座標)
+
+    debugPrint('Player: Adding item ${carryItem.name} to world.');
+    await game.world.add(carryItem);
+    carriedItem = carryItem;
+    _syncCarriedItemWorldPosition();
 
     // 運搬中はアイテムの衝突判定を無効にする
-    debugPrint('Player: Waiting for item ${item.name} to load...');
-    await item.loaded;
-    final hitboxes = item.children.whereType<ShapeHitbox>();
+    debugPrint('Player: Waiting for item ${carryItem.name} to load...');
+    await carryItem.loaded;
+    final hitboxes = carryItem.children.whereType<ShapeHitbox>();
     if (hitboxes.isNotEmpty) {
       hitboxes.first.collisionType = CollisionType.inactive;
       debugPrint('Player: Item hitbox set to inactive.');
     }
 
     // スプライトを再ロードして表示を確実にする
-    if (item.spritePath.isNotEmpty) {
-      debugPrint('Player: Reloading sprite for ${item.name}: ${item.spritePath}');
-      item.sprite = await game.loadSprite(item.spritePath);
+    if (carryItem.spritePath.isNotEmpty) {
+      debugPrint(
+        'Player: Reloading sprite for ${carryItem.name}: ${carryItem.spritePath}',
+      );
+      carryItem.sprite = await ItemFactory.loadDisplaySprite(
+        game,
+        carryItem.name,
+        carryItem.spritePath,
+      );
+      await carryItem.attachWorldAnimationIfNeeded();
+      carryItem.syncDisplayAnchor();
     }
 
-    carriedItem = item;
+    _syncCarriedItemWorldPosition();
+
     // UIを確実に更新するために、一度falseにしてからtrueにする（再起動時のロード対策）
     isCarryingItemNotifier.value = false;
     isCarryingItemNotifier.value = true;
     debugPrint('Player: isCarryingItemNotifier set to true.');
-    
+
     GameUI.setPlaceButtonState(ActionButtonState.normal);
     GameUI.setStoreButtonState(ActionButtonState.normal);
 
-    // GameRuntimeStateに運搬アイテムの情報を保存
-    gameRuntimeState.carriedItemName = item.name;
-    debugPrint('Player: startCarrying finished for ${item.name}. Position: ${item.position}');
+    gameRuntimeState.carriedItemName = carryItem.name;
+    debugPrint(
+      'Player: startCarrying finished for ${carryItem.name}. Position: ${carryItem.position}',
+    );
   }
 
   // アイテム運搬を終了するメソッド
@@ -1548,19 +1710,32 @@ class Player extends SpriteAnimationComponent
     }
   }
 
+  /// 運搬アイテムを置く／投げるときのワールド座標（anchor=center）。
+  Vector2 _carriedItemPlaceCenter(Item object) {
+    final facing = facingDirection;
+    if (facing.y < 0) {
+      return absoluteCenter + Vector2(0, -size.y / 2);
+    }
+    if (facing.y > 0) {
+      return absoluteCenter.clone();
+    }
+    return absoluteCenter + Vector2(facing.x * 25, 0);
+  }
+
   // ワールドにアイテムオブジェクトを配置するメソッド
   Future<void> placeWorldObject(Item object) async {
-    final offset = facingDirection * 25;
-    final newPosition = Vector2(position.x + offset.x, position.y);
+    final newPosition = _carriedItemPlaceCenter(object);
 
     // 運搬を終了
     stopCarrying();
 
-    final item = ItemFactory.createItemByName(object.name, newPosition);
+    final item = ItemFactory.createPlacedWorldItemByName(object.name, newPosition);
     if (item != null) {
       item.isCollected = true;
       game.world.add(item);
-      await item.loaded; // ItemのonLoadが完了するまで待機
+      await ItemFactory.applyPlacedWorldItemWorldDisplay(item);
+      item.physicsBehavior.setEnabled(true);
+      await ItemFactory.registerPlacedLanternIfNeeded(item, game);
     }
 
     // GameRuntimeStateの運搬アイテム情報をリセット
@@ -1568,8 +1743,7 @@ class Player extends SpriteAnimationComponent
   }
 
   Future<void> throwWorldObject(Item object) async {
-    final offset = facingDirection * 25;
-    final newPosition = Vector2(position.x + offset.x, position.y - (size.y / 2));
+    final newPosition = _carriedItemPlaceCenter(object);
 
     // Stage 2 の追尾ギミック：近くの敵に吸い付く
     Vector2 finalPosition = newPosition;
@@ -1601,17 +1775,18 @@ class Player extends SpriteAnimationComponent
     // 運搬を終了
     stopCarrying();
 
-    final item = ItemFactory.createItemByName(object.name, finalPosition);
+    final item = ItemFactory.createPlacedWorldItemByName(object.name, finalPosition);
     if (item != null) {
       item.isCollected = true;
       game.world.add(item);
-      await item.loaded; // ItemのonLoadが完了するまで待機
+      await ItemFactory.applyPlacedWorldItemWorldDisplay(item);
 
       // プレイヤーの向きに応じて水平方向の力を設定
       final horizontalThrowForce =
           snapshotSpeedX.abs() * powerOfPlayer * snapshotFacingX;
       item.physicsBehavior.setVelocity(Vector2(horizontalThrowForce, -30));
       item.physicsBehavior.setEnabled(true);
+      await ItemFactory.registerPlacedLanternIfNeeded(item, game);
     }
 
     // GameRuntimeStateの運搬アイテム情報をリセット
@@ -1727,6 +1902,24 @@ class Player extends SpriteAnimationComponent
 
   // エフェクト管理 メソッド ==============================================================================
 
+  void setAmbientColorFilter(ColorFilter? filter) {
+    _ambientColorFilter = filter;
+    if (!_isTintedRed) {
+      _applyActiveColorFilter();
+    }
+  }
+
+  void _applyActiveColorFilter() {
+    if (_isTintedRed) {
+      paint.colorFilter = ColorFilter.mode(
+        const Color.fromARGB(200, 255, 0, 0),
+        BlendMode.srcATop,
+      );
+      return;
+    }
+    paint.colorFilter = _ambientColorFilter;
+  }
+
   void updateEffect() {
     // 耐久力が350以下の場合の画面全体のエフェクト管理
     if (currentIntegrity <= 350) {
@@ -1742,6 +1935,70 @@ class Player extends SpriteAnimationComponent
   }
 
   // 物理挙動管理 メソッド ==============================================================================
+
+  void _tickContactKnockbackCooldowns(double dt) {
+    if (_contactKnockbackCooldownBySource.isEmpty) return;
+    for (final key in _contactKnockbackCooldownBySource.keys.toList()) {
+      _contactKnockbackCooldownBySource[key] =
+          _contactKnockbackCooldownBySource[key]! - dt;
+    }
+    _contactKnockbackCooldownBySource.removeWhere((_, t) => t <= 0);
+  }
+
+  /// 接触時のノックバック（力積 p = mass × velocity、Δv = p × scale / プレイヤー質量）。
+  void applyKnockbackFromContact(ContactKnockbackSource other) {
+    if (unbeatable) return;
+
+    final sourceKey = identityHashCode(other);
+    if ((_contactKnockbackCooldownBySource[sourceKey] ?? 0) > 0) return;
+
+    var contactVelocity = other.contactVelocity.clone();
+
+    // 静止に近い接触: 分離方向へ最低速度を与える
+    if (contactVelocity.length2 < 25) {
+      var away = absoluteCenter - other.absoluteCenter;
+      if (away.length2 < 1.0) {
+        contactVelocity = Vector2(
+          other.contactFallbackDirectionX * KnockbackConfig.minContactSpeed,
+          0,
+        );
+      } else {
+        away.normalize();
+        contactVelocity = away * KnockbackConfig.minContactSpeed;
+      }
+    }
+
+    // p = m * v → Δv = p * scale / m_player
+    // 車 (mass≈100) を基準に、それより軽い歩行者は質量比で飛び量を抑える
+    final impulse = contactVelocity * other.contactMass;
+    final massWeight = (other.contactMass / KnockbackConfig.contactReferenceMass)
+        .clamp(0.2, 3.0);
+    var deltaV =
+        impulse * (KnockbackConfig.contactImpulseScale / mass) * massWeight;
+
+    // 極端な速度は物理サブステップ増加の原因になるため上限を設ける
+    if (deltaV.x.abs() > KnockbackConfig.maxContactDeltaVX) {
+      deltaV.x = KnockbackConfig.maxContactDeltaVX * deltaV.x.sign;
+    }
+
+    velocity.x += deltaV.x;
+    if (isOnGround) {
+      if (deltaV.y < 0) {
+        velocity.y = min(velocity.y, deltaV.y);
+      } else {
+        velocity.y = min(
+          velocity.y,
+          -deltaV.x.abs() * KnockbackConfig.contactGroundBounceFromHorizontal,
+        );
+      }
+    } else {
+      velocity.y += deltaV.y;
+    }
+
+    _knockbackTimer = KnockbackConfig.playerKnockbackDuration;
+    _contactKnockbackCooldownBySource[sourceKey] =
+        KnockbackConfig.contactKnockbackCooldown;
+  }
 
   void setPhysicsBehavior({
     required bool applyGravity,
@@ -1763,25 +2020,28 @@ class Player extends SpriteAnimationComponent
     super.onCollisionStart(intersectionPoints, other);
 
     if (other is EnemyBase) {
+      final isNewContact = !_collidingEnemies.contains(other);
       _collidingEnemies.add(other);
       isTouchingEnemy = true;
 
+      applyKnockbackFromContact(other);
+
       requestPlayPlayerSound('hits', volume: 0.8, playbackRate: 1.0);
 
-      // ストレス値とHPの更新
-      // 衝突している敵からのストレス増加
-      if (!unbeatable && _collidingEnemies.isNotEmpty) {
+      if (!unbeatable && isNewContact) {
         double totalAttackStress = 0.0;
         for (final enemy in _collidingEnemies) {
           totalAttackStress += enemy.attackStress;
         }
         updateStress(currentStress + totalAttackStress);
-        if (totalAttackStress > 1e-6) {
+        if (totalAttackStress > 1e-6 && _contactResidueBurstCooldown <= 0) {
           ResiduePickup.spawnCaptureResistantBurst(
             game,
             ResiduePickup.worldEmitOrigin(this),
             intensity: (totalAttackStress / 25).clamp(0.35, 2.5),
           );
+          _contactResidueBurstCooldown =
+              KnockbackConfig.contactResidueBurstCooldown;
         }
       }
 
@@ -1789,11 +2049,12 @@ class Player extends SpriteAnimationComponent
       if (!_isTintedRed) {
         _isTintedRed = true;
         _tintTimer = 0.2; // 0.2秒間赤くする
-        paint.colorFilter = ColorFilter.mode(
-          const Color.fromARGB(200, 255, 0, 0),
-          BlendMode.srcATop, // レイヤーを重ねるモード
-        );
+        _applyActiveColorFilter();
       }
+    }
+
+    if (other is Npc) {
+      applyKnockbackFromContact(other);
     }
 
     if (other is Item && other.name == 'はしご') {
@@ -1823,30 +2084,12 @@ class Player extends SpriteAnimationComponent
     // 現在のシーンが屋外シーンであることを確認
     final currentScene = game.sceneManager.currentScene;
     if (currentScene is AbstractOutdoorScene) {
-      final outdoorScene =
-          currentScene as GameScene; // ここで非nullableなGameSceneとしてキャスト
-
-      // UnderGroundとの衝突処理
+      // UnderGroundとの衝突処理（掘削は _tickDigCarve が担当）
       if (other == currentScene.underGround) {
-        final collisionPoint = intersectionPoints.reduce((a, b) {
-          return absoluteCenter.distanceTo(a) < absoluteCenter.distanceTo(b)
-              ? a
-              : b;
-        });
-
         if (isDigging) {
-          // 掘削中の場合
-          if (!(outdoorScene as dynamic).isDug(collisionPoint)) {
-            // ここでoutdoorSceneのupdateDigAreasを呼び出す
-            (outdoorScene as dynamic).updateDigAreas(this);
-            debugPrint('Dug new area at $collisionPoint');
-            return;
-          } else {
-            return;
-          }
-        } else {
-          _solidCollisions.add(other);
+          return;
         }
+        // 岩盤の当たりは terrainField が担当（巨大スラブで吸着しない）
       }
       // Groundとの衝突処理
       else if (other == currentScene.ground) {
@@ -1903,6 +2146,11 @@ class Player extends SpriteAnimationComponent
 
     _solidCollisions.remove(other);
     //debugPrint('Removed ${other.runtimeType} from _solidCollisions. Current solids: ${_solidCollisions.map((c) => c.runtimeType).join(', ')}');
+  }
+
+  @override
+  void render(Canvas canvas) {
+    renderWithComponentLighting(canvas, super.render);
   }
 }
 

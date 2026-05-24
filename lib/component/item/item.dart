@@ -1,10 +1,20 @@
 ﻿import 'dart:math';
+
+import 'package:flame/collisions.dart';
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 import '../../main.dart';
+import '../common/collision/collision_family.dart';
 import '../common/hitboxes/physics_hitbox.dart';
+import '../common/physics/entity_physics_mixin.dart';
 import '../common/physics/physics_behavior.dart';
+import '../game_stage/lighting/lantern_strip_light_registry.dart';
+import '../game_stage/lighting/light_receiver.dart';
+import '../game_stage/lighting/lighting_participation.dart';
+import '../game_stage/lighting/lighting_participant.dart';
 import '../player.dart';
+import 'item_sprite_sheet.dart';
+import 'lantern_item.dart';
 import 'item_effect_resolver/currency_item_effect_resolver.dart';
 import 'item_effect_resolver/custom_item_effect_resolver.dart';
 import 'item_effect_resolver/health_item_effect_resolver.dart';
@@ -40,12 +50,20 @@ enum BagWindowActionType {
   dispose, // 廃棄
   view, // 眺める
   custom, // 特殊
+  place, // 配置（確定時に消費）
   none, // なし
 }
 
 /// アイテムの基底クラス。
 abstract class Item extends SpriteComponent
-    with HasGameReference<MyGame>
+    with
+        HasGameReference<MyGame>,
+        CollisionCallbacks,
+        EntityPhysicsMixin,
+        ItemPhysicsMixin,
+        HasCollisionFamily,
+        LightingParticipant,
+        LightReceiver
     implements HasPhysicsBehavior {
   final String name;
   final String description;
@@ -58,7 +76,30 @@ abstract class Item extends SpriteComponent
   bool isCollected = false;
 
   @override
+  CollisionFamily get collisionFamily => CollisionFamily.item;
+
+  @override
+  int get stepOverHorizontalIntent => 0;
+
+  @override
+  LightingParticipation get lightingParticipation =>
+      LightingParticipation.full;
+
+  @override
   late final PhysicsBehavior physicsBehavior;
+
+  /// ワールド・運搬・UI 表示で共通の anchor。
+  static const Anchor displayAnchor = Anchor.center;
+
+  /// [Anchor.center] 用のコンポーネント位置（配置プレビュー矩形の中心）。
+  static Vector2 positionForWorldRect(Rect rect) =>
+      Vector2(rect.center.dx, rect.center.dy);
+
+  /// 親ローカル座標で anchor が載る位置（子 SAC の position 用）。
+  Vector2 displayAnchorLocalOffset([Anchor? value]) {
+    final a = value ?? anchor;
+    return Vector2(size.x * a.x, size.y * a.y);
+  }
 
   Item({
     required this.name,
@@ -71,6 +112,7 @@ abstract class Item extends SpriteComponent
     this.resourceType = ResourceType.none,
     required super.position,
     required super.size,
+    super.anchor = displayAnchor,
   }) {
     priority = 10;
     physicsBehavior = PhysicsBehavior(parent: this, mass: mass);
@@ -79,18 +121,81 @@ abstract class Item extends SpriteComponent
   @override
   Future<void> onLoad() async {
     await super.onLoad();
-    sprite = await Sprite.load(spritePath);
+    sprite = await ItemFactory.loadDisplaySprite(game, name, spritePath);
 
-    // ヒットボックスの追加
-    add(PhysicsHitbox(parent: this, size: size));
+    final hitbox = PhysicsHitbox(parent: this, size: size);
+    add(hitbox);
+    physicsBehavior.setHitbox(hitbox);
+  }
+
+  /// 親とスプライトシート子の anchor を [displayAnchor]（または指定値）に揃える。
+  void syncDisplayAnchor([Anchor? value]) {
+    final resolved = value ?? displayAnchor;
+    anchor = resolved;
+    final localOffset = displayAnchorLocalOffset(resolved);
+    for (final child in children.whereType<SpriteAnimationComponent>()) {
+      child
+        ..anchor = resolved
+        ..position = localOffset;
+    }
+  }
+
+  /// スプライトシート定義がある場合、ワールド表示用アニメーション子を付与する。
+  Future<void> attachWorldAnimationIfNeeded() async {
+    final meta = ItemFactory.spriteSheetMetaForName(name);
+    if (meta == null) return;
+
+    for (final child in children.whereType<SpriteAnimationComponent>().toList()) {
+      child.removeFromParent();
+    }
+
+    paint.color = Colors.transparent;
+
+    final image = sprite!.image;
+    add(
+      SpriteAnimationComponent(
+        animation: meta.createAnimation(image),
+        size: size,
+        anchor: displayAnchor,
+        position: displayAnchorLocalOffset(),
+      )..paint.filterQuality = FilterQuality.none,
+    );
+    syncDisplayAnchor();
   }
 
   @override
   void update(double dt) {
     super.update(dt);
-    if (isCollected) {
-      physicsBehavior.applyPhysics(dt);
+    if (!physicsBehavior.isEnabled) return;
+
+    updatePhysics(dt);
+
+    if (physicsBehavior.hitbox?.hasSupportFromBelow == true) {
+      final micro = PhysicsHitbox.itemMicroVelocityThreshold;
+      if (velocity.length2 <= micro * micro) {
+        velocity.setZero();
+        isOnGround = true;
+      } else if (velocity.y >= 0 && velocity.y.abs() < micro) {
+        velocity.y = 0;
+        isOnGround = true;
+      }
+    } else if (!isOnGround && physicsBehavior.hitbox?.isColliding != true) {
+      if (velocity.x.abs() > 0) {
+        velocity.x *= (1 - 0.1 * dt).clamp(0.0, 1.0);
+        if (velocity.x.abs() < 0.1) velocity.x = 0;
+      }
+      if (velocity.y.abs() > 0) {
+        velocity.y *= (1 - 0.1 * dt).clamp(0.0, 1.0);
+        if (velocity.y.abs() < 0.1) velocity.y = 0;
+      }
     }
+  }
+
+  /// 下の支持が外れたときに [PhysicsHitbox.onCollisionEnd] から呼ばれる。
+  void refreshStackSupportState() {
+    if (!physicsBehavior.isEnabled) return;
+    if (physicsBehavior.hitbox?.hasSupportFromBelow == true) return;
+    isOnGround = false;
   }
 
   /// UI等で表示する際の名称
@@ -116,6 +221,11 @@ abstract class Item extends SpriteComponent
   }
 
   bool get isMemoItem => name.contains('メモ') || name.contains('LOG');
+
+  @override
+  void render(Canvas canvas) {
+    renderWithComponentLighting(canvas, super.render);
+  }
 }
 
 /// 通貨アイテム
@@ -235,6 +345,10 @@ class ToolItem extends Item {
 /// 設置アイテム
 class PlaceableItem extends Item {
   final void Function(MyGame game)? placeableEffect;
+
+  /// true のとき [Player.inUnderGround] でないと配置モードを開始できない。
+  final bool requiresUnderGround;
+
   PlaceableItem({
     required super.name,
     required super.description,
@@ -243,12 +357,16 @@ class PlaceableItem extends Item {
     required super.position,
     required super.size,
     this.placeableEffect,
+    this.requiresUnderGround = false,
     super.mass,
   }) : super(type: ItemType.placeable);
 
+  bool canBeginPlacement(MyGame game) =>
+      !requiresUnderGround || game.player.inUnderGround;
+
   @override
   void onUse(Player player) {
-    placeableEffect?.call(game);
+    ItemFactory.tryStartPlaceablePlacement(player.game, this);
   }
 }
 
@@ -384,6 +502,43 @@ class ItemFactory {
       'placeableEffect': 'automationKit',
       'size': [25.0, 25.0],
       'mass': 2.0,
+    },
+    '岩盤充填剤': {
+      'type': ItemType.placeable,
+      'description': '地下で掘った穴を選んだ位置に埋め戻す。地下にいるときだけ「配置」できる。',
+      'spritePath': 'concrete_item.png',
+      'value': 40,
+      'placeableEffect': 'terrainFill',
+      'requiresUnderGround': true,
+      'size': [25.0, 25.0],
+      'mass': 1.8,
+    },
+    '床板': {
+      'type': ItemType.placeable,
+      'description':
+          '地下のトンネル内に水平な床を設置する。近くの床に高さが揃う。地下にいるときだけ「配置」できる。',
+      'spritePath': 'concrete_item.png',
+      'value': 35,
+      'placeableEffect': 'floorPlate',
+      'requiresUnderGround': true,
+      'size': [25.0, 25.0],
+      'mass': 1.5,
+    },
+    'ランタン': {
+      'type': ItemType.placeable,
+      'description': '暗い場所を照らす。持って運ぶか、足元に置ける。',
+      'spritePath': 'lantern.png',
+      'value': 150,
+      'placeableEffect': 'furniture',
+      'requiresUnderGround': true,
+      'size': [25.0, 25.0],
+      'mass': 1.0,
+      'brightnessLevel': 600,
+      'spriteSheet': {
+        'frameWidth': 51.0,
+        'frameHeight': 51.0,
+        'frameCount': 3,
+      },
     },
     'はしご': {
       'type': ItemType.tool,
@@ -599,6 +754,129 @@ class ItemFactory {
     },
   };
 
+  /// スプライトシートメタデータ（アニメーションアイテム用）。
+  static ItemSpriteSheetMeta? spriteSheetMetaForName(String name) {
+    final itemData = _itemDefinitions[name];
+    if (itemData == null) return null;
+    final raw = itemData['spriteSheet'] as Map<String, dynamic>?;
+    if (raw == null) return null;
+    return ItemSpriteSheetMeta.fromMap(raw);
+  }
+
+  /// [spritePath] からスプライトシートメタデータを逆引きする。
+  static ItemSpriteSheetMeta? spriteSheetMetaForSpritePath(String spritePath) {
+    for (final entry in _itemDefinitions.entries) {
+      if (entry.value['spritePath'] == spritePath &&
+          entry.value['spriteSheet'] != null) {
+        return spriteSheetMetaForName(entry.key);
+      }
+    }
+    return null;
+  }
+
+  /// UI 等でメタデータを解決する（名前優先、なければ spritePath）。
+  static ItemSpriteSheetMeta? resolveSpriteSheetMeta({
+    required String itemName,
+    required String spritePath,
+  }) {
+    return spriteSheetMetaForName(itemName) ??
+        spriteSheetMetaForSpritePath(spritePath);
+  }
+
+  /// ランタン光源を持つアイテムか（設置・運搬どちらの型でも判定）。
+  static bool isLanternLightItem(Item item) {
+    return item is LanternItem || item.name == 'ランタン';
+  }
+
+  /// 設置済みランタンを登録し、punch ベイクが終わるまで待つ。
+  static Future<void> registerPlacedLanternIfNeeded(
+    Item? item,
+    MyGame game,
+  ) async {
+    if (item is LanternItem) {
+      await LanternStripLightRegistry.instance.register(item, game);
+    }
+  }
+
+  /// ワールド設置後の表示（運搬から置く経路と同じアニメ子を付与）。
+  static Future<void> applyPlacedWorldItemWorldDisplay(Item item) async {
+    await item.loaded;
+    await item.attachWorldAnimationIfNeeded();
+  }
+
+  /// バッグ/配置モードから placeable を開始（[LanternItem] 等でも名前で解決）。
+  static bool tryStartPlaceablePlacement(MyGame game, Item item) {
+    final itemData = _itemDefinitions[item.name];
+    if (itemData == null) return false;
+    if (itemData['type'] as ItemType != ItemType.placeable) return false;
+
+    final effectName = itemData['placeableEffect'] as String?;
+    final resolved = PlaceableEffectResolver.resolve(
+      effectName,
+      itemName: item.name,
+      spritePath: item.spritePath,
+    );
+    if (resolved == null) return false;
+
+    resolved(game);
+    return game.placeablePlacement.isActive.value;
+  }
+
+  /// UI・運搬表示用スプライト（シートの場合は1フレーム目）。
+  static Future<Sprite> loadDisplaySprite(
+    MyGame game,
+    String name,
+    String spritePath,
+  ) async {
+    final meta = spriteSheetMetaForName(name);
+    if (meta != null) {
+      final image = await game.images.load(spritePath);
+      return meta.firstFrameSprite(image);
+    }
+    return game.loadSprite(spritePath);
+  }
+
+  /// 配置プレビュー用サイズ（ワールド px）。
+  static Vector2? previewSizeForName(String name) {
+    final itemData = _itemDefinitions[name];
+    if (itemData == null) return null;
+    final raw = itemData['size'] as List<dynamic>?;
+    if (raw == null || raw.length < 2) return null;
+    return Vector2(
+      raw[0].toDouble(),
+      raw[1].toDouble(),
+    );
+  }
+
+  /// 配置モード確定時にワールドへ置く実体（ランタンは [LanternItem] 等）。
+  static Item? createPlacedWorldItemByName(String name, Vector2 position) {
+    final itemData = _itemDefinitions[name];
+    if (itemData == null) {
+      debugPrint('Undefined item: $name');
+      return null;
+    }
+
+    final description = itemData['description'] as String;
+    final spritePath = itemData['spritePath'] as String;
+    final value = itemData['value'] as int;
+    final mass = (itemData['mass'] as num?)?.toDouble() ?? 1.0;
+    final size = previewSizeForName(name) ?? Vector2(25, 25);
+
+    if (name == 'ランタン') {
+      return LanternItem(
+        name: name,
+        description: description,
+        value: value,
+        spritePath: spritePath,
+        position: position,
+        size: size,
+        mass: mass,
+      );
+    }
+
+    return createItemByName(name, position);
+  }
+
   /// 名前からアイテムを生成
   static Item? createItemByName(String name, Vector2 position) {
     final itemData = _itemDefinitions[name];
@@ -705,9 +983,13 @@ class ItemFactory {
         final effectName = itemData['placeableEffect'] as String?;
         final resolvedPlaceableEffect = PlaceableEffectResolver.resolve(
           effectName,
+          itemName: name,
+          spritePath: spritePath,
         );
         return PlaceableItem(
           placeableEffect: resolvedPlaceableEffect,
+          requiresUnderGround:
+              itemData['requiresUnderGround'] as bool? ?? false,
           position: position,
           name: name,
           description: description,

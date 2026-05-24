@@ -5,14 +5,30 @@ import 'dart:math';
 import '../../../main.dart';
 import '../common/hitboxes/interact_hitbox.dart';
 import '../common/physics/entity_physics_mixin.dart';
+import '../common/physics/knockback_config.dart';
+import '../common/physics/physics_body_queries.dart';
 import '../common/collision/collision_family.dart';
 import '../item/item.dart';
 import '../effect/residue_pickup.dart';
+import '../game_stage/lighting/light_receiver.dart';
+import '../game_stage/lighting/lighting_participation.dart';
+import '../game_stage/lighting/lighting_participant.dart';
 
 class Npc extends SpriteComponent
-    with CollisionCallbacks, HasGameReference<MyGame>, EntityPhysicsMixin, HasCollisionFamily {
+    with
+        CollisionCallbacks,
+        HasGameReference<MyGame>,
+        EntityPhysicsMixin,
+        ContactKnockbackSource,
+        HasCollisionFamily,
+        LightingParticipant,
+        LightReceiver {
   @override
   CollisionFamily get collisionFamily => CollisionFamily.entity;
+
+  @override
+  LightingParticipation get lightingParticipation =>
+      LightingParticipation.full;
 
   /// 物理ヒットボックスより広げるインタラクト領域（各辺へのパディング、px）。
   static const double defaultInteractPaddingW = 12;
@@ -33,6 +49,9 @@ class Npc extends SpriteComponent
   late final SpriteComponent _speechBubble;
   bool _hasMission = true; // とりあえず全てのNPCがミッションを持っていると仮定
 
+  /// 接触ノックバック用の質量（デフォルトはプレイヤーと同程度）。
+  final double mass;
+
   Npc({
     required this.name,
     required this.talkMessages,
@@ -43,9 +62,16 @@ class Npc extends SpriteComponent
     this.spritePath = 'CITY_MEGA.png',
     this.srcPosition,
     this.srcSize,
+    this.mass = KnockbackConfig.playerMass,
   }) : super(size: Vector2(1.0, 1.0)) {
     anchor = Anchor.bottomCenter;
   }
+
+  @override
+  double get contactMass => mass;
+
+  @override
+  Vector2 get contactVelocity => velocity.clone()..add(knockbackVelocity);
 
   @override
   Future<void> onLoad() async {
@@ -117,9 +143,16 @@ class Npc extends SpriteComponent
     ));
 
     // 物理用ヒットボックス（重力・着地検知専用、isSolid=false でプレイヤーをブロックしない）
+    final hb = PhysicsBodyQueries.feetAlignedHitbox(
+      size,
+      widthRatio: 0.45,
+      heightRatio: 0.85,
+      centerXRatio: 0.5,
+    );
     add(
       RectangleHitbox(
-        size: size,
+        size: hb.size,
+        position: hb.position,
         collisionType: CollisionType.active,
         isSolid: false,
       ),
@@ -253,5 +286,10 @@ class Npc extends SpriteComponent
     ResiduePickup.emitCargo(game, ResiduePickup.worldEmitOrigin(this), life: 6);
     ResiduePickup.emitCargo(game, ResiduePickup.worldEmitOrigin(this), history: 4);
     ResiduePickup.emitCargo(game, ResiduePickup.worldEmitOrigin(this), inorganic: 4);
+  }
+
+  @override
+  void render(Canvas canvas) {
+    renderWithComponentLighting(canvas, super.render);
   }
 }

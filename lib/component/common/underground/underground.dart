@@ -14,20 +14,38 @@ import '../../../system/storage/game_runtime_state.dart';
 import '../hitboxes/interact_hitbox.dart';
 import '../../effect/residue_pickup.dart';
 import '../../effect/residue_effect.dart';
-import '../terrain/composite_terrain_field.dart';
-import '../terrain/grid_terrain_field.dart';
 import '../terrain/stamp_terrain_field.dart';
 import '../physics/physics_body_queries.dart';
 import '../terrain/terrain_field.dart';
+import '../../game_stage/lighting/light_receiver.dart';
+import '../../game_stage/lighting/lighting_participation.dart';
+import '../../game_stage/lighting/lighting_participant.dart';
+import 'placed_floor.dart';
+import 'underground_floor.dart';
 
 class UnderGround extends PositionComponent
-    with CollisionCallbacks, HasGameReference<MyGame>, HasCollisionFamily {
+    with
+        CollisionCallbacks,
+        HasGameReference<MyGame>,
+        HasCollisionFamily,
+        UnderGroundFloor,
+        LightingParticipant,
+        LightReceiver {
   @override
   CollisionFamily get collisionFamily => CollisionFamily.terrain;
+
+  @override
+  LightingParticipation get lightingParticipation =>
+      LightingParticipation.full;
 
   late final Sprite _underGroundSprite;
   late final Sprite _stoneSprite;
   static const double underGroundHeight = 1024.0;
+  /// [concrete.png] のタイル1枚のサイズ（512×512）。
+  static const double underGroundTileSize = 512.0;
+
+  /// [concrete.png] 1タイル外周の透明余白（タイル継ぎ目・マスク隙間の原因）。
+  static const double underGroundTileSrcInset = 6.0;
   static const double digAreaSize = 64.0;
   final Set<Vector2> dugAreas = {};
   static const double penetrationThreshold = 2.0;
@@ -50,17 +68,42 @@ class UnderGround extends PositionComponent
 
   final double _groundHeight;
 
-  late CompositeTerrainField terrainField;
-  late GridTerrainField _gridField;
   late StampTerrainField _stampField;
+  TerrainField get terrainField => _stampField;
 
-  late final Paint _tunnelFillPaint;
-
+  Picture? _backgroundPicture;
+  /// 照明マスク用（フル解像度タイル列）。縮小は [LightingMaskBuilder] 側で 1 回のみ。
+  Picture? _backgroundMaskPicture;
   Picture? _tunnelPicture;
-  bool _tunnelPictureDirty = true;
+  int _tunnelPictureStampCount = 0;
+  bool _tunnelPictureNeedsFullRebuild = false;
+  /// 掘削トンネル（暫定: テクスチャの代わりに単色 fill）
+  static const Color _tunnelFillColor = Color(0xFF4A3F35);
+  final Paint _tunnelFillPaint = Paint()..color = _tunnelFillColor;
   bool _carvePersistPending = false;
   double _persistCooldown = 0;
   static const double _persistIntervalSec = 2.5;
+  static const int _digLootEveryNCapsules = 3;
+  int _digCapsuleCounter = 0;
+
+  final List<PlacedFloor> _floors = [];
+  Picture? _floorPicture;
+
+  @override
+  List<PlacedFloor> get placedFloors => _floors;
+
+  @override
+  StampTerrainField get stampFieldForFloor => _stampField;
+
+  @override
+  Rect get undergroundBoundsForFloor => undergroundBounds;
+
+  /// 床板（配置プレビューと同サイズ）。
+  static const double floorSlabWidth = UnderGroundFloor.floorSlabWidth;
+  static const double floorSlabHeight = UnderGroundFloor.floorSlabHeight;
+
+  static const Color _floorFillColor = Color(0xFF6B5E52);
+  final Paint _floorFillPaint = Paint()..color = _floorFillColor;
 
   List<CarveStamp> get carveStamps => _stampField.stamps;
 
@@ -175,7 +218,13 @@ class UnderGround extends PositionComponent
     }
 
     try {
-      _underGroundSprite = await Sprite.load('concrete_ground.png');
+      _underGroundSprite = await Sprite.load(
+        'concrete.png',
+        srcPosition: Vector2.all(underGroundTileSrcInset),
+        srcSize: Vector2.all(
+          underGroundTileSize - 2 * underGroundTileSrcInset,
+        ),
+      );
       debugPrint('UnderGround: _underGroundSprite loaded.');
       _stoneSprite = await Sprite.load('stone.png');
       debugPrint('UnderGround: _stoneSprite loaded.');
@@ -205,12 +254,9 @@ class UnderGround extends PositionComponent
       -MyGame.worldWidth,
       game.initialGameCanvasSize.y + _groundHeight,
     );
-    _tunnelFillPaint = Paint()
-      ..color = const Color(0xFF4A3F32)
-      ..blendMode = BlendMode.srcOver
-      ..isAntiAlias = true;
 
     _rebuildTerrainField();
+    _loadFloorsFromSave();
 
     // 掘削・接触検知用（地形ブロックは [terrainField] が担当）
     add(
@@ -233,9 +279,6 @@ class UnderGround extends PositionComponent
 
     // ベッドの配置
     _spawnBed();
-
-    _playSoundEffectWithSoloud();
-    _spawnDiggingParticles(Vector2.zero()); // 初期化用（表示されない）
   }
 
   void _spawnAnchorItem() {
@@ -305,7 +348,7 @@ class UnderGround extends PositionComponent
     ));
 
     // 修復ポイント (親コンポーネント UnderGround からの相対座標)
-    final repairPos = Vector2(2500 + UnderGround.digAreaSize * 8, UnderGround.digAreaSize * 3);
+    final repairPos = Vector2(2500 + UnderGround.digAreaSize * 4, UnderGround.digAreaSize * 8);
     // TODO: 画像挿入 (修復の机)
     final repairPoint = SpriteComponent(
       sprite: _repairPointSprite, // 仮
@@ -469,46 +512,9 @@ class UnderGround extends PositionComponent
     ]);
   }
 
-  void addDugArea(Vector2 position) {
-    // addDugAreaは引数としてプレイヤーのworld positionを受け取る
-    // _getGridCellTopLeftWorldを使用して、そのworld positionが属するセルのworld positionを特定する
-    final dugAreaWorldPos = getGridCellTopLeftWorld(position);
-
-      if (!dugAreas.contains(dugAreaWorldPos)) {
-      dugAreas.add(dugAreaWorldPos);
-
-      // GameRuntimeStateに保存
-      final sceneId = game.sceneManager.currentSceneId;
-      game.gameRuntimeState.dugAreas[sceneId] ??= [];
-      game.gameRuntimeState.dugAreas[sceneId]!.add('${dugAreaWorldPos.x},${dugAreaWorldPos.y}');
-
-      carveAt(
-        dugAreaWorldPos + Vector2.all(digAreaSize / 2),
-        passageRadiusForPlayer(),
-      );
-      _playSoundEffectWithSoloud();
-      _spawnDiggingParticles(dugAreaWorldPos); // dugAreaWorldPos を渡す
-
-      // 無機資源の残滓（黒破片）を漏出させる
-      ResidueEffect.spawnInorganic(game, dugAreaWorldPos, count: 5);
-
-      // "希少な鉱石"アイテムを2~4個ランダムに生成
-      final int stoneCount = _random.nextInt(3) + 2; // (0~2) + 2 = 2~4
-      for (int i = 0; i < stoneCount; i++) {
-        // 掘ったエリア内のランダムな位置に配置
-        final randomOffset = Vector2(
-          _random.nextDouble() * UnderGround.digAreaSize,
-          _random.nextDouble() * UnderGround.digAreaSize,
-        );
-        final stoneItem = ItemFactory.createItemByName(
-          '石',
-          dugAreaWorldPos + randomOffset,
-        );
-        if (stoneItem != null) {
-          game.world.add(stoneItem);
-        }
-      }
-    }
+  void _emitDigFeedback(Vector2 worldCenter) {
+    _playSoundEffectWithSoloud();
+    _spawnDiggingParticles(worldCenter);
   }
 
   Future<void> _playSoundEffectWithSoloud() async {
@@ -534,32 +540,22 @@ class UnderGround extends PositionComponent
     }
   }
 
-  void _spawnDiggingParticles(Vector2 worldPosition) {
-    // ParticleSystemComponent をワールド座標に追加するため、
-    // パーティクルの初期位置はその ParticleSystemComponent からの相対位置になります。
-    // ParticleSystemComponent の position を掘削地点に設定します。
-    final particleSystemPosition = Vector2(
-      worldPosition.x + digAreaSize / 2,
-      worldPosition.y + digAreaSize / 2,
-    ); // 掘削エリアの中心に設定
+  void _spawnDiggingParticles(Vector2 worldCenter) {
+    const particleLifespan = 0.4;
 
     game.world.add(
       ParticleSystemComponent(
-        position: particleSystemPosition, // ParticleSystemComponent の位置を設定
-        priority: 110, // 他のコンポーネントより手前に描画
+        position: worldCenter,
+        priority: 110,
         particle: Particle.generate(
-          count: _random.nextInt(8) + 6,
-          lifespan: 0.6,
+          count: _random.nextInt(2) + 2,
+          lifespan: particleLifespan,
           generator: (i) {
-            // 各パーティクルの初速をランダムに設定
             final initialSpeed =
-                (Vector2.random(_random) - Vector2(0.5, 2)) * 100.0;
-            // 重力のような加速度
+                (Vector2.random(_random) - Vector2(0.5, 0.5)) * 60.0;
             final acceleration = Vector2(0, 700);
-            // パーティクルのベースとなる色をランダムに選択
             final baseColor = () {
-              final random = _random.nextInt(4);
-              switch (random) {
+              switch (_random.nextInt(4)) {
                 case 0:
                   return Colors.brown[800]!;
                 case 1:
@@ -573,21 +569,19 @@ class UnderGround extends PositionComponent
               }
             }();
             final spriteOverlayColor = baseColor.withAlpha(100);
-
-            // 各パーティクル固有のサイズをここで決定
             final spriteSizeForParticle = Vector2.all(
-              _random.nextDouble() * 15.0 + 15.0,
+              _random.nextDouble() * 6.0 + 8.0,
             );
 
             return AcceleratedParticle(
               speed: initialSpeed,
               acceleration: acceleration,
               position: Vector2(
-                (_random.nextDouble() - 0.5) * digAreaSize,
-                (_random.nextDouble() - 0.5) * digAreaSize,
+                (_random.nextDouble() - 0.5) * digAreaSize * 0.5,
+                (_random.nextDouble() - 0.5) * digAreaSize * 0.5,
               ),
               child: ComputedParticle(
-                lifespan: 0.6,
+                lifespan: particleLifespan,
                 renderer: (canvas, particle) {
                   final paint =
                       Paint()
@@ -596,10 +590,9 @@ class UnderGround extends PositionComponent
                           BlendMode.srcATop,
                         );
 
-                  // generatorスコープで決定されたサイズを使用
                   _stoneSprite.render(
                     canvas,
-                    size: spriteSizeForParticle, // ここでgeneratorスコープの変数を使う
+                    size: spriteSizeForParticle,
                     overridePaint: paint,
                   );
                 },
@@ -624,16 +617,11 @@ class UnderGround extends PositionComponent
 
   void _rebuildTerrainField() {
     final bounds = undergroundBounds;
-    _gridField = GridTerrainField(
-      undergroundBounds: bounds,
-      dugCells: dugAreas,
-      cellTopLeftOf: getGridCellTopLeftWorld,
-    );
     final stamps = _stampsFromSave();
     if (stamps.isEmpty) {
       for (final cell in dugAreas) {
         stamps.add(
-          CarveStamp(
+          CarveStamp.circle(
             x: cell.x + digAreaSize / 2,
             y: cell.y + digAreaSize / 2,
             radius: digAreaSize * 0.55,
@@ -645,11 +633,7 @@ class UnderGround extends PositionComponent
       undergroundBounds: bounds,
       stamps: stamps,
     );
-    terrainField = CompositeTerrainField(
-      undergroundBounds: bounds,
-      grid: _gridField,
-      stamps: _stampField,
-    );
+    _invalidateTunnelPicture();
   }
 
   void _persistCarveStamps() {
@@ -664,29 +648,123 @@ class UnderGround extends PositionComponent
     _carvePersistPending = true;
   }
 
-  /// プレイヤー周囲をリアルタイムで1か所だけ掘る（グリッド単位ではない）。
+  /// プレイヤー周囲をリアルタイムで1か所だけ掘る。
   bool carveAt(Vector2 worldCenter, double radius) {
+    final before = _stampField.stamps.length;
     if (!_stampField.carveCircleDeduped(worldCenter, radius)) {
       return false;
     }
-    _tunnelPictureDirty = true;
+    _onStampsAdded(fromIndex: before, feedbackCenter: worldCenter);
+    return true;
+  }
+
+  /// この矩形に埋め戻せる掘削痕があるか。
+  bool canFillAt(Rect worldRect) {
+    if (!worldRect.overlaps(undergroundBounds)) {
+      return false;
+    }
+    return _stampField.stampsOverlapping(worldRect).isNotEmpty;
+  }
+
+  /// ワールド座標を 64px グリッドのセル中心へスナップ。
+  Vector2 snapPlacementCenterToGrid(Vector2 worldCenter) {
+    final topLeft = getGridCellTopLeftWorld(worldCenter);
+    return topLeft + Vector2.all(digAreaSize / 2);
+  }
+
+  void _loadFloorsFromSave() {
+    final sceneId = game.sceneManager.currentSceneId;
+    final saved = game.gameRuntimeState.placedFloors[sceneId];
+    if (saved == null || saved.isEmpty) return;
+    _floors.addAll(saved);
+    _rebuildFloorPicture();
+  }
+
+  void _syncFloorsToRuntimeState() {
+    final sceneId = game.sceneManager.currentSceneId;
+    game.gameRuntimeState.placedFloors[sceneId] =
+        List<PlacedFloor>.from(_floors);
+  }
+
+  /// 水平床板を追加する。
+  bool addFloor(Rect worldSlabRect) {
+    if (!canPlaceFloor(worldSlabRect)) {
+      return false;
+    }
+    _floors.add(PlacedFloor.fromRect(worldSlabRect));
+    _appendFloorToPicture(_floors.length - 1);
+    _syncFloorsToRuntimeState();
+    return true;
+  }
+
+  void _removeFloorsOverlapping(Rect worldRect) {
+    final before = _floors.length;
+    _floors.removeWhere((f) => f.slabRect.overlaps(worldRect));
+    if (_floors.length != before) {
+      _rebuildFloorPicture();
+      _syncFloorsToRuntimeState();
+    }
+  }
+
+  /// 矩形範囲の掘削痕を岩盤に戻す。
+  bool fillSolidRect(Rect worldRect) {
+    if (!canFillAt(worldRect)) {
+      return false;
+    }
+
+    if (!_stampField.removeStampsOverlapping(worldRect)) {
+      return false;
+    }
+
+    _removeFloorsOverlapping(worldRect);
+    _invalidateTunnelPicture();
     _schedulePersist();
     return true;
   }
 
-  /// 足元から前方へカプセル状に掘削（見た目の二重円を避ける）。
+  /// 足元から前方へカプセル状に掘削。
   void carveCapsule(Vector2 worldA, Vector2 worldB, double radius) {
     final before = _stampField.stamps.length;
-    terrainField.carveCapsule(worldA, worldB, radius);
+    _stampField.carveCapsule(worldA, worldB, radius);
     if (_stampField.stamps.length != before) {
-      _tunnelPictureDirty = true;
-      _schedulePersist();
+      _onStampsAdded(
+        fromIndex: before,
+        feedbackCenter: (worldA + worldB) / 2,
+      );
     }
   }
 
-  @Deprecated('Use carveAt or carveCapsule')
-  void carvePassageSegment(Vector2 worldA, Vector2 worldB, double radius) {
-    carveCapsule(worldA, worldB, radius);
+  void _onStampsAdded({
+    required int fromIndex,
+    required Vector2 feedbackCenter,
+  }) {
+    _appendStampsToTunnelPicture(fromIndex);
+    _schedulePersist();
+    _emitDigFeedback(feedbackCenter);
+    _digCapsuleCounter++;
+    if (_digCapsuleCounter >= _digLootEveryNCapsules) {
+      _digCapsuleCounter = 0;
+      _spawnDigLoot(feedbackCenter);
+    }
+  }
+
+  void _spawnDigLoot(Vector2 worldCenter) {
+    final cellTopLeft = getGridCellTopLeftWorld(worldCenter);
+    ResidueEffect.spawnInorganic(game, cellTopLeft, count: 3);
+    final stoneCount = _random.nextInt(2) + 1;
+    for (var i = 0; i < stoneCount; i++) {
+      final randomOffset = Vector2(
+        _random.nextDouble() * digAreaSize,
+        _random.nextDouble() * digAreaSize,
+      );
+      final stoneItem = ItemFactory.createItemByName(
+        '石',
+        cellTopLeft + randomOffset,
+      );
+      if (stoneItem != null) {
+        game.world.add(stoneItem);
+      }
+    }
   }
 
   @override
@@ -705,6 +783,14 @@ class UnderGround extends PositionComponent
     if (_carvePersistPending) {
       _persistCarveStamps();
     }
+    _tunnelPicture?.dispose();
+    _tunnelPicture = null;
+    _backgroundPicture?.dispose();
+    _backgroundPicture = null;
+    _backgroundMaskPicture?.dispose();
+    _backgroundMaskPicture = null;
+    _floorPicture?.dispose();
+    _floorPicture = null;
     super.onRemove();
   }
 
@@ -758,31 +844,217 @@ class UnderGround extends PositionComponent
 
   @override
   void render(Canvas canvas) {
-    // super.render(canvas); // RectangleComponentのデフォルト描画（白ボックス）を避けるためコメントアウト
-    if (game.player.inUnderGround) {
-      // 背景描画
-      final repeatCount = (size.x / _underGroundSprite.srcSize.x).ceil();
-      for (int i = 0; i < repeatCount; i++) {
-        _underGroundSprite.render(
-          canvas,
-          position: Vector2(i * _underGroundSprite.srcSize.x, 0),
-          size: Vector2(_underGroundSprite.srcSize.x + 1, size.y),
-        );
-      }
+    if (!game.player.inUnderGround) {
+      return;
+    }
+    renderWithComponentLighting(canvas, _drawUnderGroundVisuals);
+  }
 
-      // 真実のログアーカイブの存在を示唆（デバッグ用・将来的にコンポーネント化）
-      if (game.gameRuntimeState.missionTrueLogs.isNotEmpty) {
-        // 地下のどこかにアーカイブが存在するという演出
-      }
+  /// PC overlay [LightingSpriteMask] 用（mobile は [render] で完結）。
+  void renderLitContent(Canvas canvas) {
+    if (!game.player.inUnderGround) {
+      return;
+    }
+    _drawUnderGroundVisuals(canvas);
+  }
 
-      if (_tunnelPictureDirty || _tunnelPicture == null) {
-        _rebuildTunnelPictureCache();
-      }
-      final pic = _tunnelPicture;
-      if (pic != null) {
-        canvas.drawPicture(pic);
+  /// strip 照明用。
+  void renderStripVisuals(Canvas canvas) {
+    if (!game.player.inUnderGround) {
+      return;
+    }
+    _drawUnderGroundVisuals(canvas);
+  }
+
+  /// マスク生成用（[inUnderGround] 不要）。背景はフル解像度 Picture、縮小はベイク側 1 回。
+  void paintStripVisualsForMask(Canvas canvas, Paint maskPaint) {
+    final fillPaint = Paint()..color = Colors.white;
+
+    canvas.save();
+    canvas.clipRect(Rect.fromLTWH(0, 0, size.x, size.y));
+
+    _ensureBackgroundMaskPicture(maskPaint);
+    final bgMask = _backgroundMaskPicture;
+    if (bgMask != null) {
+      canvas.drawPicture(bgMask);
+    }
+
+    for (final stamp in carveStamps) {
+      _drawStampLocalForMask(canvas, stamp, fillPaint);
+    }
+
+    for (final floor in _floors) {
+      _drawFloorLocalForMask(canvas, floor, fillPaint);
+    }
+
+    _paintChildSpritesForMask(canvas, maskPaint);
+
+    canvas.restore();
+  }
+
+  void _drawStampLocalForMask(
+    Canvas canvas,
+    CarveStamp stamp,
+    Paint fillPaint,
+  ) {
+    final worldBounds = stamp.bounds;
+    final localBounds = Rect.fromLTRB(
+      worldBounds.left - position.x,
+      worldBounds.top - position.y,
+      worldBounds.right - position.x,
+      worldBounds.bottom - position.y,
+    );
+    if (!Rect.fromLTWH(0, 0, size.x, size.y).overlaps(localBounds)) {
+      return;
+    }
+    if (stamp.kind == CarveStampKind.polygon) {
+      _drawSolidPolygonForMask(canvas, stamp, fillPaint);
+    } else {
+      final lx = stamp.x - position.x;
+      final ly = stamp.y - position.y;
+      canvas.drawCircle(Offset(lx, ly), stamp.radius, fillPaint);
+    }
+  }
+
+  void _drawSolidPolygonForMask(
+    Canvas canvas,
+    CarveStamp stamp,
+    Paint fillPaint,
+  ) {
+    final worldVerts = stamp.worldVertices();
+    if (worldVerts.length < 3) {
+      return;
+    }
+
+    final path = Path();
+    for (var i = 0; i < worldVerts.length; i++) {
+      final lx = worldVerts[i].x - position.x;
+      final ly = worldVerts[i].y - position.y;
+      if (i == 0) {
+        path.moveTo(lx, ly);
+      } else {
+        path.lineTo(lx, ly);
       }
     }
+    path.close();
+    canvas.drawPath(path, fillPaint);
+  }
+
+  void _drawFloorLocalForMask(Canvas canvas, PlacedFloor floor, Paint fillPaint) {
+    final slab = floor.slabRect;
+    final local = Rect.fromLTRB(
+      slab.left - position.x,
+      slab.top - position.y,
+      slab.right - position.x,
+      slab.bottom - position.y,
+    );
+    if (!Rect.fromLTWH(0, 0, size.x, size.y).overlaps(local)) {
+      return;
+    }
+    canvas.drawRect(local, fillPaint);
+  }
+
+  void _paintChildSpritesForMask(Canvas canvas, Paint maskPaint) {
+    void walk(Component node) {
+      if (node is SpriteComponent) {
+        final sprite = node.sprite;
+        if (sprite != null && node.size.x >= 1 && node.size.y >= 1) {
+          sprite.render(
+            canvas,
+            position: node.position,
+            size: node.size,
+            overridePaint: maskPaint,
+          );
+        }
+      }
+      for (final child in node.children) {
+        walk(child);
+      }
+    }
+
+    for (final child in children) {
+      walk(child);
+    }
+  }
+
+  void _drawUnderGroundVisuals(Canvas canvas) {
+    _ensureBackgroundPicture();
+    final bg = _backgroundPicture;
+    if (bg != null) {
+      canvas.drawPicture(bg);
+    }
+
+    if (_tunnelPictureNeedsFullRebuild ||
+        _tunnelPicture == null ||
+        _tunnelPictureStampCount != carveStamps.length) {
+      _rebuildTunnelPictureCache();
+    }
+    final pic = _tunnelPicture;
+    if (pic != null) {
+      canvas.drawPicture(pic);
+    }
+
+    final floorPic = _floorPicture;
+    if (floorPic != null) {
+      canvas.drawPicture(floorPic);
+    }
+  }
+
+  void _ensureBackgroundPicture() {
+    if (_backgroundPicture != null) return;
+    _backgroundPicture = _recordBackgroundTilePicture();
+  }
+
+  void _ensureBackgroundMaskPicture(Paint maskPaint) {
+    if (_backgroundMaskPicture != null) return;
+    _backgroundMaskPicture = _recordBackgroundTilePicture(
+      spriteOverridePaint: maskPaint,
+    );
+  }
+
+  Picture _recordBackgroundTilePicture({Paint? spriteOverridePaint}) {
+    final recorder = PictureRecorder();
+    final cacheCanvas = Canvas(recorder);
+    final bleed = underGroundTileSrcInset;
+    final drawSize = underGroundTileSize + 2 * bleed;
+    cacheCanvas.save();
+    cacheCanvas.clipRect(Rect.fromLTWH(0, 0, size.x, size.y));
+    for (var y = 0.0; y < size.y; y += underGroundTileSize) {
+      for (var x = 0.0; x < size.x; x += underGroundTileSize) {
+        _underGroundSprite.render(
+          cacheCanvas,
+          position: Vector2(x - bleed, y - bleed),
+          size: Vector2.all(drawSize),
+          overridePaint: spriteOverridePaint,
+        );
+      }
+    }
+    cacheCanvas.restore();
+    return recorder.endRecording();
+  }
+
+  void _invalidateTunnelPicture() {
+    _tunnelPicture?.dispose();
+    _tunnelPicture = null;
+    _tunnelPictureStampCount = 0;
+    _tunnelPictureNeedsFullRebuild = true;
+  }
+
+  void _appendStampsToTunnelPicture(int fromIndex) {
+    if (fromIndex <= 0 || _tunnelPicture == null || _tunnelPictureNeedsFullRebuild) {
+      _rebuildTunnelPictureCache();
+      return;
+    }
+    final recorder = PictureRecorder();
+    final cacheCanvas = Canvas(recorder);
+    cacheCanvas.drawPicture(_tunnelPicture!);
+    for (var i = fromIndex; i < carveStamps.length; i++) {
+      _drawStampLocal(cacheCanvas, carveStamps[i]);
+    }
+    _tunnelPicture?.dispose();
+    _tunnelPicture = recorder.endRecording();
+    _tunnelPictureStampCount = carveStamps.length;
+    _tunnelPictureNeedsFullRebuild = false;
   }
 
   void _rebuildTunnelPictureCache() {
@@ -790,57 +1062,90 @@ class UnderGround extends PositionComponent
     final cacheCanvas = Canvas(recorder);
 
     for (final stamp in carveStamps) {
-      final lx = stamp.x - position.x;
-      final ly = stamp.y - position.y;
-      if (lx + stamp.radius < 0 ||
-          ly + stamp.radius < 0 ||
-          lx - stamp.radius > size.x ||
-          ly - stamp.radius > size.y) {
-        continue;
-      }
-      final seed = stamp.x.hashCode ^ stamp.y.hashCode;
-      cacheCanvas.drawPath(
-        _jaggedCirclePath(Offset(lx, ly), stamp.radius, seed),
-        _tunnelFillPaint,
-      );
+      _drawStampLocal(cacheCanvas, stamp);
     }
 
-    // 旧セーブのグリッドのみ（スタンプ未移行分）
-    if (_stampField.stamps.isEmpty) {
-      final gridRadius = passageRadiusForPlayer();
-      for (final cell in dugAreas) {
-        final lx = cell.x + digAreaSize / 2 - position.x;
-        final ly = cell.y + digAreaSize / 2 - position.y;
-        final seed = cell.x.hashCode ^ cell.y.hashCode;
-        cacheCanvas.drawPath(
-          _jaggedCirclePath(Offset(lx, ly), gridRadius, seed),
-          _tunnelFillPaint,
-        );
-      }
-    }
-
+    _tunnelPicture?.dispose();
     _tunnelPicture = recorder.endRecording();
-    _tunnelPictureDirty = false;
+    _tunnelPictureStampCount = carveStamps.length;
+    _tunnelPictureNeedsFullRebuild = false;
   }
 
-  /// 見た目のみギザギザ（当たりは円スタンプのまま）。
-  Path _jaggedCirclePath(Offset center, double radius, int seed) {
-    const vertexCount = 10;
-    final rand = Random(seed);
+  void _drawStampLocal(Canvas canvas, CarveStamp stamp) {
+    final worldBounds = stamp.bounds;
+    final localBounds = Rect.fromLTRB(
+      worldBounds.left - position.x,
+      worldBounds.top - position.y,
+      worldBounds.right - position.x,
+      worldBounds.bottom - position.y,
+    );
+    if (!Rect.fromLTWH(0, 0, size.x, size.y).overlaps(localBounds)) {
+      return;
+    }
+    if (stamp.kind == CarveStampKind.polygon) {
+      _drawSolidPolygon(canvas, stamp);
+    } else {
+      final lx = stamp.x - position.x;
+      final ly = stamp.y - position.y;
+      _drawSolidCircle(canvas, Offset(lx, ly), stamp.radius);
+    }
+  }
+
+  void _drawSolidCircle(Canvas canvas, Offset center, double radius) {
+    canvas.drawCircle(center, radius, _tunnelFillPaint);
+  }
+
+  void _drawSolidPolygon(Canvas canvas, CarveStamp stamp) {
+    final worldVerts = stamp.worldVertices();
+    if (worldVerts.length < 3) return;
+
     final path = Path();
-    for (var i = 0; i < vertexCount; i++) {
-      final angle = 2 * pi * i / vertexCount;
-      final wobble = radius * 0.08 * (rand.nextDouble() * 2 - 1);
-      final r = radius + wobble;
-      final x = center.dx + cos(angle) * r;
-      final y = center.dy + sin(angle) * r;
+    for (var i = 0; i < worldVerts.length; i++) {
+      final lx = worldVerts[i].x - position.x;
+      final ly = worldVerts[i].y - position.y;
       if (i == 0) {
-        path.moveTo(x, y);
+        path.moveTo(lx, ly);
       } else {
-        path.lineTo(x, y);
+        path.lineTo(lx, ly);
       }
     }
     path.close();
-    return path;
+    canvas.drawPath(path, _tunnelFillPaint);
+  }
+
+  void _rebuildFloorPicture() {
+    final recorder = PictureRecorder();
+    final cacheCanvas = Canvas(recorder);
+    for (final floor in _floors) {
+      _drawFloorLocal(cacheCanvas, floor);
+    }
+    _floorPicture?.dispose();
+    _floorPicture = recorder.endRecording();
+  }
+
+  void _appendFloorToPicture(int index) {
+    if (index < 0 || index >= _floors.length) return;
+    final recorder = PictureRecorder();
+    final cacheCanvas = Canvas(recorder);
+    if (_floorPicture != null) {
+      cacheCanvas.drawPicture(_floorPicture!);
+    }
+    _drawFloorLocal(cacheCanvas, _floors[index]);
+    _floorPicture?.dispose();
+    _floorPicture = recorder.endRecording();
+  }
+
+  void _drawFloorLocal(Canvas canvas, PlacedFloor floor) {
+    final slab = floor.slabRect;
+    final local = Rect.fromLTRB(
+      slab.left - position.x,
+      slab.top - position.y,
+      slab.right - position.x,
+      slab.bottom - position.y,
+    );
+    if (!Rect.fromLTWH(0, 0, size.x, size.y).overlaps(local)) {
+      return;
+    }
+    canvas.drawRect(local, _floorFillPaint);
   }
 }

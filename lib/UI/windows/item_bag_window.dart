@@ -4,6 +4,7 @@ import '../../component/item/item_bag.dart';
 import '../../component/item/item.dart';
 import '../../main.dart';
 import '../dialogs/confirmation_dialog.dart';
+import '../widgets/item_sprite_icon.dart';
 import 'window_base.dart';
 
 class ItemBagWindow extends StatelessWidget with GameWindowResponsiveMixin {
@@ -73,18 +74,11 @@ class ItemBagWindow extends StatelessWidget with GameWindowResponsiveMixin {
                               },
                               child: Stack(
                                 children: [
-                                  Image.asset(
-                                    'assets/images/${item.spritePath}',
+                                  ItemSpriteIcon(
+                                    itemName: item.name,
+                                    spritePath: item.spritePath,
                                     width: isMobile ? 50 : windowManager.screenWidth * 0.08,
                                     height: isMobile ? 50 : windowManager.screenWidth * 0.08,
-                                    fit: BoxFit.contain,
-                                    errorBuilder: (context, error, stackTrace) {
-                                      return Icon(
-                                        Icons.broken_image,
-                                        size: isMobile ? 40 : 50,
-                                        color: Colors.grey,
-                                      );
-                                    },
                                   ),
                                   if (itemBag.equippedItemName == item.name)
                                     Positioned(
@@ -207,7 +201,7 @@ class ItemBagWindow extends StatelessWidget with GameWindowResponsiveMixin {
             padding: EdgeInsets.all(windowManager.screenWidth * 0.01),
             child: ElevatedButton(
               onPressed: () {
-                windowManager.hideWindow();
+                windowManager.hideOverlay();
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.blueAccent,
@@ -308,11 +302,11 @@ class ItemBagWindow extends StatelessWidget with GameWindowResponsiveMixin {
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Image.asset(
-                    'assets/images/${item.spritePath}',
+                  ItemSpriteIcon(
+                    itemName: item.name,
+                    spritePath: item.spritePath,
                     width: isMobile ? 60 : windowManager.screenWidth * 0.1,
                     height: isMobile ? 60 : windowManager.screenHeight * 0.1,
-                    fit: BoxFit.contain,
                   ),
                   Text(
                     '所持数: $currentCount',
@@ -526,7 +520,7 @@ class ItemBagWindow extends StatelessWidget with GameWindowResponsiveMixin {
       case ItemType.tool:
         return BagWindowActionType.equip; // Toolは装備
       case ItemType.placeable:
-        return BagWindowActionType.consume;
+        return BagWindowActionType.place;
       case ItemType.custom:
         return (item as CustomItem).customActionType; // customActionType を参照
       case ItemType.collection:
@@ -547,9 +541,19 @@ class ItemBagWindow extends StatelessWidget with GameWindowResponsiveMixin {
         // custom は CustomItem の customActionType で来る。スタック消費は _useItem に必ず委譲する。
         _useItem(dialogContext, item, countToUse);
         break;
+      case BagWindowActionType.place:
+        windowManager.hideOverlay();
+        if (!ItemFactory.tryStartPlaceablePlacement(game, item)) {
+          if (item is PlaceableItem && !item.canBeginPlacement(game)) {
+            game.windowManager.showDialog(['地下でのみ配置できます。']);
+          } else {
+            game.windowManager.showDialog(['配置を開始できませんでした。']);
+          }
+        }
+        break;
       case BagWindowActionType.carry:
+        windowManager.hideOverlay();
         game.player.startCarrying(item);
-        windowManager.hideWindow();
         break;
       case BagWindowActionType.equip:
         if (item is ToolItem) {
@@ -615,6 +619,9 @@ class ItemBagWindow extends StatelessWidget with GameWindowResponsiveMixin {
         break;
       case BagWindowActionType.custom:
         buttonText = '使用';
+        break;
+      case BagWindowActionType.place:
+        buttonText = '配置';
         break;
       case BagWindowActionType.none:
         return const SizedBox.shrink();
@@ -692,6 +699,19 @@ class ItemBagWindow extends StatelessWidget with GameWindowResponsiveMixin {
         onPressed = () {
           _showUseItemDialog(context, item, count);
         };
+        break;
+      case BagWindowActionType.place:
+        backgroundColor = Colors.brown;
+        onPressed = () {
+          if (item is PlaceableItem && !item.canBeginPlacement(game)) {
+            game.windowManager.showDialog(['地下でのみ使えます。']);
+            return;
+          }
+          _handleItemAction(context, item, 1, BagWindowActionType.place);
+        };
+        isEnabled =
+            count > 0 &&
+            (item is! PlaceableItem || item.canBeginPlacement(game));
         break;
       case BagWindowActionType.none:
         return const SizedBox.shrink();

@@ -3,6 +3,8 @@
 import 'package:flame/collisions.dart';
 import 'package:flame/components.dart';
 
+import '../terrain/body_terrain_probes.dart';
+import '../terrain/terrain_collision_samples.dart';
 import '../terrain/terrain_field.dart';
 import 'physics_body_queries.dart';
 import 'physics_step_obstacle.dart';
@@ -121,6 +123,15 @@ abstract final class SmallStepTraversal {
     required int intent,
     required Vector2 velocity,
   }) {
+    // 落下中は段差リフトしない（下り坂で天井方向に押し上げない）
+    if (velocity.y > 48) return false;
+    if (!BodyTerrainProbes.isFloorLedgeAhead(
+      aabb: PhysicsBodyQueries.physicsAabb(body),
+      terrain: terrain,
+      intent: intent,
+    )) {
+      return false;
+    }
     final lift = _findSafeTerrainLift(body: body, terrain: terrain, intent: intent);
     if (lift == null) return false;
 
@@ -150,14 +161,29 @@ abstract final class SmallStepTraversal {
     final maxLift = maxStepHeight(body);
     for (var lift = liftProbeStepPx; lift <= maxLift; lift += liftProbeStepPx) {
       final liftedBody = shifted.shift(Offset(0, -lift));
-      if (terrain.isBlocked(liftedBody)) continue;
+      if (TerrainCollisionSamples.isHeadBlocked(
+        liftedBody,
+        (probe) => terrain.isBlocked(probe),
+      )) {
+        continue;
+      }
 
       final forward = liftedBody.shift(Offset(intent * liftProbeStepPx, 0));
-      if (!terrain.isBlocked(forward)) {
+      if (!TerrainCollisionSamples.isHeadBlocked(
+            forward,
+            (probe) => terrain.isBlocked(probe),
+          ) &&
+          !_footBlockedAhead(forward, terrain, intent)) {
         return lift;
       }
     }
     return null;
+  }
+
+  static bool _footBlockedAhead(Rect aabb, TerrainField terrain, int intent) {
+    final aheadX = aabb.center.dx + intent * liftProbeStepPx;
+    final foot = Vector2(aheadX, aabb.bottom - 2);
+    return terrain.isBlocked(TerrainCollisionSamples.probeRect(foot));
   }
 
   static PositionComponent? _findObstacle({

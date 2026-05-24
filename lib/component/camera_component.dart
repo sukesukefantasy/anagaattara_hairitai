@@ -1,7 +1,10 @@
 ﻿import 'package:flame/components.dart';
+import '../game/world_scale.dart';
 import '../main.dart';
+import '../scene/abstract_outdoor_scene.dart';
 import 'player.dart';
 import 'game_stage/gamestage_component.dart';
+import 'game_stage/lighting/sky_component.dart';
 
 class CameraController extends Component with HasGameReference<MyGame> {
   Player? _player;
@@ -19,6 +22,17 @@ class CameraController extends Component with HasGameReference<MyGame> {
   double _verticalFollowWorldAdjustmentY = 0;
 
   static const double _clampMarginScreenPx = 24;
+
+  /// 奥行きズーム補正の基準（[setZoom] / [syncDepthZoom] で使用）。
+  double referenceZoom = 1.0;
+
+  double _lastSyncedCameraZoom = -1;
+
+  /// パララックス層の奥行きズーム中心（ワールド）。カメラフォーカスのみ（手動パン含む）。
+  Vector2 get depthZoomFocusWorld => Vector2(
+        cameraAnchor.position.x,
+        game.initialGameCanvasSize.y,
+      );
 
   void initializeCamera(Player player) {
     _player = player;
@@ -51,9 +65,19 @@ class CameraController extends Component with HasGameReference<MyGame> {
       desired = _clampFocusToKeepPlayerVisible(desired, p);
     }
 
+    if (game.sceneManager.currentScene is AbstractOutdoorScene) {
+      desired = _clampFocusToStageWorld(desired);
+    }
+
     cameraAnchor.position = desired;
     // クランプで実際に動いた分を manualPan に織り込む（ズーム変更後もパン意図と一致させる）
     manualPanWorld.setFrom(desired - base);
+
+    if (game.sceneManager.currentScene is AbstractOutdoorScene) {
+      syncBackgroundParallaxFromCamera();
+    }
+
+    _syncDepthZoomIfNeeded();
   }
 
   /// 画面ピクセル単位のドラッグ delta をワールドへ（指に世界が追従する向き）。
@@ -110,6 +134,30 @@ class CameraController extends Component with HasGameReference<MyGame> {
     return focus + Vector2(cx, cy);
   }
 
+  /// 可視範囲がプレイステージ [stageLeftX]〜[stageRightX]（= [worldWidth]）を
+  /// はみ出さないようフォーカス X を補正する。
+  ///
+  /// 地面・空の描画は [extendedWorldLeft] まで広いが、カメラ可動域はステージ幅に合わせる。
+  Vector2 _clampFocusToStageWorld(Vector2 focus) {
+    final vf = game.camera.viewfinder.position.clone();
+    game.camera.viewfinder.position = focus;
+    final vis = game.camera.visibleWorldRect;
+    game.camera.viewfinder.position = vf;
+
+    final margin = _clampMarginScreenPx / game.camera.viewfinder.zoom;
+    final minLeft = WorldScale.stageLeftX - margin;
+    final maxRight = WorldScale.stageRightX + margin;
+
+    double dx = 0;
+    if (vis.left < minLeft) {
+      dx = vis.left - minLeft;
+    } else if (vis.right > maxRight) {
+      dx = vis.right - maxRight;
+    }
+
+    return focus - Vector2(dx, 0);
+  }
+
   void _beginSceneCamera() {
     game.camera.stop();
     game.camera.follow(cameraAnchor);
@@ -120,7 +168,8 @@ class CameraController extends Component with HasGameReference<MyGame> {
     resetManualPan();
     game.camera.viewfinder.anchor =
         Anchor(Anchor.bottomCenter.x, Anchor.bottomCenter.y - 0.3);
-    game.camera.viewfinder.zoom = game.minZoomToFit * 2;
+    referenceZoom = game.minZoomToFit * 2;
+    setZoom(referenceZoom);
     syncVerticalFocusFromPlayer();
     _beginSceneCamera();
   }
@@ -130,47 +179,85 @@ class CameraController extends Component with HasGameReference<MyGame> {
     resetManualPan();
     game.camera.viewfinder.anchor =
         Anchor(Anchor.center.x, Anchor.center.y);
-    game.camera.viewfinder.zoom = 2.0;
+    referenceZoom = 2.0;
+    setZoom(referenceZoom);
     syncVerticalFocusFromPlayer();
     _beginSceneCamera();
   }
 
-  void updateBackgroundParallax(double playerDx) {
-    if (game.sceneManager.currentScene == null) return;
+  /// viewfinder.zoom を設定し、パララックス層の奥行きズーム補正を同期する。
+  void setZoom(double zoom) {
+    final clamped = zoom.clamp(game.minZoomToFit, game.maxZoomToFit);
+    game.camera.viewfinder.zoom = clamped;
+    _lastSyncedCameraZoom = -1;
+    syncDepthZoom();
+    if (game.sceneManager.currentScene is AbstractOutdoorScene) {
+      syncBackgroundParallaxFromCamera();
+    }
+  }
 
-    if (playerDx != 0) {
-      game.sceneManager.currentScene!.children
-          .whereType<GameStageComponent>()
-          .forEach((bg) {
-            bg.position.x += -playerDx * bg.parallaxEffect;
-          });
+  /// [GameStageComponent] と [SkyComponent] に深度別 scale 補正を適用する。
+  void syncDepthZoom() {
+    final scene = game.sceneManager.currentScene;
+    if (scene == null) {
+      return;
+    }
+
+    final cameraZoom = game.camera.viewfinder.zoom;
+    if (cameraZoom <= 0 || referenceZoom <= 0) {
+      return;
+    }
+
+    _lastSyncedCameraZoom = cameraZoom;
+
+    for (final bg in scene.children.whereType<GameStageComponent>()) {
+      if (bg.isMounted) {
+        bg.applyDepthZoom(cameraZoom, referenceZoom);
+      }
+    }
+
+    if (scene is AbstractOutdoorScene) {
+      final sky = scene.skyBackgroundComponent;
+      if (sky != null && sky.isMounted) {
+        sky.applyDepthZoom(cameraZoom, referenceZoom);
+      }
+    }
+  }
+
+  void _syncDepthZoomIfNeeded() {
+    final z = game.camera.viewfinder.zoom;
+    if (z == _lastSyncedCameraZoom) {
+      return;
+    }
+    syncDepthZoom();
+  }
+
+  /// 遠景・中景の X をカメラフォーカスに連動（プレイヤー delta の累積ではない）。
+  ///
+  /// [BackgroundData.parallaxEffect] はカメラ移動に対する視差係数。
+  /// 旧式 `position.x += -playerDx * effect` と同符号: `x = -cameraX * effect`。
+  void syncBackgroundParallaxFromCamera() {
+    final scene = game.sceneManager.currentScene;
+    if (scene is! AbstractOutdoorScene) {
+      return;
+    }
+
+    final cameraX = cameraAnchor.position.x;
+    for (final bg in scene.children.whereType<GameStageComponent>()) {
+      bg.position.x = -cameraX * bg.parallaxEffect;
     }
   }
 
   void resetBackgroundParallax() {
-    if (game.sceneManager.currentScene == null) return;
-
-    game.sceneManager.currentScene!.children
-        .whereType<GameStageComponent>()
-        .forEach((bg) {
-          bg.position.x = 0;
-        });
+    syncBackgroundParallaxFromCamera();
   }
 
   void zoomIn() {
-    final newZoom = (game.camera.viewfinder.zoom + 0.1).clamp(
-      game.minZoomToFit,
-      game.maxZoomToFit,
-    );
-    game.camera.viewfinder.zoom = newZoom;
+    setZoom(game.camera.viewfinder.zoom + 0.1);
   }
 
   void zoomOut() {
-    final newZoom = (game.camera.viewfinder.zoom - 0.1).clamp(
-      game.minZoomToFit,
-      game.maxZoomToFit,
-    );
-    game.camera.viewfinder.zoom = newZoom;
+    setZoom(game.camera.viewfinder.zoom - 0.1);
   }
 
   void adjustCameraForDigging() {
@@ -178,7 +265,8 @@ class CameraController extends Component with HasGameReference<MyGame> {
 
     _verticalFollowWorldAdjustmentY = 0;
     game.camera.viewfinder.anchor = Anchor.center;
-    game.camera.viewfinder.zoom = game.minZoomToFit * 1.5;
+    referenceZoom = game.minZoomToFit * 1.5;
+    setZoom(referenceZoom);
     syncVerticalFocusFromPlayer();
     _beginSceneCamera();
   }

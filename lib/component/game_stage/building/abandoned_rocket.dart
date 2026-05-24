@@ -1,10 +1,17 @@
 ﻿import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 import '../../../main.dart';
+import '../lighting/lighting_participation.dart';
+import '../lighting/lighting_participant.dart';
 
 /// 放棄されたロケット。景観オブジェクト。
 /// カーゴの射出はプレイヤーに追従する [PlayerCargoTerminal] から行う。
-class AbandonedRocket extends SpriteComponent with HasGameReference<MyGame> {
+class AbandonedRocket extends SpriteComponent
+    with HasGameReference<MyGame>, LightingParticipant {
+  @override
+  LightingParticipation get lightingParticipation =>
+      LightingParticipation.full;
+
   AbandonedRocket({required super.position});
 
   @override

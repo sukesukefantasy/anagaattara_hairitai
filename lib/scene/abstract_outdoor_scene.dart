@@ -1,6 +1,7 @@
 ﻿import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 
+import '../game/world_scale.dart';
 import '../system/storage/game_runtime_state.dart';
 import '../main.dart';
 import '../component/npc/npc.dart';
@@ -21,9 +22,11 @@ import '../component/common/ground/ground.dart';
 import '../component/common/underground/underground.dart';
 import '../component/game_stage/gamestage_component.dart';
 import '../component/game_stage/lighting/sky_component.dart';
+import '../component/game_stage/lighting/ambient_lighting_utils.dart';
 import 'game_scene.dart';
 import '../UI/game_ui.dart';
-import '../component/game_stage/lighting/light_component.dart';
+import '../component/game_stage/lighting/lighting_bake_coordinator.dart';
+import '../component/game_stage/lighting/lighting_world.dart';
 import '../component/game_stage/building/abandoned_rocket.dart';
 import '../component/game_stage/building/building_definitions.dart';
 import '../component/game_stage/building/destructible_object.dart';
@@ -53,9 +56,8 @@ abstract class AbstractOutdoorScene extends GameScene {
   AbandonedRocket? rocket; // ロケットを追加
   EnemyManager? enemyManager;
   SkyComponent? skyBackgroundComponent;
+  late final LightingWorld lightingWorld;
   double gravityMultiplier = 1.0;
-  
-  late final RectangleComponent _visualOverlay;
 
   final String sceneId;
   final Vector2? initialPlayerPosition;
@@ -87,17 +89,11 @@ abstract class AbstractOutdoorScene extends GameScene {
     debugPrint('AbstractOutdoorScene: Player priority set to 50.');
 
     // skyBackgroundComponentの初期化と追加
+    lightingWorld = LightingWorld(timeService: game.timeService);
+
     skyBackgroundComponent = SkyComponent(timeService: game.timeService)
       ..priority = 1;
     await add(skyBackgroundComponent!);
-
-    // 視覚演出用オーバーレイの初期化
-    _visualOverlay = RectangleComponent(
-      size: game.initialGameCanvasSize,
-      paint: Paint()..blendMode = BlendMode.overlay,
-      priority: 100, // 最前面
-    );
-    await add(_visualOverlay);
 
     // 環境侵食エフェクトを追加（starAlertLevel >= 6 で自動起動）
     add(ErosionEffect());
@@ -113,12 +109,11 @@ abstract class AbstractOutdoorScene extends GameScene {
     // ground: 旧4属性ティントは廃止（スプライトのみ）
 
     // ワールド幅より左右に広げ、敵スポーン付近や端の探索でも床が途切れないようにする
-    const groundSideExtension = 900.0;
     ground = Ground(
-      groundWidth: MyGame.worldWidth + 2 * groundSideExtension,
+      groundWidth: WorldScale.extendedWorldWidth,
       groundHeight: groundHeight,
       position: Vector2(
-        -MyGame.worldWidth - groundSideExtension,
+        WorldScale.extendedWorldLeft,
         game.initialGameCanvasSize.y,
       ),
       groundSprite: groundSprite,
@@ -135,6 +130,14 @@ abstract class AbstractOutdoorScene extends GameScene {
     _underGround!.priority = 30; // priorityを設定
     await add(_underGround!); // ここで追加
     debugPrint('AbstractOutdoorScene: UnderGround added.');
+
+    await add(
+      LightingBakeCoordinator(timeService: game.timeService),
+    );
+    debugPrint(
+      'AbstractOutdoorScene: Per-component dark curtain + bake coordinator.',
+    );
+
     debugPrint('AbstractOutdoorScene: onLoad finished.');
   }
 
@@ -152,19 +155,17 @@ abstract class AbstractOutdoorScene extends GameScene {
     if (outdoorBackgrounds != null) {
       for (final bgData in outdoorBackgrounds) {
         final background = GameStageComponent(data: bgData, loop: true)
-          ..priority = bgData.priority;
+          ..priority = bgData.resolveRenderPriority();
         await add(background);
         background.resetPositions(game.initialGameCanvasSize);
-
-        // プレイヤーの初期位置に合わせて背景座標を同期（パララックスのズレを解消）
-        final playerX = game.player.position.x;
-        background.position.x += -playerX * background.parallaxEffect;
 
         debugPrint(
             'AbstractOutdoorScene: GameStageComponent ${bgData.imagePath} added and synced.');
       }
     }
     debugPrint('AbstractOutdoorScene: Backgrounds initialized.');
+    game.cameraController.syncBackgroundParallaxFromCamera();
+    game.cameraController.syncDepthZoom();
 
     // GroundとUnderGroundはonLoadで初期化済みなので、ここではデバッグログとcurrentSceneへの設定のみ
     debugPrint(
@@ -197,18 +198,6 @@ abstract class AbstractOutdoorScene extends GameScene {
     // Stationの初期化
     if (currentSceneBuildingDefinitions.containsKey('station')) {
       final definition = currentSceneBuildingDefinitions['station']!;
-      
-      // 現在のステージ番号を取得
-      int currentStageNum;
-      if (sceneId == 'outdoor_0') {
-        currentStageNum = 0;
-      } else if (sceneId == 'outdoor_philosophy') {
-        currentStageNum = 5;
-      } else if (sceneId == 'outdoor_despair' || sceneId == 'outdoor_true') {
-        currentStageNum = 6;
-      } else {
-        currentStageNum = int.tryParse(sceneId.split('_').last) ?? 1;
-      }
 
       // Stage 0 (Prologue)・despair・true 以外のステージは常時駅を表示する。
       // ロケットははぐれたベテラン調査員の元にあるため、通常ステージには存在しない。
@@ -232,73 +221,7 @@ abstract class AbstractOutdoorScene extends GameScene {
         station!.add(InteractHitbox(
           position: Vector2(0, 0),
           size: station!.size,
-        onInteract: () async {
-          final state = game.gameRuntimeState;
-          if (!state.isCargoLaunched) {
-            game.windowManager.showDialog([
-              '電車はまだ来ない。',
-              'カーゴを射出すれば、電車がここに寄る。',
-            ]);
-            return;
-          }
-          if (state.blocksTrainForTrueSequenceGate) {
-            if (state.canStartTrueDeepSequence) {
-              game.windowManager.showDialog(
-                [
-                  '父のメモが、送還ログと噛み合った。',
-                  '通常の路線は閉じる。深層へ降りるか？',
-                ],
-                options: ['深層へ', '戻る'],
-                onSelect: (i) async {
-                  if (i != 0) return;
-                  state.trueSequencePhase = 1;
-                  await state.saveGame();
-                  final resetPos = Vector2(
-                    -100,
-                    game.initialGameCanvasSize.y - game.player.size.y / 2,
-                  );
-                  await game.sceneManager.loadScene(
-                    'outdoor_true_corridor',
-                    initialPlayerPosition: resetPos,
-                  );
-                },
-              );
-              return;
-            }
-            game.windowManager.showDialog([
-              '父のメモがそろった。',
-              '通常ルートでは先へ進めない。深層へ向かう条件を整えよう。',
-            ]);
-            return;
-          }
-
-          // 次のステージIDを決定
-          int nextStageNum = currentStageNum + 1;
-          String nextStageId = 'outdoor_$nextStageNum';
-          
-          if (nextStageNum == 5) {
-            nextStageId = 'outdoor_philosophy';
-          } else if (nextStageNum == 6) {
-            nextStageId = state.outdoorIdAfterPhilosophy();
-          }
-
-          // 次のステージの配置をリセット（初めて訪れるか、電車移動時のみ）
-          state.buildingPlacements.remove(nextStageId);
-
-          // シナリオ1の場合は、ステージ移動時にスコアや状態をリセットする
-          if (state.scenarioCount == 1) {
-            state.resetStageState();
-          }
-
-          final resetPos = Vector2(-100, game.initialGameCanvasSize.y - game.player.size.y / 2);
-          await game.sceneManager.loadScene(
-            nextStageId, 
-            initialPlayerPosition: resetPos,
-            onAfterLoad: () {
-              // TODO: メッセージ表示ロジックの再設計
-            },
-          );
-        },
+        onInteract: () async => game.advanceOutdoorStageViaTrain(),
           icon: Icons.train,
         ));
         debugPrint('AbstractOutdoorScene: Station added to move to next stage.');
@@ -507,29 +430,6 @@ abstract class AbstractOutdoorScene extends GameScene {
     }
     debugPrint('AbstractOutdoorScene: All enemies added.');
 
-    // ライトの初期化
-    final double testLightRadius = 60.0;
-    final Vector2 testLightSize = Vector2(
-      testLightRadius * 2,
-      testLightRadius * 2,
-    );
-
-    // デフォルトの座標ではなく、実際に配置された建物の座標を使用する
-    for (final building in buildings) {
-      if (building is Station) continue; // 駅は別途処理
-
-      final testLight = LightComponent(
-        position: Vector2(building.position.x + building.size.x / 2, game.initialGameCanvasSize.y - building.size.y - 50.0),
-        size: testLightSize,
-        lightRadius: testLightRadius,
-        lightColor: const Color.fromARGB(255, 255, 255, 200),
-        lightIntensity: 0.8,
-      );
-      add(testLight);
-      debugPrint('AbstractOutdoorScene: Light added at building position: ${building.position.x}.');
-    }
-    debugPrint('AbstractOutdoorScene: All building lights added.');
-
     // 建物から出てきた場合のプレイヤー位置調整
     if (game.gameRuntimeState.currentBuildingType != null) {
       final String exitedBuildingType = game.gameRuntimeState.currentBuildingType!;
@@ -712,20 +612,8 @@ abstract class AbstractOutdoorScene extends GameScene {
     }
   }
 
-  void updateDigAreas(Player player) {
-    if (!player.isDigging) return;
-    if (_underGround == null) return;
-
-    if (!player.inUnderGround && !player.isMovingDown) return;
-
-    if (player.inUnderGround &&
-        player.position.y < game.initialGameCanvasSize.y) {
-      return;
-    }
-
-    // 衝突コールバック用: 採掘エフェクト付きのグリッド登録（移動掘削は carveAt）
-    _underGround!.addDugArea(player.absoluteCenter);
-  }
+  @Deprecated('掘削は Player._tickDigCarve → UnderGround.carveCapsule が担当')
+  void updateDigAreas(Player player) {}
 
   bool isDug(Vector2 position) {
     return _underGround?.isDug(position) ?? false; // nullチェックを追加
@@ -784,13 +672,33 @@ abstract class AbstractOutdoorScene extends GameScene {
   }
 
   void _updateVisualEffects(double dt) {
-    // 地下（聖域）ではエフェクトを無効化
+    _updateAmbientWorldTint();
+  }
+
+  void _updateAmbientWorldTint() {
     if (game.player.inUnderGround) {
-      _visualOverlay.opacity = 0.0;
+      _clearAmbientWorldTint();
       return;
     }
 
-    // TODO: 視覚演出（脈動、目、オーバーレイの色）は、GameRuntimeState の値に基づいて直接制御するように変更します。
-    _visualOverlay.opacity = 0.0;
+    final sky = skyBackgroundComponent;
+    if (sky == null) {
+      _clearAmbientWorldTint();
+      return;
+    }
+
+    final worldTint = AmbientLightingUtils.computeWorldTint(
+      sky.currentSkyColor,
+      sky.currentAmbientBrightness,
+      hour: game.timeService.hour,
+      minute: game.timeService.minute,
+    );
+
+    ground?.overlayColor = worldTint;
+  }
+
+  void _clearAmbientWorldTint() {
+    ground?.overlayColor = null;
+    game.player.setAmbientColorFilter(null);
   }
 }

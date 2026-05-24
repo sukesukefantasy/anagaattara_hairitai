@@ -4,6 +4,7 @@ import 'enemy_base.dart'; // EnemyBaseクラスをインポート
 import '../../game_manager/audio_manager.dart'; // AudioManagerをインポート
 import 'package:flutter_soloud/flutter_soloud.dart'; // SoundHandleのために追加
 import 'package:flame/collisions.dart'; // Add this line
+import '../common/physics/physics_body_queries.dart';
 
 class CarEnemy extends EnemyBase {
   SoundHandle? _carSoundHandle; // 車の音のSoundHandle
@@ -12,7 +13,7 @@ class CarEnemy extends EnemyBase {
     required super.position,
     required super.direction, // directionを受け取る
     super.priority = 60, // 建物、プレイヤー、歩行者より手前
-    super.mass = 5.0, // 車は重い
+    super.mass = 210.0,
   }) {
     anchor = Anchor.bottomCenter; // アンカーを底辺中央に設定
   }
@@ -40,11 +41,16 @@ class CarEnemy extends EnemyBase {
     size = animation!.frames.first.sprite.srcSize.clone();
     await super.onLoad();
 
-    // ヒットボックスを追加
+    final hb = PhysicsBodyQueries.feetAlignedHitbox(
+      size,
+      widthRatio: 0.8,
+      heightRatio: 0.5,
+      centerXRatio: 0.5,
+    );
     add(
       RectangleHitbox(
-        size: Vector2(size.x * 0.8, size.y * 0.5), // 車のサイズに合わせて調整、少し小さくする
-        position: Vector2(size.x * 0.2, size.y * 0.25), // 中央に配置
+        size: hb.size,
+        position: hb.position,
         collisionType: CollisionType.active,
         isSolid: true,
       ),

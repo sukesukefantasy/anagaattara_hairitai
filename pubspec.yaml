@@ -14,6 +14,8 @@ dependencies:
   forge2d: ^0.14.0
   flutter_soloud: ^3.2.2
   path_provider: ^2.1.5
+  rive: ^0.14.7
+  rive_native: ^0.1.7
 
 dev_dependencies:
   flutter_test:
@@ -25,6 +27,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/
+    - assets/rive/trainscene.riv
     - assets/audio/
     - assets/audio/bgms/
     - assets/audio/footsteps/
@@ -33,6 +36,7 @@ flutter:
     - assets/audio/hits/
     - assets/audio/puzzles/
     - assets/audio/actions/
+    - assets/audio/scenes/
 
   fonts:
     - family: TRS-Million-Rg
@@ -47,4 +51,6 @@ flutter:
 
   shaders:
     - assets/shaders/lighting.frag
+    - assets/shaders/ambient_lighting.frag
+    - assets/shaders/local_lights.frag
     - assets/shaders/brightness_boost.frag

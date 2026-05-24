@@ -60,7 +60,7 @@ class HealthCenterInteriorScene extends GameScene {
     // 初期プレイヤー位置の設定（背景コンポーネントの初期化後に調整）
     _initialPlayerPosition ??= Vector2(
       70,
-      _backgroundComponent!.position.y + _backgroundComponent!.size.y - game.player!.size.y / 2, // プレイヤーの足元を背景の下端に合わせる
+      _backgroundComponent!.groundLineWorldY - game.player!.size.y / 2, // プレイヤーの足元を背景の下端に合わせる
     );
 
     // 地面を追加
@@ -70,7 +70,7 @@ class HealthCenterInteriorScene extends GameScene {
       groundHeight: groundHeight,
       position: Vector2(
         0,
-        _backgroundComponent!.position.y + _backgroundComponent!.size.y,
+        _backgroundComponent!.groundLineWorldY,
       ),
       groundSprite: interiorGroundSprite,
       isScrollForward: true,
@@ -120,7 +120,7 @@ class HealthCenterInteriorScene extends GameScene {
           type: DestructibleType.street, // 3回ヒット
           itemName: '高出力電源',
           uniqueId: 'health_center_interior_furniture_$i',
-          position: Vector2(200 + (i * 100), _backgroundComponent!.position.y + _backgroundComponent!.size.y - 5),
+          position: Vector2(200 + (i * 100), _backgroundComponent!.groundLineWorldY - 5),
           size: Vector2(32, 32),
           sprite: furnitureSprite,
         ));

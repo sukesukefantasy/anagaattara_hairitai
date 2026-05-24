@@ -1,5 +1,8 @@
 ﻿import 'package:flutter/foundation.dart';
 
+import '../component/game_stage/lighting/ambient_lighting_utils.dart';
+import '../component/game_stage/lighting/day_night_schedule.dart';
+
 enum TimeOfDayType {
   midnight,
   morning,
@@ -9,8 +12,8 @@ enum TimeOfDayType {
 }
 
 class TimeService extends ChangeNotifier {
-  int _hour = 5;
-  int _minute = 30;
+  int _hour = 3;
+  int _minute = 0;
   int _day = 1; // 1: Monday, 2: Tuesday, ..., 7: Sunday
   final List<String> _dayOfWeek = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -105,16 +108,19 @@ class TimeService extends ChangeNotifier {
   }
 
   TimeOfDayType get timeOfDayType {
-    if (_hour >= 4 && _hour < 6) {
-      return TimeOfDayType.morning; // 日の出 4:00 - 5:59
-    } else if (_hour >= 6 && _hour < 15) {
-      return TimeOfDayType.day; // 朝と昼 6:00 - 14:59
-    } else if (_hour >= 15 && _hour < 18) {
-      return TimeOfDayType.evening; // 日の入り 15:00 - 17:59
-    } else if (_hour >= 18 && _hour < 23) {
-      return TimeOfDayType.night; // 夜 18:00 - 22:59
-    } else { // 23:00 - 3:59
-      return TimeOfDayType.midnight; // 夜中 23:00 - 3:59
+    final profile = DayNightSchedule.profileFor(_hour, _minute);
+    switch (profile) {
+      case AmbientLightingProfile.dawnMorning:
+        return TimeOfDayType.morning;
+      case AmbientLightingProfile.day:
+        return TimeOfDayType.day;
+      case AmbientLightingProfile.evening:
+        return TimeOfDayType.evening;
+      case AmbientLightingProfile.night:
+        if (_hour >= 23 || _hour < 4) {
+          return TimeOfDayType.midnight;
+        }
+        return TimeOfDayType.night;
     }
   }
 } 

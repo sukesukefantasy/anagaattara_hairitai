@@ -6,6 +6,7 @@ import 'package:flame/components.dart';
 
 import '../../main.dart';
 import '../player.dart';
+import '../common/physics/physics_body_queries.dart';
 import '../game_stage/building/station.dart';
 import 'enemy_base.dart';
 
@@ -26,9 +27,9 @@ class WalkingEnemy extends EnemyBase {
   WalkingEnemy({
     required super.position,
     required super.direction,
+    required super.mass,
     double walkCycleSpeed = 5.0,
     super.priority = 45,
-    super.mass = 1.0,
   }) : _walkCycleSpeed = walkCycleSpeed {
     anchor = Anchor.bottomCenter;
   }
@@ -82,10 +83,16 @@ class WalkingEnemy extends EnemyBase {
     // バウンス・足音と位相を揃えるため、_walkCycleTime から手動でフレーム更新
     animationTicker?.paused = true;
 
+    final hb = PhysicsBodyQueries.feetAlignedHitbox(
+      size,
+      widthRatio: 0.3,
+      heightRatio: 0.5,
+      centerXRatio: 0.5,
+    );
     add(
       RectangleHitbox(
-        size: Vector2(size.x * 0.3, size.y * 0.5),
-        position: Vector2(size.x * 0.35, size.y * 0.25),
+        size: hb.size,
+        position: hb.position,
         collisionType: CollisionType.active,
         isSolid: false,
       ),

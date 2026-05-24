@@ -59,7 +59,7 @@ class ApartmentInteriorScene extends GameScene {
     // 初期プレイヤー位置の設定（背景コンポーネントの初期化後に調整）
     _initialPlayerPosition ??= Vector2(
       70,
-      _backgroundComponent!.position.y + _backgroundComponent!.size.y - game.player!.size.y / 2, // プレイヤーの足元を背景の下端に合わせる
+      _backgroundComponent!.groundLineWorldY - game.player!.size.y / 2, // プレイヤーの足元を背景の下端に合わせる
     );
 
     _playerPosition = _initialPlayerPosition; // 現在のプレイヤー位置を初期位置で設定
@@ -71,7 +71,7 @@ class ApartmentInteriorScene extends GameScene {
       groundHeight: groundHeight,
       position: Vector2(
         0,
-        _backgroundComponent!.position.y + _backgroundComponent!.size.y,
+        _backgroundComponent!.groundLineWorldY,
       ),
       groundSprite: interiorGroundSprite,
       isScrollForward: true,
@@ -115,7 +115,7 @@ class ApartmentInteriorScene extends GameScene {
 
     // ベッドの配置
     await add(Bed(
-      position: Vector2(350, _backgroundComponent!.position.y + _backgroundComponent!.size.y - 5),
+      position: Vector2(350, _backgroundComponent!.groundLineWorldY - 5),
       size: Vector2(64, 32),
     ));
 
@@ -127,7 +127,7 @@ class ApartmentInteriorScene extends GameScene {
           type: DestructibleType.street, // 3回ヒット
           itemName: '高出力電源',
           uniqueId: 'apartment_interior_furniture_$i',
-          position: Vector2(200 + (i * 100), _backgroundComponent!.position.y + _backgroundComponent!.size.y - 5),
+          position: Vector2(200 + (i * 100), _backgroundComponent!.groundLineWorldY - 5),
           size: Vector2(32, 32),
           sprite: furnitureSprite,
         ));

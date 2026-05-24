@@ -11,11 +11,25 @@ import '../effect/residue_effect.dart' show ResidueType;
 import '../effect/residue_pickup.dart';
 import '../common/physics/entity_physics_mixin.dart';
 import '../common/collision/collision_family.dart';
+import '../game_stage/lighting/light_receiver.dart';
+import '../game_stage/lighting/lighting_participation.dart';
+import '../game_stage/lighting/lighting_participant.dart';
 
 abstract class EnemyBase extends SpriteAnimationComponent
-    with CollisionCallbacks, HasGameReference<MyGame>, EntityPhysicsMixin, HasCollisionFamily {
+    with
+        CollisionCallbacks,
+        HasGameReference<MyGame>,
+        EntityPhysicsMixin,
+        ContactKnockbackSource,
+        HasCollisionFamily,
+        LightingParticipant,
+        LightReceiver {
   @override
   CollisionFamily get collisionFamily => CollisionFamily.entity;
+
+  @override
+  LightingParticipation get lightingParticipation =>
+      LightingParticipation.full;
 
   final Random random = Random();
   late double direction; // 進行方向: 1.0 (右) or -1.0 (左)
@@ -107,20 +121,25 @@ abstract class EnemyBase extends SpriteAnimationComponent
     if (showBar) _updateHealthBar();
   }
 
-  /// ノックバックを適用する（velocity に直接加算）
+  /// ノックバックを適用する（[EntityPhysicsMixin.knockbackVelocity] に加算）
   void applyKnockback(Vector2 impulse) {
-    velocity.add(impulse / mass);
+    applyKnockbackImpulse(impulse, mass: mass);
   }
+
+  @override
+  double get contactMass => mass;
+
+  @override
+  Vector2 get contactVelocity => velocity.clone()..add(knockbackVelocity);
+
+  @override
+  double get contactFallbackDirectionX => -direction;
 
   @override
   void update(double dt) {
     super.update(dt);
 
     updatePhysics(dt);
-
-    // velocity の水平減衰（ノックバックの摩擦）
-    velocity.x *= max(0.0, 1.0 - 5.0 * dt);
-    if (velocity.x.abs() < 2.0) velocity.x = 0.0;
 
     _applyAlertLevelVisuals();
 
@@ -144,15 +163,7 @@ abstract class EnemyBase extends SpriteAnimationComponent
 
     scale.x = direction == 1.0 ? -1.0 : 1.0;
 
-    // フルサイズの物理ヒットボックス（重力・着地検知専用、isSolid=false でプレイヤー等をブロックしない）
-    // ローカル座標系の原点はスプライト左上なので position = Vector2.zero() で全体を覆う
-    add(
-      RectangleHitbox(
-        size: size,
-        collisionType: CollisionType.active,
-        isSolid: false,
-      ),
-    );
+    // 物理ヒットボックスは WalkingEnemy / CarEnemy が個別に追加する
 
     // 体力バー（初期は非表示）
     final barWidth = size.x * 0.8;
@@ -258,5 +269,10 @@ abstract class EnemyBase extends SpriteAnimationComponent
         paint.color = originalColor;
       }
     });
+  }
+
+  @override
+  void render(Canvas canvas) {
+    renderWithComponentLighting(canvas, super.render);
   }
 }

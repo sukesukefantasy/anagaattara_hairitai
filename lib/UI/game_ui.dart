@@ -8,15 +8,18 @@ import '../main.dart';
 import '../game_manager/time_service.dart';
 import '../system/crafting_system.dart';
 import '../system/storage/game_runtime_state.dart';
+import 'responsive_ui_font.dart';
 import 'window_manager.dart';
 import 'windows/pause_window.dart';
 import 'windows/message_window.dart';
 import 'windows/item_bag_window.dart';
+import 'widgets/item_sprite_icon.dart';
 import 'windows/automation_shop_window.dart';
 import 'windows/codex_window.dart';
 import 'windows/crafting_window.dart';
 import '../component/item/item.dart';
 import '../component/player.dart';
+import 'overlays/dig_shape_editor_overlay.dart';
 
 class GameUI extends StatefulWidget {
   final Size screenSize;
@@ -329,6 +332,7 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
 
   final GlobalKey _cargoRatioBarKey = GlobalKey();
   final GlobalKey _statusHudKey = GlobalKey();
+  final GlobalKey _placementOverlayKey = GlobalKey();
 
   StreamSubscription<CargoHudFlyEvent>? _cargoHudFlySub;
 
@@ -418,6 +422,28 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
     final vx = (wx - rect.left) * z;
     final vy = (wy - rect.top) * z;
     return Offset(vx, vy);
+  }
+
+  Vector2 _screenOverlayToWorld(Offset screen) {
+    final cam = widget.game.camera;
+    final rect = cam.visibleWorldRect;
+    final z = cam.viewfinder.zoom;
+    return Vector2(screen.dx / z + rect.left, screen.dy / z + rect.top);
+  }
+
+  Vector2 _clampPlacementPreviewToCamera(Vector2 worldCenter) {
+    final spec = widget.game.placeablePlacement.spec;
+    if (spec == null) return worldCenter;
+
+    final cam = widget.game.camera;
+    final visible = cam.visibleWorldRect;
+    final halfW = spec.previewWorldSize.width / 2;
+    final halfH = spec.previewWorldSize.height / 2;
+
+    return Vector2(
+      worldCenter.x.clamp(visible.left + halfW, visible.right - halfW),
+      worldCenter.y.clamp(visible.top + halfH, visible.bottom - halfH),
+    );
   }
 
   /// 比率バー Row と同じ順序・比率で、種別セグメントの画面上の狙い位置。
@@ -559,10 +585,12 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
     const zoomNoise = 0.02;
     if ((details.scale - 1.0).abs() > zoomNoise) {
       final newZoom = _startZoomDrag * details.scale;
-      widget.game.camera.viewfinder.zoom = newZoom.clamp(
-        widget.game.minZoomToFit,
-        widget.game.maxZoomToFit,
-      );
+      widget.game.cameraController.setZoom(newZoom);
+      return;
+    }
+    // 配置・掘削型編集モード中はカメラパンしない
+    if (widget.game.placeablePlacement.isActive.value ||
+        widget.game.digShapeEditor.isActive.value) {
       return;
     }
     // 右半分の一本指ドラッグ → カメラ手動パン（[CameraController.addManualPanFromScreenDelta]）
@@ -577,9 +605,7 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
 
   double _getFontSize(BuildContext context) {
     final size = MediaQuery.of(context).size;
-    // 横画面のスマホ（高さが小さく幅がそれなりにある）も考慮
-    final bool isMobile = size.width < 600 || size.height < 500;
-    return isMobile ? 12.0 : 16.0;
+    return gameUiBaseFontSize(size.width, size.height);
   }
 
   @override
@@ -612,8 +638,6 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
               );
             },
           ),
-          _buildDirectionalButtons(),
-          _buildActionButtons(fontSize), // アクションボタン
           _buildTopRightButtons(fontSize), // ポーズボタンとアイテムバッグボタンをグループ化
           _buildAchievementNotification(fontSize), // アチーブメント通知
           if (_cargoFlySpecs.isNotEmpty)
@@ -634,6 +658,30 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
                 ),
               ),
             ),
+          ValueListenableBuilder<bool>(
+            valueListenable: widget.game.placeablePlacement.isActive,
+            builder: (context, isPlacing, child) {
+              if (!isPlacing) return const SizedBox.shrink();
+              return _buildPlaceablePlacementOverlay();
+            },
+          ),
+          _buildDirectionalButtons(), // 配置モード時はオーバーレイより手前
+          ValueListenableBuilder<bool>(
+            valueListenable: widget.game.digShapeEditor.isActive,
+            builder: (context, isEditing, child) {
+              if (!isEditing) return const SizedBox.shrink();
+              return DigShapeEditorOverlay(
+                controller: widget.game.digShapeEditor,
+                savedTemplate: widget.game.gameRuntimeState.digShapeTemplate,
+                onConfirm: () => widget.game.digShapeEditor.confirm(),
+                onCancel: () => widget.game.digShapeEditor.cancel(),
+                onClear: () => widget.game.digShapeEditor.clearDraw(),
+                onRestoreDefault: () =>
+                    widget.game.digShapeEditor.restoreDefaultShape(),
+              );
+            },
+          ),
+          _buildActionButtons(fontSize), // 配置モード時はオーバーレイより手前
         ],
       ],
     );
@@ -698,7 +746,10 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
   Widget _buildStatusDisplay(double fontSize) {
     final bool isMobile =
         widget.screenSize.width < 600 || widget.screenSize.height < 500;
-    final double effectiveFontSize = isMobile ? 12.0 : 16.0;
+    final double effectiveFontSize = gameUiBaseFontSize(
+      widget.screenSize.width,
+      widget.screenSize.height,
+    );
     final double sectionGap = isMobile ? 2.0 : 4.0;
     final double sw = widget.screenSize.width;
     final double baseW = sw * (isMobile ? 0.45 : 0.3);
@@ -1276,16 +1327,46 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
       right: widget.screenSize.width * 0.05,
       bottom: widget.screenSize.height * 0.1,
       child: ValueListenableBuilder<bool>(
-        valueListenable: widget.game.player.isCarryingItemNotifier,
-        builder: (context, isCarrying, child) {
-          if (isCarrying) {
-            return _buildCarryingActionButtons(
-              buttonSize,
-              iconSize,
-              actionHGapW,
-              actionRowGapH,
+        valueListenable: widget.game.digShapeEditor.isActive,
+        builder: (context, isEditingShape, child) {
+          if (isEditingShape) return const SizedBox.shrink();
+          return ValueListenableBuilder<bool>(
+        valueListenable: widget.game.placeablePlacement.isActive,
+        builder: (context, isPlacing, child) {
+          if (isPlacing) {
+            return ValueListenableBuilder<int>(
+              valueListenable: widget.game.placeablePlacement.previewTick,
+              builder: (context, _, __) {
+                final canPlace = widget.game.placeablePlacement.canConfirm;
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  GameUI.setStoreButtonState(ActionButtonState.normal);
+                  GameUI.setPlaceButtonState(
+                    canPlace
+                        ? ActionButtonState.normal
+                        : ActionButtonState.disabled,
+                  );
+                });
+                return _buildPlacementActionButtons(
+                  buttonSize,
+                  iconSize,
+                  actionHGapW,
+                  actionRowGapH,
+                  canPlace: canPlace,
+                );
+              },
             );
-          } else {
+          }
+          return ValueListenableBuilder<bool>(
+            valueListenable: widget.game.player.isCarryingItemNotifier,
+            builder: (context, isCarrying, child) {
+              if (isCarrying) {
+                return _buildCarryingActionButtons(
+                  buttonSize,
+                  iconSize,
+                  actionHGapW,
+                  actionRowGapH,
+                );
+              } else {
             return Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.end,
@@ -1341,6 +1422,7 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
                               children: [
                                 ActionButton(
                                   imagePath: item.spritePath,
+                                  itemName: item.name,
                                   badgeCount: count,
                                   onPressed: () {
                                     item.onUse(widget.game.player);
@@ -1374,8 +1456,147 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
                 ),
               ],
             );
-          }
+              }
+            },
+          );
         },
+      );
+        },
+      ),
+    );
+  }
+
+  Widget _buildPlacementActionButtons(
+    double buttonSize,
+    double iconSize,
+    double actionHGapW,
+    double actionRowGapH, {
+    required bool canPlace,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ActionButton(
+              icon: Icons.keyboard_double_arrow_up,
+              onTogglePressed: (isPressed) {
+                widget.onPressedJumpButton(isPressed);
+              },
+              stateNotifier: GameUI._jumpButtonStateNotifier,
+              buttonSize: buttonSize,
+              iconSize: iconSize,
+            ),
+          ],
+        ),
+        SizedBox(height: actionRowGapH),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ActionButton(
+              icon: Icons.close,
+              onPressed: () {
+                widget.game.placeablePlacement.cancel();
+              },
+              stateNotifier: GameUI._storeButtonStateNotifier,
+              buttonSize: buttonSize,
+              iconSize: iconSize,
+            ),
+            SizedBox(width: actionHGapW),
+            ActionButton(
+              icon: Icons.check,
+              onPressed: canPlace
+                  ? () => widget.game.placeablePlacement.confirm()
+                  : null,
+              stateNotifier: GameUI._placeButtonStateNotifier,
+              buttonSize: buttonSize,
+              iconSize: iconSize,
+              accentColor: canPlace ? Colors.lightBlueAccent : null,
+            ),
+            SizedBox(width: buttonSize),
+          ],
+        ),
+      ],
+    );
+  }
+
+  void _updatePlacementPreviewFromPointer(PointerEvent event) {
+    final box =
+        _placementOverlayKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    final local = box.globalToLocal(event.position);
+    final clamped = _clampPlacementPreviewToCamera(
+      _screenOverlayToWorld(local),
+    );
+    widget.game.placeablePlacement.updatePreviewWorldCenter(clamped);
+  }
+
+  Widget _buildPlaceablePlacementOverlay() {
+    final placement = widget.game.placeablePlacement;
+    final spec = placement.spec;
+    if (spec == null) return const SizedBox.shrink();
+
+    final cam = widget.game.camera;
+    final z = cam.viewfinder.zoom;
+
+    return Positioned.fill(
+      key: _placementOverlayKey,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned.fill(
+            child: Listener(
+              behavior: HitTestBehavior.opaque,
+              onPointerDown: _updatePlacementPreviewFromPointer,
+              onPointerMove: _updatePlacementPreviewFromPointer,
+            ),
+          ),
+          ValueListenableBuilder<int>(
+            valueListenable: placement.previewTick,
+            builder: (context, _, __) {
+              final rect = placement.previewWorldRect(spec);
+              final validNow = placement.canConfirm;
+              final tl = _worldPointToScreenOverlay(rect.left, rect.top);
+              final pw = rect.width * z;
+              final ph = rect.height * z;
+              final previewTint = validNow ? Colors.blue : Colors.red;
+
+              return Positioned(
+                left: tl.dx,
+                top: tl.dy,
+                width: pw,
+                height: ph,
+                child: IgnorePointer(
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      ItemSpriteIcon(
+                        itemName: spec.itemName,
+                        spritePath: spec.spritePath,
+                        width: pw,
+                        height: ph,
+                      ),
+                      Positioned.fill(
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: Colors.brown.shade700
+                                .withValues(alpha: 0.2),
+                            border: Border.all(
+                              color: previewTint.withValues(alpha: 0.9),
+                              width: 2,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
       ),
     );
   }
@@ -1812,35 +2033,62 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
             },
           ),
           SizedBox(width: groupGap),
-          AnimatedBuilder(
-            animation: widget.game.player.miningPointsNotifier,
-            builder: (context, child) {
-              return Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Image.asset(
-                    'assets/images/shovel.png',
-                    width: iconSize,
-                    height: iconSize,
-                  ),
-                  SizedBox(width: iconTextGap),
-                  Text(
-                    '${widget.game.player.currentMiningPoints}',
-                    style: TextStyle(
-                      fontSize: pointFontSize,
-                      fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
-                      letterSpacing: 5,
-                      color: Colors.white,
-                      shadows: const [
-                        Shadow(
-                          color: Colors.black,
-                          offset: Offset(1, 1),
-                          blurRadius: 1,
+          ValueListenableBuilder<bool>(
+            valueListenable: widget.game.player.inUnderGroundNotifier,
+            builder: (context, inUnderGround, child) {
+              return AnimatedBuilder(
+                animation: widget.game.player.miningPointsNotifier,
+                builder: (context, child) {
+                  return Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Image.asset(
+                        'assets/images/shovel.png',
+                        width: iconSize,
+                        height: iconSize,
+                      ),
+                      SizedBox(width: iconTextGap),
+                      Text(
+                        '${widget.game.player.currentMiningPoints}',
+                        style: TextStyle(
+                          fontSize: pointFontSize,
+                          fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+                          letterSpacing: 5,
+                          color: Colors.white,
+                          shadows: const [
+                            Shadow(
+                              color: Colors.black,
+                              offset: Offset(1, 1),
+                              blurRadius: 1,
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (inUnderGround) ...[
+                        SizedBox(width: iconTextGap),
+                        IconButton(
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 28,
+                            minHeight: 28,
+                          ),
+                          tooltip: '掘削の型を編集',
+                          icon: Icon(
+                            Icons.pentagon_outlined,
+                            size: iconSize * 0.85,
+                            color: Colors.amber.shade200,
+                          ),
+                          onPressed: () {
+                            if (widget.game.placeablePlacement.isActive.value) {
+                              widget.game.placeablePlacement.cancel();
+                            }
+                            widget.game.digShapeEditor.start(widget.game);
+                          },
                         ),
                       ],
-                    ),
-                  ),
-                ],
+                    ],
+                  );
+                },
               );
             },
           ),
@@ -2283,11 +2531,13 @@ enum ActionButtonState { normal, pressed, disabled, notice }
 class ActionButton extends StatefulWidget {
   final IconData? icon;
   final String? imagePath; // 画像パスを追加
+  final String? itemName; // スプライトシート lookup 用
   final int? badgeCount; // バッジのカウントを追加
   final VoidCallback? onPressed;
   final Function(bool)? onTogglePressed; // タップダウン/アップで状態を切り替えるボタン用
   final ValueNotifier<ActionButtonState> stateNotifier;
   final ValueNotifier<IconData?>? iconNotifier;
+  final Color? accentColor;
   final double buttonSize;
   final double iconSize;
   final VoidCallback? onLongPress;
@@ -2296,11 +2546,13 @@ class ActionButton extends StatefulWidget {
     super.key,
     this.icon,
     this.imagePath,
+    this.itemName,
     this.badgeCount,
     this.onPressed,
     this.onTogglePressed,
     required this.stateNotifier,
     this.iconNotifier,
+    this.accentColor,
     required this.buttonSize, // コンストラクタに追加
     required this.iconSize, // コンストラクタに追加
     this.onLongPress, // コンストラクタに追加
@@ -2357,12 +2609,12 @@ class _ActionButtonState extends State<ActionButton>
 
         switch (state) {
           case ActionButtonState.normal:
-            opacity = 0.6;
-            buttonColor = Colors.blue;
+            opacity = widget.accentColor != null ? 0.9 : 0.6;
+            buttonColor = widget.accentColor ?? Colors.blue;
             break;
           case ActionButtonState.pressed:
             opacity = 0.9;
-            buttonColor = Colors.blue;
+            buttonColor = widget.accentColor ?? Colors.blue;
             break;
           case ActionButtonState.disabled:
             opacity = 0.5;
@@ -2439,6 +2691,14 @@ class _ActionButtonState extends State<ActionButton>
                       ), // iconNotifierがnullの場合はデフォルトのiconを使用
                   builder: (context, iconData, child) {
                     if (widget.imagePath != null) {
+                      if (widget.itemName != null) {
+                        return ItemSpriteIcon(
+                          itemName: widget.itemName!,
+                          spritePath: widget.imagePath!,
+                          width: widget.iconSize,
+                          height: widget.iconSize,
+                        );
+                      }
                       return Image.asset(
                         'assets/images/${widget.imagePath}',
                         width: widget.iconSize,

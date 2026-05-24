@@ -239,95 +239,10 @@ class Train extends Vehicle {
         _isPlayerNearDoor;
 
     if (canInteract) {
-      GameUI.setInteractAction(() async {
-        final gs = game.gameRuntimeState;
-        if (!gs.isCargoLaunched) {
-          game.windowManager.showDialog([
-            '電車はまだ来ない。',
-            'カーゴを射出すれば、この電車が先へ運ぶ。',
-          ]);
-          return;
-        }
-        if (gs.blocksTrainForTrueSequenceGate) {
-          if (gs.canStartTrueDeepSequence) {
-            game.windowManager.showDialog(
-              [
-                '父のメモが、送還ログと噛み合った。',
-                '通常路線は閉じる。深層へ降りるか？',
-              ],
-              options: ['深層へ', '戻る'],
-              onSelect: (i) async {
-                if (i != 0) return;
-                gs.trueSequencePhase = 1;
-                await gs.saveGame();
-                GameUI.setInteractAction(null, null);
-                final resetPos = Vector2(
-                  -100,
-                  game.initialGameCanvasSize.y - game.player.size.y / 2,
-                );
-                await game.sceneManager.loadScene(
-                  'outdoor_true_corridor',
-                  initialPlayerPosition: resetPos,
-                  onAfterLoad: () {},
-                );
-              },
-            );
-            return;
-          }
-          game.windowManager.showDialog([
-            '父のメモがそろった。',
-            '通常進行では先へ進めない。',
-          ]);
-          return;
-        }
-
-        final currentStageId =
-            game.gameRuntimeState.currentOutdoorSceneId ?? 'outdoor_1';
-        int currentStageNum;
-        if (currentStageId == 'outdoor_philosophy') {
-          currentStageNum = 5;
-        } else if (currentStageId == 'outdoor_despair' ||
-            currentStageId == 'outdoor_true' ||
-            currentStageId.startsWith('outdoor_true_')) {
-          currentStageNum = 6;
-        } else {
-          currentStageNum = int.tryParse(currentStageId.split('_').last) ?? 1;
-        }
-
-        // 最大ステージ数
-        final int maxStageNum = 6;
-        int nextStageNum = currentStageNum + 1;
-        if (currentStageNum >= maxStageNum) {
-          nextStageNum = 1;
-        }
-
-        String nextStageId = 'outdoor_$nextStageNum';
-
-        // 分岐ロジック
-        if (nextStageNum == 5) {
-          nextStageId = 'outdoor_philosophy';
-        } else if (nextStageNum == 6) {
-          nextStageId = game.gameRuntimeState.outdoorIdAfterPhilosophy();
-        }
-
-        if (nextStageNum == 1) {
-          nextStageId = 'outdoor_1';
-        }
-
-        debugPrint('Train: Traveling to $nextStageId');
-
-        // インタラクトを解除してシーンロード
-        GameUI.setInteractAction(null, null);
-        final resetPos = Vector2(
-          -100,
-          game.initialGameCanvasSize.y - game.player.size.y / 2,
-        );
-        await game.sceneManager.loadScene(
-          nextStageId,
-          initialPlayerPosition: resetPos,
-          onAfterLoad: () {},
-        );
-      }, Icons.directions_transit);
+      GameUI.setInteractAction(
+        () async => game.advanceOutdoorStageViaTrain(),
+        Icons.directions_transit,
+      );
     } else {
       GameUI.setInteractAction(null, null);
     }

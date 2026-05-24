@@ -1,4 +1,6 @@
-﻿/// ゲーム世界の単位＝ソース画像の 1px（[size] は原則 [srcSize] と一致）。
+﻿import 'package:flame/components.dart';
+
+/// ゲーム世界の単位＝ソース画像の 1px（[size] は原則 [srcSize] と一致）。
 ///
 /// 身長などのメートル定義から [pixelsPerMeter] を決め、屋外横幅は
 /// [worldWidthMeters] からゲーム単位へ換算する。
@@ -22,4 +24,126 @@ abstract final class WorldScale {
 
   /// [worldWidthMeters] をゲーム単位へ換算した横幅
   static const double worldWidth = worldWidthMeters * pixelsPerMeter;
+
+  /// 論理ステージ右端（ワールド X）。プレイエリアはおおむね `extendedWorldLeft`〜`extendedWorldRight`。
+  static const double stageRightX = 0;
+
+  /// 論理ステージ左端（ワールド X）
+  static const double stageLeftX = -worldWidth;
+
+  /// ステージ両端からさらに広げる余白（空・地面・環境光ティントの描画範囲）
+  static const double horizontalStageExtension = 800;
+
+  /// 環境演出をかける水平範囲の左端
+  static const double extendedWorldLeft =
+      stageLeftX - horizontalStageExtension;
+
+  /// 環境演出をかける水平範囲の右端
+  static const double extendedWorldRight =
+      stageRightX + horizontalStageExtension;
+
+  /// 環境演出をかける水平幅
+  static const double extendedWorldWidth =
+      extendedWorldRight - extendedWorldLeft;
+
+  // --- Z 奥行き（メートル）---
+
+  /// プレイヤー足元のプレイフィールド平面
+  static const double playfieldDepthMeters = 0;
+
+  /// 近景（電柱など）の目安
+  static const double nearForegroundDepthMeters = -4;
+
+  /// 遠景（山・ビル群）の目安
+  static const double farMountainDepthMeters = 300;
+
+  /// 空・星空レイヤーの目安
+  static const double skyDepthMeters = 500;
+
+  /// ワールド座標差（ゲーム単位）をメートルに換算。
+  static double worldDistanceMeters(Vector2 a, Vector2 b) {
+    return a.distanceTo(b) / pixelsPerMeter;
+  }
+
+  /// Z 奥行き（m）からローカルライトの punch 強度（0..1）を求める。
+  static double lightingPunchForDepthMeters(double depthMeters) {
+    if (depthMeters <= playfieldDepthMeters) {
+      return 1.0;
+    }
+    return (1.0 - depthMeters / farMountainDepthMeters).clamp(0.0, 1.0);
+  }
+
+  /// 環境暗転オーバーレイ（全画面）の priority
+  static const int lightingOverlayRenderPriority = 55;
+
+  /// ローカルライト relight（full 参加者のスプライト形状・減衰帯）の priority
+  static const int localLightOverlayRenderPriority = 56;
+
+  static const double _renderPriorityBaseAtPlayfield = 40;
+  static const double _farDepthPriorityScale = 0.126;
+  static const double _nearDepthPriorityScale = 15.0;
+
+  /// 奥行き [depthMeters] から Flame の描画 priority を導出する。
+  ///
+  /// 正 = 奥（小さい priority）、0 = プレイ面、負 = 手前（大きい priority）。
+  static int renderPriorityForDepth(
+    double depthMeters, {
+    int? override,
+  }) {
+    if (override != null) {
+      return override;
+    }
+    if (depthMeters < playfieldDepthMeters) {
+      return (_renderPriorityBaseAtPlayfield +
+              (playfieldDepthMeters - depthMeters) * _nearDepthPriorityScale)
+          .round()
+          .clamp(lightingOverlayRenderPriority + 1, 120);
+    }
+    return (_renderPriorityBaseAtPlayfield -
+            depthMeters * _farDepthPriorityScale)
+        .round()
+        .clamp(1, lightingOverlayRenderPriority - 1);
+  }
+
+  /// 奥行きからパララックス係数を近似（[BackgroundData.parallaxEffect] の参考値）
+  static double parallaxEffectForDepth(double depthMeters) {
+    if (depthMeters <= playfieldDepthMeters) {
+      return (depthMeters.abs() / 8.0).clamp(0.0, 1.0);
+    }
+    return -((depthMeters / farMountainDepthMeters).clamp(0.0, 1.0));
+  }
+
+  /// カメラズームの奥行き減衰重み（0..1）。プレイ面=1、遠景→0、手前負深度=1。
+  static double zoomInfluenceForDepth(double depthMeters) {
+    if (depthMeters <= playfieldDepthMeters) {
+      return 1.0;
+    }
+    return (1.0 - depthMeters / farMountainDepthMeters).clamp(0.0, 1.0);
+  }
+
+  /// 深度 [depthMeters] における見かけのカメラ zoom（[referenceZoom] 基準の線形補間）。
+  static double effectiveZoomAtDepth(
+    double depthMeters,
+    double cameraZoom,
+    double referenceZoom,
+  ) {
+    if (cameraZoom <= 0 || referenceZoom <= 0) {
+      return cameraZoom;
+    }
+    final w = zoomInfluenceForDepth(depthMeters);
+    return referenceZoom + (cameraZoom - referenceZoom) * w;
+  }
+
+  /// 均一 viewfinder zoom を打ち消すコンポーネント scale 係数（XY 同一）。
+  static double depthCompensatingScaleFactor(
+    double depthMeters,
+    double cameraZoom,
+    double referenceZoom,
+  ) {
+    if (cameraZoom <= 0) {
+      return 1.0;
+    }
+    return effectiveZoomAtDepth(depthMeters, cameraZoom, referenceZoom) /
+        cameraZoom;
+  }
 }

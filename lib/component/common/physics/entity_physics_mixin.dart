@@ -1,4 +1,5 @@
-﻿import 'dart:ui' show Rect;
+﻿import 'dart:math';
+import 'dart:ui' show Rect;
 
 import 'package:flame/collisions.dart';
 import 'package:flame/components.dart';
@@ -16,12 +17,18 @@ import 'small_step_traversal.dart';
 ///
 /// EnemyBase・Npc などに mix in し、重力・着地・壁抜け防止を提供する。
 mixin EntityPhysicsMixin on PositionComponent, CollisionCallbacks {
-  static const double _kGravity = 700.0;
+  static const double kGravity = 700.0;
+  static const double _kGravity = kGravity;
 
   double gravityScale = 1.0;
   double maxFallSpeed = 1200.0;
   double maxHorizontalSpeed = 800.0;
   Vector2 velocity = Vector2.zero();
+
+  /// 歩行・パトロール速度（[preparePhysicsVelocity]）とは別に保持するノックバック成分。
+  /// 当たり判定付き移動の導入後も、被弾時の押し出しを維持するため。
+  Vector2 knockbackVelocity = Vector2.zero();
+
   bool isOnGround = false;
   double stepOverBasisSpeed = 180.0;
 
@@ -34,6 +41,23 @@ mixin EntityPhysicsMixin on PositionComponent, CollisionCallbacks {
   /// 水平速度を [updatePhysics] の前に設定する（WalkingEnemy / CarEnemy 用）。
   @protected
   void preparePhysicsVelocity(double dt) {}
+
+  /// 被弾・衝突などのノックバック（[preparePhysicsVelocity] とは独立）。
+  @protected
+  void applyKnockbackImpulse(Vector2 impulse, {double mass = 1.0}) {
+    knockbackVelocity.add(impulse / mass);
+  }
+
+  void _decayKnockback(double dt) {
+    knockbackVelocity.x *= max(0.0, 1.0 - 5.0 * dt);
+    if (knockbackVelocity.x.abs() < 2.0) {
+      knockbackVelocity.x = 0.0;
+    }
+    knockbackVelocity.y *= max(0.0, 1.0 - 3.0 * dt);
+    if (knockbackVelocity.y.abs() < 2.0) {
+      knockbackVelocity.y = 0.0;
+    }
+  }
 
   void updatePhysics(double dt) {
     SmallStepTraversal.endFrame(
@@ -53,9 +77,12 @@ mixin EntityPhysicsMixin on PositionComponent, CollisionCallbacks {
 
     final terrain = _outdoorTerrainField();
 
+    // 歩行速度 + ノックバックを合成して当たり判定付き移動する。
+    final physicsVelocity = velocity.clone()..add(knockbackVelocity);
+
     final result = KinematicMovement.integrate(
       body: this,
-      velocity: velocity,
+      velocity: physicsVelocity,
       dt: dt,
       config: KinematicConfig(
         gravity: _kGravity,
@@ -69,7 +96,17 @@ mixin EntityPhysicsMixin on PositionComponent, CollisionCallbacks {
       staticSlabs: slabs,
     );
 
+    // 垂直成分のみ [velocity] に反映（水平は次フレームの preparePhysicsVelocity が担当）。
+    velocity.y = physicsVelocity.y;
+    if (result.hitWall) {
+      knockbackVelocity.x = 0;
+    }
+    if (result.hitCeiling && knockbackVelocity.y < 0) {
+      knockbackVelocity.y = 0;
+    }
+
     isOnGround = result.isOnGround;
+    _decayKnockback(dt);
     _tryResolveStepOverAfterMove(terrain: terrain);
   }
 
@@ -159,4 +196,100 @@ mixin EntityPhysicsMixin on PositionComponent, CollisionCallbacks {
     super.onMount();
     debugPrint('[EntityPhysicsMixin] mounted: $runtimeType');
   }
+}
+
+/// [Item] 向け: 地下床板 slab と投擲速度（水平・垂直）を扱う物理。
+mixin ItemPhysicsMixin on EntityPhysicsMixin {
+  @override
+  void updatePhysics(double dt) {
+    SmallStepTraversal.endFrame(
+      _smallStepState,
+      _ignoredHorizontalSolidRoots,
+    );
+
+    _solidCollisions.removeWhere((s) => !s.isMounted);
+    _ignoredHorizontalSolidRoots.removeWhere((s) => !s.isMounted);
+
+    preparePhysicsVelocity(dt);
+
+    final gameRef = findGame();
+    final outdoor = gameRef is MyGame
+        ? gameRef.sceneManager.currentScene
+        : null;
+    final outdoorScene =
+        outdoor is AbstractOutdoorScene ? outdoor : null;
+
+    Rect? groundSlabRect;
+    if (outdoorScene?.ground != null) {
+      groundSlabRect = PhysicsStepQueries.absoluteAabb(outdoorScene!.ground!);
+    }
+
+    final slabs = <Rect>[];
+    final floorSlabList = <Rect>[];
+    final ug = outdoorScene?.underGround;
+    if (ug != null) {
+      _solidCollisions.remove(ug);
+    }
+    for (final raw in _solidCollisions) {
+      if (!raw.isMounted) continue;
+      final root = PhysicsStepQueries.solidRoot(
+        raw is ShapeHitbox ? raw.parent! as PositionComponent : raw,
+      );
+      if (_ignoredHorizontalSolidRoots.contains(root)) continue;
+      if (ug != null && identical(root, ug)) continue;
+      slabs.addAll(KinematicMovement.collectTerrainSlabs([raw]));
+    }
+
+    if (outdoorScene != null && groundSlabRect != null) {
+      slabs.add(groundSlabRect);
+    }
+
+    if (ug != null) {
+      floorSlabList.addAll(ug.floorSlabs());
+      slabs.addAll(floorSlabList);
+    }
+
+    final terrain = outdoorScene?.underGround.terrainField;
+
+    final physicsVelocity = velocity.clone()..add(knockbackVelocity);
+
+    final result = KinematicMovement.integrate(
+      body: this,
+      velocity: physicsVelocity,
+      dt: dt,
+      config: KinematicConfig(
+        gravity: EntityPhysicsMixin.kGravity,
+        gravityScale: gravityScale,
+        maxFallSpeed: maxFallSpeed,
+        maxHorizontalSpeed: maxHorizontalSpeed,
+        applyGravity: !isOnGround,
+        startOnGround: isOnGround,
+      ),
+      terrain: terrain,
+      staticSlabs: slabs,
+      preferredFootSlabs: floorSlabList,
+      oneWaySlabs: floorSlabList,
+    );
+
+    velocity = physicsVelocity;
+    if (result.hitWall) {
+      knockbackVelocity.x = 0;
+    }
+    if (result.hitCeiling && knockbackVelocity.y < 0) {
+      knockbackVelocity.y = 0;
+    }
+
+    isOnGround = result.isOnGround;
+    _decayKnockback(dt);
+  }
+}
+
+/// プレイヤー接触ノックバックの力積源（p = mass × velocity）。
+mixin ContactKnockbackSource on PositionComponent {
+  double get contactMass;
+
+  Vector2 get contactVelocity;
+
+  /// ほぼ静止接触時の退避方向（正=右）。
+  double get contactFallbackDirectionX => -1.0;
 }

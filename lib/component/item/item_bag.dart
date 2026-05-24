@@ -73,9 +73,15 @@ class ItemBag extends ChangeNotifier {
     }
     // 名前をキーとしてカウントを増やす
     _itemCounts.update(item.name, (value) => value + 1, ifAbsent: () => 1);
-    // 初めて取得するアイテムの場合、詳細情報を保存
-    if (!_itemDetails.containsKey(item.name)) {
-      _itemDetails[item.name] = item; // 実際のアイテムインスタンスを保存
+    // 詳細は定義からのプロトタイプを優先（ワールド拾得の LanternItem 等を正規化）
+    final prototype = ItemFactory.createItemByName(item.name, Vector2.zero());
+    if (prototype != null) {
+      if (_boundGame != null) {
+        prototype.game = _boundGame;
+      }
+      _itemDetails[item.name] = prototype;
+    } else if (!_itemDetails.containsKey(item.name)) {
+      _itemDetails[item.name] = item;
     }
     _saveItemBagData(); // データ変更後に保存
     notifyListeners(); // UIの更新を通知

@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import '../main.dart';
 import '../component/game_stage/building/building.dart';
 import '../component/enemy/car_enemy.dart';
+import '../component/game_stage/lighting/lighting_mask_catalog.dart';
+import '../component/game_stage/lighting/lighting_quality.dart';
 import '../component/game_stage/lighting/sky_component.dart';
 import 'game_scene.dart';
 import 'outdoor_scene.dart';
@@ -267,6 +269,7 @@ class SceneManager extends Component with HasGameReference<MyGame> {
     VoidCallback? onBeforeLoad,    // ロード開始直前
     Future<void> Function()? onLoadAsync, // 非同期ロード処理
     VoidCallback? onAfterLoad,     // ロード完了後
+    void Function(double progress, String message)? onMaskBakeProgress,
   }) async {
     debugPrint('SceneManager.loadScene called for scene: $sceneId');
     
@@ -466,6 +469,20 @@ class SceneManager extends Component with HasGameReference<MyGame> {
       _currentScene!.lightAndBrightnessOverlay!.priority =
           2000; // priorityを1000から2000に戻す
       await _currentScene!.add(_currentScene!.lightAndBrightnessOverlay!);
+    }
+
+    if (LightingQualityTier.useCanvasLocalLights &&
+        _currentScene is AbstractOutdoorScene) {
+      final bakeResult = await LightingMaskCatalog.bakeScene(
+        game,
+        onProgress: onMaskBakeProgress,
+      );
+      if (!bakeResult.success) {
+        debugPrint(
+          'loadScene: lighting mask bake incomplete: '
+          '${bakeResult.missingLabels.join(', ')}',
+        );
+      }
     }
 
     debugPrint('loadScene: Scene $sceneId loaded successfully.');

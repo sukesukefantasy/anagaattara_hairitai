@@ -54,6 +54,18 @@ class CraftingSystem {
       miningPointCost: 3,
       resultItemName: '長い棒',
     ),
+    // はしご
+    CraftingRecipe(
+      ingredients: {'石': 1},
+      miningPointCost: 0,
+      resultItemName: 'はしご',
+    ),
+    // ランタン
+    CraftingRecipe(
+      ingredients: {'石': 1},
+      miningPointCost: 0,
+      resultItemName: 'ランタン',
+    ),
   ];
 
   /// 指定レシピが現在のバッグと採掘ポイントで合成可能かチェック

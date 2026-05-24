@@ -1,4 +1,6 @@
-﻿import 'package:anagaattara_hairitai/component/common/terrain/terrain_field.dart';
+﻿import 'package:anagaattara_hairitai/component/common/terrain/dig_shape_template.dart';
+import 'package:anagaattara_hairitai/component/common/terrain/terrain_field.dart';
+import 'package:anagaattara_hairitai/component/common/underground/placed_floor.dart';
 import 'package:anagaattara_hairitai/system/storage/save_data.dart';
 import 'package:anagaattara_hairitai/system/stage_micro_log.dart';
 import 'package:anagaattara_hairitai/system/codex/codex_snapshot.dart';
@@ -145,6 +147,12 @@ class GameRuntimeState extends ChangeNotifier {
 
   /// 経路ベース掘削（シーンIDごと）
   Map<String, List<CarveStamp>> carveStamps = {};
+
+  /// 地下床板（シーンIDごと）
+  Map<String, List<PlacedFloor>> placedFloors = {};
+
+  /// プレイヤー定義の掘削断面型。
+  DigShapeTemplate? digShapeTemplate;
 
   // 建物配置の永続化
   Map<String, Map<String, double>> buildingPlacements = {};
@@ -964,6 +972,15 @@ class GameRuntimeState extends ChangeNotifier {
         list.map((m) => CarveStamp.fromJson(m)).toList(),
       ),
     );
+    placedFloors = data.placedFloors.map(
+      (key, list) => MapEntry(
+        key,
+        list.map((m) => PlacedFloor.fromJson(m)).toList(),
+      ),
+    );
+    digShapeTemplate = data.digShapeTemplate != null
+        ? DigShapeTemplate.fromJson(data.digShapeTemplate!)
+        : null;
     hasShownCompassToday = data.hasShownCompassToday;
     buildingPlacements = Map<String, Map<String, double>>.from(data.buildingPlacements.map(
       (key, value) => MapEntry(key, Map<String, double>.from(value)),
@@ -1089,6 +1106,13 @@ class GameRuntimeState extends ChangeNotifier {
           stamps.map((s) => s.toJson()).toList(),
         ),
       ),
+      placedFloors: placedFloors.map(
+        (key, floors) => MapEntry(
+          key,
+          floors.map((f) => f.toJson()).toList(),
+        ),
+      ),
+      digShapeTemplate: digShapeTemplate?.toJson(),
       hasShownCompassToday: hasShownCompassToday,
       buildingPlacements: Map<String, Map<String, double>>.from(buildingPlacements.map(
         (key, value) => MapEntry(key, Map<String, double>.from(value)),

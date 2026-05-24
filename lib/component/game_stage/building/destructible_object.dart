@@ -1,6 +1,7 @@
 ﻿import 'package:flame/collisions.dart';
 import 'package:flame/components.dart';
 import 'package:flame/effects.dart';
+import 'package:flutter/material.dart';
 import '../../../main.dart';
 import '../../../system/storage/game_runtime_state.dart';
 import '../../item/item.dart';
@@ -8,6 +9,9 @@ import '../../effect/residue_effect.dart';
 import '../../effect/residue_pickup.dart';
 import '../../common/physics/physics_step_obstacle.dart';
 import '../../common/collision/collision_family.dart';
+import '../lighting/light_receiver.dart';
+import '../lighting/lighting_participation.dart';
+import '../lighting/lighting_participant.dart';
 
 enum DestructibleType {
   glass,    // 1回で壊れる
@@ -20,9 +24,15 @@ class DestructibleObject extends SpriteComponent
         HasGameReference<MyGame>,
         CollisionCallbacks,
         PhysicsStepObstacleMixin,
-        HasCollisionFamily {
+        HasCollisionFamily,
+        LightingParticipant,
+        LightReceiver {
   @override
   CollisionFamily get collisionFamily => CollisionFamily.prop;
+
+  @override
+  LightingParticipation get lightingParticipation =>
+      LightingParticipation.full;
 
   final DestructibleType type;
   final String itemName; // 破壊時にドロップするアイテム名
@@ -125,5 +135,10 @@ class DestructibleObject extends SpriteComponent
     }
     
     removeFromParent();
+  }
+
+  @override
+  void render(Canvas canvas) {
+    renderWithComponentLighting(canvas, super.render);
   }
 }

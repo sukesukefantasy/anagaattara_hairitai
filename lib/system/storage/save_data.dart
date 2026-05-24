@@ -38,6 +38,12 @@ class SaveData {
   /// 経路ベース掘削スタンプ（シーンID → [{x,y,r}, ...]）
   Map<String, List<Map<String, dynamic>>> carveStamps;
 
+  /// 地下に設置した床板（シーンID → [{l,t,r,b}, ...]）
+  Map<String, List<Map<String, dynamic>>> placedFloors;
+
+  /// プレイヤー定義の掘削断面型（null なら円デフォルト）。
+  Map<String, dynamic>? digShapeTemplate;
+
   bool hasShownCompassToday; // 今日の羅針盤を表示したか
   Map<String, Map<String, double>> buildingPlacements; // シーンごとの建物配置 (sceneId -> {buildingType: x})
   Map<String, int> destructibleHealths; // 破壊可能オブジェクトの状態 (uniqueId -> health)
@@ -158,6 +164,8 @@ class SaveData {
     this.dayCount = 1,
     Map<String, List<String>>? dugAreas,
     Map<String, List<Map<String, dynamic>>>? carveStamps,
+    Map<String, List<Map<String, dynamic>>>? placedFloors,
+    this.digShapeTemplate,
     this.hasShownCompassToday = false,
     Map<String, Map<String, double>>? buildingPlacements,
     Map<String, int>? destructibleHealths,
@@ -211,6 +219,7 @@ class SaveData {
   }) : itemCounts = itemCounts ?? {},
        dugAreas = dugAreas ?? {},
        carveStamps = carveStamps ?? {},
+       placedFloors = placedFloors ?? {},
        buildingPlacements = buildingPlacements ?? {},
        destructibleHealths = destructibleHealths ?? {},
        satisfiedNpcIds = satisfiedNpcIds ?? [],
@@ -259,6 +268,15 @@ class SaveData {
                   .toList(),
             ),
           ),
+      placedFloors: (json['placedFloors'] as Map<String, dynamic>?)?.map(
+            (key, value) => MapEntry(
+              key,
+              (value as List)
+                  .map((e) => Map<String, dynamic>.from(e as Map))
+                  .toList(),
+            ),
+          ),
+      digShapeTemplate: json['digShapeTemplate'] as Map<String, dynamic>?,
       hasShownCompassToday: json['hasShownCompassToday'] as bool? ?? false,
       buildingPlacements: (json['buildingPlacements'] as Map<String, dynamic>?)?.map(
         (key, value) => MapEntry(key, Map<String, double>.from(value as Map)),
@@ -353,6 +371,8 @@ class SaveData {
       'dayCount': dayCount,
       'dugAreas': dugAreas,
       'carveStamps': carveStamps,
+      'placedFloors': placedFloors,
+      if (digShapeTemplate != null) 'digShapeTemplate': digShapeTemplate,
       'hasShownCompassToday': hasShownCompassToday,
       'buildingPlacements': buildingPlacements,
       'destructibleHealths': destructibleHealths,

@@ -30,8 +30,12 @@ import 'game_manager/audio_manager.dart';
 import 'scene/game_scene.dart';
 import 'component/camera_component.dart';
 import 'game/world_scale.dart';
-import 'component/game_stage/lighting/light_shader.dart';
 import 'system/storage/game_runtime_state.dart';
+import 'system/dig_shape_editor_controller.dart';
+import 'system/placeable_placement_controller.dart';
+import 'system/stage_clear_cinematic_controller.dart';
+import 'UI/overlays/stage_clear_rive_overlay.dart';
+import 'package:rive/rive.dart';
 import 'dart:async';
 
 // GameLoadState enum は削除 (FutureBuilderで状態管理するため)
@@ -62,6 +66,7 @@ void main() async {
   });
 
   WidgetsFlutterBinding.ensureInitialized();
+  await RiveNative.init();
 
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.landscapeLeft,
@@ -96,6 +101,8 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
   WindowManager? _windowManager; // null許容に変更
   WindowManager get windowManager => _windowManager!; // getterを追加
   final Completer<void> _windowManagerInitializedCompleter = Completer<void>();
+  final StageClearCinematicController stageClearCinematic =
+      StageClearCinematicController();
 
   @override
   void initState() {
@@ -126,6 +133,7 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
           
           // ウィンドウの表示状態に応じてゲームを一時停止・再開
           _windowManager!.addListener(() {
+            if (game.isTrainTravelTransitioning) return;
             if (_windowManager!.currentWindowType != GameWindowType.none) {
               game.pauseEngine();
             } else {
@@ -174,6 +182,7 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
       },
       screenSize: screenSize, // 取得したscreenSizeを渡す
       windowManager: windowManager, // ここで初期化されたwindowManagerを渡す
+      stageClearCinematic: stageClearCinematic,
     );
     debugPrint(
       'MyGame: Instance created in _initializeGame.',
@@ -187,7 +196,10 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
   }
 
   // シーンロード処理を分離 (内容はそのまま)
-  Future<void> _performSceneLoad({bool showCompass = false}) async {
+  Future<void> _performSceneLoad({
+    bool showCompass = false,
+    ValueNotifier<String>? maskStatusNotifier,
+  }) async {
     debugPrint('GameScreen: _performSceneLoad started. showCompass: $showCompass');
     // 保存されたシーンIDとプレイヤー位置を取得
     String savedSceneId =
@@ -250,6 +262,11 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
       savedSceneId,
       data: sceneData, // パンくずリスト情報をdataとして渡す
       initialPlayerPosition: playerInitialLoadPosition,
+      onMaskBakeProgress: maskStatusNotifier == null
+          ? null
+          : (progress, message) {
+              maskStatusNotifier.value = message;
+            },
     );
     
     debugPrint('GameScreen: _performSceneLoad finished.');
@@ -384,7 +401,14 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
                     }
                   },
                 ),
-                // その他のゲーム要素のウィジェットはここに追加していく。
+                ListenableBuilder(
+                  listenable: stageClearCinematic,
+                  builder: (context, _) {
+                    return StageClearRiveOverlay(
+                      controller: stageClearCinematic,
+                    );
+                  },
+                ),
               ],
             );
           }
@@ -411,10 +435,14 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
     try {
       debugPrint('GameScreen: _postGameLoadInitialization started.');
       
-      // ローディング画面を表示
+      final maskStatus = ValueNotifier<String>('シーンを読み込み中…');
       _windowManager?.showWindow(
         GameWindowType.loading,
-        LoadingWindow(windowManager: windowManager),
+        LoadingWindow(
+          windowManager: windowManager,
+          message: 'LOADING...',
+          statusMessage: maskStatus,
+        ),
       );
 
       // MyGame.onLoadが完了するのを待機
@@ -429,7 +457,7 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
 
       // シーンをロード
       debugPrint('GameScreen: Calling _performSceneLoad...');
-      await _performSceneLoad();
+      await _performSceneLoad(maskStatusNotifier: maskStatus);
       debugPrint('GameScreen: _performSceneLoad completed.');
 
       // コンポーネントのマウントを確実にするために1フレーム待機
@@ -502,9 +530,6 @@ class MyGame extends FlameGame
   // EnemyManager? enemyManager; // 削除
   late RectangleComponent _fadeOverlay;
   late RectangleComponent _tessellationOverlay;
-  // late RectangleComponent _globalLightingOverlay; // グローバルな明るさ調整オーバーレイ (削除)
-  LightingOverlayComponent?
-  _lightingOverlayComponent; // LightingOverlayComponentをnullableに変更
 
   // 新しいオーバーレイのgetterを追加
   double minZoomToFit = 1.0;
@@ -517,6 +542,10 @@ class MyGame extends FlameGame
   late final SceneManager sceneManager;
   late final AudioManager audioManager; // AudioManagerを追加
   late final CameraController cameraController; // CameraControllerを追加
+  final PlaceablePlacementController placeablePlacement =
+      PlaceablePlacementController();
+  final DigShapeEditorController digShapeEditor = DigShapeEditorController();
+  final StageClearCinematicController stageClearCinematic;
   final Random random = Random(); // Randomインスタンスを追加
   final Size screenSize;
 
@@ -526,6 +555,9 @@ class MyGame extends FlameGame
 
   bool isGameOver = false;
   bool isGameClear = false;
+
+  /// 電車移動演出中は [WindowManager] による pause/resume を無効化する。
+  bool isTrainTravelTransitioning = false;
 
   // カーゴ自動射出・自動進行のトリガー管理
   bool _autoLaunchTriggered = false;   // 23:50 自動射出済みフラグ
@@ -557,8 +589,11 @@ class MyGame extends FlameGame
     required this.onGameLoaded,
     required this.screenSize,
     required this.windowManager,
+    required this.stageClearCinematic,
   }) : super(camera: CameraComponent()) {
     debugPrint('MyGame: Constructor called.');
+    stageClearCinematic.fadeFromBlack = _fadeFromBlack;
+    stageClearCinematic.fadeToBlack = _fadeToBlack;
     // ここでSceneManagerを初期化
     sceneManager = SceneManager(game: this);
     // ここでAudioManagerを初期化
@@ -579,6 +614,7 @@ class MyGame extends FlameGame
     // バッグ内テンプレート Item はツリー未接続のため HasGameReference が解決できない。
     // onUse / getDescription 等で game を参照する前に紐付ける。
     itemBag.bindToGame(this);
+    placeablePlacement.bind(this);
     debugPrint('MyGame: onLoad started.'); // onLoad開始ログ
     // デバッグモード
     /* debugMode = true; */
@@ -638,14 +674,6 @@ class MyGame extends FlameGame
       priority: 1000,
     );
     await camera.viewport.add(_tessellationOverlay);
-
-    // LightingOverlayComponent を初期化して追加
-    _lightingOverlayComponent = LightingOverlayComponent(
-      timeService: timeService,
-    );
-    await camera.viewport.add(
-      _lightingOverlayComponent!,
-    ); // camera.viewportに追加に戻す
 
     // ゲームがロードされたことを通知
     debugPrint(
@@ -752,9 +780,6 @@ class MyGame extends FlameGame
       if (isLoaded) {
         _fadeOverlay.size = gameSize;
         _tessellationOverlay.size = gameSize;
-        if (_lightingOverlayComponent != null) {
-          _lightingOverlayComponent!.size = gameSize;
-        }
       }
     }
 
@@ -909,82 +934,234 @@ class MyGame extends FlameGame
     player.unbeatable = false;
   }
 
-  Future<void> stageClear() async {
+  void _removeFadeEffects() {
+    _fadeOverlay.children.whereType<OpacityEffect>().forEach((effect) {
+      effect.removeFromParent();
+    });
+  }
+
+  /// 画面を暗くする（黒オーバーレイ opacity → 1.0）
+  Future<void> _fadeToBlack({double duration = 1.0}) async {
+    _removeFadeEffects();
+    final completer = Completer<void>();
+    _fadeOverlay.add(
+      OpacityEffect.to(
+        1.0,
+        EffectController(duration: duration),
+        onComplete: () {
+          if (!completer.isCompleted) completer.complete();
+          _removeFadeEffects();
+        },
+      ),
+    );
+    await completer.future;
+  }
+
+  /// 画面を明るくする（黒オーバーレイ opacity → 0.0）
+  Future<void> _fadeFromBlack({double duration = 1.0}) async {
+    _removeFadeEffects();
+    final completer = Completer<void>();
+    _fadeOverlay.add(
+      OpacityEffect.to(
+        0.0,
+        EffectController(duration: duration),
+        onComplete: () {
+          if (!completer.isCompleted) completer.complete();
+          _removeFadeEffects();
+        },
+      ),
+    );
+    await completer.future;
+  }
+
+  /// 駅／電車ドアのインタラクトから次の屋外ステージへ進む（Rive 演出付き）。
+  Future<void> advanceOutdoorStageViaTrain() async {
+    final gs = gameRuntimeState;
+    if (!gs.isCargoLaunched) {
+      windowManager.showDialog([
+        '電車はまだ来ない。',
+        'カーゴを射出すれば、この電車が先へ運ぶ。',
+      ]);
+      return;
+    }
+    if (gs.blocksTrainForTrueSequenceGate) {
+      if (gs.canStartTrueDeepSequence) {
+        windowManager.showDialog(
+          [
+            '父のメモが、送還ログと噛み合った。',
+            '通常路線は閉じる。深層へ降りるか？',
+          ],
+          options: ['深層へ', '戻る'],
+          onSelect: (i) async {
+            if (i != 0) return;
+            gs.trueSequencePhase = 1;
+            await gs.saveGame();
+            GameUI.setInteractAction(null, null);
+            final resetPos = Vector2(
+              -100,
+              initialGameCanvasSize.y - player.size.y / 2,
+            );
+            await playTrainTravelTransition(
+              nextStageId: 'outdoor_true_corridor',
+              resetPos: resetPos,
+            );
+          },
+        );
+        return;
+      }
+      windowManager.showDialog([
+        '父のメモがそろった。',
+        '通常進行では先へ進めない。',
+      ]);
+      return;
+    }
+
+    final currentSceneId = gs.currentOutdoorSceneId ?? 'outdoor_1';
+    int currentStageNum;
+    if (currentSceneId == 'outdoor_0') {
+      currentStageNum = 0;
+    } else if (currentSceneId == 'outdoor_philosophy') {
+      currentStageNum = 5;
+    } else if (currentSceneId == 'outdoor_despair' ||
+        currentSceneId == 'outdoor_true' ||
+        currentSceneId.startsWith('outdoor_true_')) {
+      currentStageNum = 6;
+    } else {
+      currentStageNum = int.tryParse(currentSceneId.split('_').last) ?? 1;
+    }
+
+    const maxStageNum = 6;
+    int nextStageNum = currentStageNum + 1;
+    if (currentStageNum >= maxStageNum) {
+      nextStageNum = 1;
+    }
+
+    String nextStageId = 'outdoor_$nextStageNum';
+    if (nextStageNum == 5) {
+      nextStageId = 'outdoor_philosophy';
+    } else if (nextStageNum == 6) {
+      nextStageId = gs.outdoorIdAfterPhilosophy();
+    }
+    if (nextStageNum == 1) {
+      nextStageId = 'outdoor_1';
+    }
+
+    debugPrint('Train: Traveling to $nextStageId');
+
+    gs.buildingPlacements.remove(nextStageId);
+    if (gs.scenarioCount == 1) {
+      gs.resetStageState();
+    }
+
+    GameUI.setInteractAction(null, null);
+    final resetPos = Vector2(
+      -100,
+      initialGameCanvasSize.y - player.size.y / 2,
+    );
+    await playTrainTravelTransition(
+      nextStageId: nextStageId,
+      resetPos: resetPos,
+    );
+  }
+
+  /// 暗転 → Rive（trainscene）→ 暗転 → シーンロード → 明転。
+  /// 電車インタラクトなど、次ステージ ID が決まっている遷移で使う。
+  Future<void> playTrainTravelTransition({
+    required String nextStageId,
+    required Vector2 resetPos,
+    VoidCallback? onAfterFadeIn,
+  }) async {
     player.unbeatable = true;
     isGameClear = true;
+    isTrainTravelTransitioning = true;
+    // pauseEngine は呼ばない。Flame の OpacityEffect（フェード）が update を要するため。
+    try {
+      debugPrint('TrainTravelTransition: starting cinematic → $nextStageId');
+
+      await _fadeToBlack();
+      await stageClearCinematic.playTrainScene();
+      _fadeOverlay.opacity = 1.0;
+
+      player.teleportTo(resetPos);
+      cameraController.resetBackgroundParallax();
+      cameraController.setOutdoorSceneCamera();
+
+      await sceneManager.loadScene(
+        nextStageId,
+        initialPlayerPosition: resetPos,
+      );
+
+      await _fadeFromBlack();
+      onAfterFadeIn?.call();
+    } finally {
+      isGameClear = false;
+      player.unbeatable = false;
+      isTrainTravelTransitioning = false;
+      // ウィンドウ表示中なら pause のまま、なければ再開
+      if (windowManager.currentWindowType != GameWindowType.none) {
+        pauseEngine();
+      } else {
+        resumeEngine();
+      }
+    }
+  }
+
+  Future<void> stageClear() async {
     final state = gameRuntimeState;
     final currentSceneId = state.currentOutdoorSceneId ?? 'outdoor_1';
-    final bool isFinalStage = currentSceneId == 'outdoor_despair' || currentSceneId == 'outdoor_true';
+    final bool isFinalStage =
+        currentSceneId == 'outdoor_despair' || currentSceneId == 'outdoor_true';
 
     // 現在の属性を確定し、クリア済みリストに追加
     // TODO: 属性確定ロジックの再設計
-    
-    // 1. フェードアウト
-    final fadeOutCompleter = Completer<void>();
-    _fadeOverlay.add(OpacityEffect.to(
-      1.0, 
-      EffectController(duration: 1.0),
-      onComplete: () => fadeOutCompleter.complete(),
-    ));
-    await fadeOutCompleter.future;
 
-    // 2. 状態更新
     String nextStageId = 'outdoor_0';
     if (!isFinalStage) {
-      // 次のステージ番号を計算
-      int nextNum = (currentSceneId == 'outdoor_philosophy') ? 6 : (int.tryParse(currentSceneId.split('_').last) ?? 1) + 1;
-      
-      if (nextNum == 5) nextStageId = 'outdoor_philosophy';
-      else if (nextNum == 6) {
+      int nextNum = (currentSceneId == 'outdoor_philosophy')
+          ? 6
+          : (int.tryParse(currentSceneId.split('_').last) ?? 1) + 1;
+
+      if (nextNum == 5) {
+        nextStageId = 'outdoor_philosophy';
+      } else if (nextNum == 6) {
         nextStageId = state.outdoorIdAfterPhilosophy();
       } else {
         nextStageId = 'outdoor_$nextNum';
       }
     } else {
-      // シナリオ完了時（v8.3 マクロ／父のメモ）
       state.applyScenarioClearMacroRewardsForCompletedRun();
       state.sentLifeScenarioBaseline = state.sentLifeResourceCount;
       state.scenarioCount++;
-      
-      // 明示的に屋外シーンIDをリセット
       state.currentOutdoorSceneId = 'outdoor_0';
       nextStageId = 'outdoor_0';
-      debugPrint('Scenario completed. Starting Scenario ${state.scenarioCount} from Stage 0.');
+      debugPrint(
+        'Scenario completed. Starting Scenario ${state.scenarioCount} from Stage 0.',
+      );
     }
 
-    // 3. テレポートとリセット
-    // 常に x = -50 から開始
-    final resetPos = Vector2(-50, initialGameCanvasSize.y - player.size.y / 2);
-    player.teleportTo(resetPos);
-    cameraController.resetBackgroundParallax();
-    cameraController.setOutdoorSceneCamera();
-
-    debugPrint('Transitioning to: $nextStageId (Scenario: ${state.scenarioCount})');
-    
-    // シーンをロードするが、メッセージ表示はフェードインの後に回す
-    await sceneManager.loadScene(
-      nextStageId, 
-      initialPlayerPosition: resetPos,
+    final resetPos = Vector2(
+      -50,
+      initialGameCanvasSize.y - player.size.y / 2,
     );
 
-    // 4. フェードイン
-    final fadeInCompleter = Completer<void>();
-    _fadeOverlay.add(OpacityEffect.to(
-      0.0, 
-      EffectController(duration: 1.0),
-      onComplete: () => fadeInCompleter.complete(),
-    ));
-    await fadeInCompleter.future;
+    debugPrint(
+      'Transitioning to: $nextStageId (Scenario: ${state.scenarioCount})',
+    );
 
-    // 5. ステータス回復と時間経過
-    player.updateIntegrity(player.maxIntegrity);
-    player.updateStress(0);
-    timeService.advanceTime(420);
-    
-    isGameClear = false;
-    player.unbeatable = false;
-    _autoLaunchTriggered = false;
-    _autoAdvanceTriggered = false;
+    try {
+      await playTrainTravelTransition(
+        nextStageId: nextStageId,
+        resetPos: resetPos,
+        onAfterFadeIn: () {
+          player.updateIntegrity(player.maxIntegrity);
+          player.updateStress(0);
+          timeService.advanceTime(420);
+        },
+      );
+    } finally {
+      _autoLaunchTriggered = false;
+      _autoAdvanceTriggered = false;
+    }
   }
 
   /*
