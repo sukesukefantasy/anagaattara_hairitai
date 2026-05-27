@@ -1,4 +1,5 @@
 ﻿import 'package:flame/components.dart';
+import '../game/pseudo3d_camera.dart';
 import '../game/world_scale.dart';
 import '../main.dart';
 import '../scene/abstract_outdoor_scene.dart';
@@ -32,6 +33,13 @@ class CameraController extends Component with HasGameReference<MyGame> {
   Vector2 get depthZoomFocusWorld => Vector2(
         cameraAnchor.position.x,
         game.initialGameCanvasSize.y,
+      );
+
+  /// 屋外背景の疑似3D射影（毎フレーム再生成）。
+  Pseudo3DCamera get outdoorPseudo3D => Pseudo3DCamera(
+        focusWorldX: cameraAnchor.position.x,
+        referenceZoom: referenceZoom,
+        viewfinderZoom: game.camera.viewfinder.zoom,
       );
 
   void initializeCamera(Player player) {
@@ -72,10 +80,6 @@ class CameraController extends Component with HasGameReference<MyGame> {
     cameraAnchor.position = desired;
     // クランプで実際に動いた分を manualPan に織り込む（ズーム変更後もパン意図と一致させる）
     manualPanWorld.setFrom(desired - base);
-
-    if (game.sceneManager.currentScene is AbstractOutdoorScene) {
-      syncBackgroundParallaxFromCamera();
-    }
 
     _syncDepthZoomIfNeeded();
   }
@@ -191,9 +195,6 @@ class CameraController extends Component with HasGameReference<MyGame> {
     game.camera.viewfinder.zoom = clamped;
     _lastSyncedCameraZoom = -1;
     syncDepthZoom();
-    if (game.sceneManager.currentScene is AbstractOutdoorScene) {
-      syncBackgroundParallaxFromCamera();
-    }
   }
 
   /// [GameStageComponent] と [SkyComponent] に深度別 scale 補正を適用する。
@@ -210,16 +211,13 @@ class CameraController extends Component with HasGameReference<MyGame> {
 
     _lastSyncedCameraZoom = cameraZoom;
 
-    for (final bg in scene.children.whereType<GameStageComponent>()) {
-      if (bg.isMounted) {
-        bg.applyDepthZoom(cameraZoom, referenceZoom);
-      }
+    if (scene is AbstractOutdoorScene) {
+      return;
     }
 
-    if (scene is AbstractOutdoorScene) {
-      final sky = scene.skyBackgroundComponent;
-      if (sky != null && sky.isMounted) {
-        sky.applyDepthZoom(cameraZoom, referenceZoom);
+    for (final bg in scene.children.whereType<GameStageComponent>()) {
+      if (bg.isMounted && !bg.loop) {
+        bg.applyDepthZoom(cameraZoom, referenceZoom);
       }
     }
   }
@@ -232,25 +230,8 @@ class CameraController extends Component with HasGameReference<MyGame> {
     syncDepthZoom();
   }
 
-  /// 遠景・中景の X をカメラフォーカスに連動（プレイヤー delta の累積ではない）。
-  ///
-  /// [BackgroundData.parallaxEffect] はカメラ移動に対する視差係数。
-  /// 旧式 `position.x += -playerDx * effect` と同符号: `x = -cameraX * effect`。
-  void syncBackgroundParallaxFromCamera() {
-    final scene = game.sceneManager.currentScene;
-    if (scene is! AbstractOutdoorScene) {
-      return;
-    }
-
-    final cameraX = cameraAnchor.position.x;
-    for (final bg in scene.children.whereType<GameStageComponent>()) {
-      bg.position.x = -cameraX * bg.parallaxEffect;
-    }
-  }
-
-  void resetBackgroundParallax() {
-    syncBackgroundParallaxFromCamera();
-  }
+  /// 互換: 屋外 loop は [Pseudo3DCamera] が描画時に射影するため no-op。
+  void resetBackgroundParallax() {}
 
   void zoomIn() {
     setZoom(game.camera.viewfinder.zoom + 0.1);

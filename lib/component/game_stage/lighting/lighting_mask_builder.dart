@@ -219,31 +219,22 @@ abstract final class LightingMaskBuilder {
     final tileW = stage.data.srcSize.x;
     final tileH = stage.data.srcSize.y;
 
-    final worldRect = GameStageComponent.visibleLoopLayerWorldRect(
-      originWorldX: origin.x,
-      originWorldY: origin.y,
+    final tileGridOriginWorldX =
+        WorldScale.loopBackgroundTileOriginWorldX(tileW);
+    final pseudo3D = game.cameraController.outdoorPseudo3D;
+    final visibleWorld = pseudo3D.expandedVisibleWorld(
+      CameraViewportCoords.loopStageVisibleWorldRect(visWorld),
+      stage.depthMeters,
+    );
+    final localBounds = GameStageComponent.projectedLoopLocalBounds(
+      pseudo3D: pseudo3D,
+      depthMeters: stage.depthMeters,
+      tileGridOriginWorldX: tileGridOriginWorldX,
       tileW: tileW,
       tileH: tileH,
-      visibleWorld: CameraViewportCoords.loopStageVisibleWorldRect(visWorld),
+      componentWorldLeft: origin.x,
+      visibleWorld: visibleWorld,
       isScrollForward: stage.isScrollForward,
-    );
-    if (worldRect.isEmpty) {
-      return null;
-    }
-
-    final localTopLeft = CameraViewportCoords.worldOffsetToLocal(
-      stage,
-      Offset(worldRect.left, worldRect.top),
-    );
-    final localBottomRight = CameraViewportCoords.worldOffsetToLocal(
-      stage,
-      Offset(worldRect.right, worldRect.bottom),
-    );
-    final localBounds = Rect.fromLTRB(
-      math.min(localTopLeft.dx, localBottomRight.dx),
-      math.min(localTopLeft.dy, localBottomRight.dy),
-      math.max(localTopLeft.dx, localBottomRight.dx),
-      math.max(localTopLeft.dy, localBottomRight.dy),
     );
     if (localBounds.isEmpty) {
       return null;
@@ -257,16 +248,7 @@ abstract final class LightingMaskBuilder {
       localBounds: localBounds,
       maxLongEdge: maxStripMaskLongEdge,
       paintContent: (canvas) {
-        GameStageComponent.paintLoopTiles(
-          canvas: canvas,
-          sprite: sprite,
-          tileW: tileW,
-          tileH: tileH,
-          originWorldX: origin.x,
-          visibleWorld: CameraViewportCoords.loopStageVisibleWorldRect(visWorld),
-          isScrollForward: stage.isScrollForward,
-          overridePaint: maskPaint,
-        );
+        stage.paintLoopBackground(canvas, overridePaint: maskPaint);
       },
     );
     if (frame == null) {

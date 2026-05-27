@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 
 import '../../depth_zoom_visual.dart';
+import '../../../game/pseudo3d_camera.dart';
 import '../../../game/world_scale.dart';
 import '../../../game_manager/time_service.dart';
 import '../../../main.dart';
@@ -68,7 +69,31 @@ class SkyComponent extends RectangleComponent
 
   @override
   void render(Canvas canvas) {
-    paintWithDepthZoom(canvas, (Canvas layerCanvas) => super.render(layerCanvas));
+    if (game.sceneManager.currentScene is AbstractOutdoorScene) {
+      final pseudo3D = game.cameraController.outdoorPseudo3D;
+      final depth = WorldScale.skyDepthMeters;
+      final pivot = pseudo3D.depthZoomPivotLocal(
+        absoluteTopLeftPosition.x,
+        size.y,
+      );
+      Pseudo3DCamera.paintWithDepthZoomAtPivot(
+        canvas,
+        factor: pseudo3D.depthZoomRenderFactor(depth),
+        pivotLocalX: pivot.x,
+        pivotLocalY: pivot.y,
+        paint: (layerCanvas) {
+          final trueLeft = position.x;
+          final projLeft = pseudo3D.projectedWorldX(trueLeft, depth);
+          final localLeft = projLeft - absoluteTopLeftPosition.x;
+          layerCanvas.drawRect(
+            Rect.fromLTWH(localLeft, -size.y, size.x, size.y),
+            paint,
+          );
+        },
+      );
+      return;
+    }
+    paintWithDepthZoom(canvas, (layerCanvas) => super.render(layerCanvas));
   }
 
   @override

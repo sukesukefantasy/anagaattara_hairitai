@@ -189,8 +189,12 @@ abstract final class LightReceiverRenderer {
         boundsRect: punchBounds,
       );
       final carriedEmitters = _carriedLanternDynamicEmitters(game);
+      final dynamicEmitters = [
+        ...carriedEmitters,
+        ..._transientDynamicEmitters(game),
+      ];
       if (bandClip) {
-        for (final emitter in carriedEmitters) {
+        for (final emitter in dynamicEmitters) {
           final punchDepth = lightingReceiverDepthFactor(
             participant: participant,
             component: receiver,
@@ -206,7 +210,7 @@ abstract final class LightReceiverRenderer {
           );
         }
       } else if (hasSilhouetteMask) {
-        for (final emitter in carriedEmitters) {
+        for (final emitter in dynamicEmitters) {
           final punchDepth = lightingReceiverDepthFactor(
             participant: participant,
             component: receiver,
@@ -338,6 +342,15 @@ abstract final class LightReceiverRenderer {
       return [carried];
     }
     return const [];
+  }
+
+  /// 流れ星など burst 同期の一時灯（毎フレーム Canvas punch）。
+  static List<LightEmitter> _transientDynamicEmitters(MyGame game) {
+    final scene = game.sceneManager.currentScene;
+    if (scene is! AbstractOutdoorScene) {
+      return const [];
+    }
+    return scene.lightingWorld.transientDynamicEmitters;
   }
 
   static Rect stripLanternPoolRect({

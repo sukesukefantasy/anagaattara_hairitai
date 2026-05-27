@@ -236,6 +236,10 @@ class GameRuntimeState extends ChangeNotifier {
   /// C-2 契約（§6.2 Nourishment 確定）。`resetStageState` では消さない。
   bool automationContractC2 = false;
 
+  /// §11 チュートリアル：母星で「搬入経路」を接続したか。
+  /// 表向きは帰還支援。裏では C-2 で「全開」されうる。
+  bool hasConnectedSupplyRoute = false;
+
   /// マクロクリア／到達フラグの集合（周回報酬・分岐用）
   Set<String> completedMacroRoutes = {};
 
@@ -556,6 +560,24 @@ class GameRuntimeState extends ChangeNotifier {
     destroyMacroPathQualified = false;
     automationShopTierC = automationShopTierC < 2 ? 2 : automationShopTierC;
     _refreshDisclosureTierFromWorldProgress();
+    if (hasConnectedSupplyRoute) {
+      pendingNarrativeMessages.add('〔星の通知〕接続済みの経路が、勝手に「全開」された。');
+      while (pendingNarrativeMessages.length > 12) {
+        pendingNarrativeMessages.removeAt(0);
+      }
+    }
+    saveGame();
+    notifyListeners();
+  }
+
+  /// §11 チュートリアル：搬入経路を接続する（母星）。
+  void connectSupplyRouteIfNeeded() {
+    if (hasConnectedSupplyRoute) return;
+    hasConnectedSupplyRoute = true;
+    pendingNarrativeMessages.add('〔母星〕搬入経路が接続された。');
+    while (pendingNarrativeMessages.length > 12) {
+      pendingNarrativeMessages.removeAt(0);
+    }
     saveGame();
     notifyListeners();
   }
@@ -867,12 +889,15 @@ class GameRuntimeState extends ChangeNotifier {
 
   // カーゴを発射し、蓄積資源を送信済みに移す（母星ステータスを更新）
   void launchCargo() {
+    final launchedLife = cargoLifeCount;
+    final launchedHistory = cargoHistoryCount;
+    final launchedInorganic = cargoInorganicCount;
     totalCargoLaunches++;
     _refreshDisclosureTierFromWorldProgress();
     sendResources(
-      life: cargoLifeCount,
-      history: cargoHistoryCount,
-      inorganic: cargoInorganicCount,
+      life: launchedLife,
+      history: launchedHistory,
+      inorganic: launchedInorganic,
     );
     debugPrint(
       'Cargo launched: life=$cargoLifeCount, history=$cargoHistoryCount, inorganic=$cargoInorganicCount',
@@ -881,8 +906,42 @@ class GameRuntimeState extends ChangeNotifier {
     cargoHistoryCount = 0;
     cargoInorganicCount = 0;
     isCargoLaunched = true;
+
+    // カーゴ後の通信（HUD 用・最小実装）。
+    // 本格的な台詞テーブルは後続タスクで差し替える前提。
+    currentMission = _buildVeteranCommsAfterCargo(
+      life: launchedLife,
+      history: launchedHistory,
+      inorganic: launchedInorganic,
+    );
+
     notifyListeners();
     saveGame();
+  }
+
+  String _buildVeteranCommsAfterCargo({
+    required int life,
+    required int history,
+    required int inorganic,
+  }) {
+    final total = life + history + inorganic;
+    if (total <= 0) return '';
+    final lp = life / total;
+    final hp = history / total;
+
+    // C-2 後は「正しいことだけ」へ寄せる（§10・§11）。
+    if (automationContractC2) {
+      return '〔通信:ベテラン〕任務を続けろ。送還量は十分だ。問題ない。';
+    }
+
+    // 送還比率の粗い分岐（§10 の骨格に合わせる）
+    if (lp >= 0.6) {
+      return '〔通信:ベテラン〕調子はどうだ。こっちは順調だ。';
+    }
+    if (hp >= 0.45) {
+      return '〔通信:ベテラン〕今日、父の昔話を思い出した。あいつは……';
+    }
+    return '〔通信:ベテラン〕現状維持はできる。だが油断するな。';
   }
 
   // 敵対トリガーチェック（150ポイント以上）
@@ -1018,6 +1077,7 @@ class GameRuntimeState extends ChangeNotifier {
     automationKitTotalRuntime = data.automationKitTotalRuntime;
 
     automationContractC2 = data.automationContractC2;
+    hasConnectedSupplyRoute = data.hasConnectedSupplyRoute;
     completedMacroRoutes = Set<String>.from(data.completedMacroRoutes);
     destroyMacroPathQualified = data.destroyMacroPathQualified;
     lifetimeEnemyKills = data.lifetimeEnemyKills;
@@ -1146,6 +1206,7 @@ class GameRuntimeState extends ChangeNotifier {
       automationKitStage: automationKitStage,
       automationKitTotalRuntime: automationKitTotalRuntime,
       automationContractC2: automationContractC2,
+      hasConnectedSupplyRoute: hasConnectedSupplyRoute,
       completedMacroRoutes: completedMacroRoutes.toList(),
       destroyMacroPathQualified: destroyMacroPathQualified,
       lifetimeEnemyKills: lifetimeEnemyKills,

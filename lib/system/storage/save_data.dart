@@ -90,6 +90,9 @@ class SaveData {
   /// 自動化ショップ C-2 契約（意志の核自動供給）。`automationKitStage >= 4` と同期させる。
   bool automationContractC2;
 
+  /// §11 チュートリアル：母星で「搬入経路」を接続したか。
+  bool hasConnectedSupplyRoute;
+
   /// v8.3 マクロルート到達記録（例: macro_nourishment, macro_destroy）。
   List<String> completedMacroRoutes;
 
@@ -197,6 +200,7 @@ class SaveData {
     this.automationKitStage = 0,
     this.automationKitTotalRuntime = 0.0,
     this.automationContractC2 = false,
+    this.hasConnectedSupplyRoute = false,
     List<String>? completedMacroRoutes,
     this.destroyMacroPathQualified = false,
     this.lifetimeEnemyKills = 0,
@@ -310,6 +314,7 @@ class SaveData {
       automationKitStage: json['automationKitStage'] as int? ?? 0,
       automationKitTotalRuntime: json['automationKitTotalRuntime'] as double? ?? 0.0,
       automationContractC2: json['automationContractC2'] as bool? ?? false,
+      hasConnectedSupplyRoute: json['hasConnectedSupplyRoute'] as bool? ?? false,
       completedMacroRoutes:
           (json['completedMacroRoutes'] as List<dynamic>?)?.cast<String>(),
       destroyMacroPathQualified:
@@ -404,6 +409,7 @@ class SaveData {
       'automationKitStage': automationKitStage,
       'automationKitTotalRuntime': automationKitTotalRuntime,
       'automationContractC2': automationContractC2,
+      'hasConnectedSupplyRoute': hasConnectedSupplyRoute,
       'completedMacroRoutes': completedMacroRoutes,
       'destroyMacroPathQualified': destroyMacroPathQualified,
       'lifetimeEnemyKills': lifetimeEnemyKills,

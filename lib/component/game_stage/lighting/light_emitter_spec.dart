@@ -36,6 +36,18 @@ class LightEmitterSpec {
     usesGlobalRadiusPulse: true,
   );
 
+  /// 流れ星 burst 用（冷白・大半径・明滅なし）。
+  static final shootingStar = LightEmitterSpec(
+    color: const Color.fromARGB(255, 253, 254, 255),
+    profile: LightProfile.fromBrightnessLevel(
+      1300,
+      innerRadius: 70,
+      midRadius: 210,
+      outerRadius: 420,
+    ),
+    warmTintStrength: 0.05,
+  );
+
   /// 建物・街灯向けの暖白（明滅なし）。
   static LightEmitterSpec warmWhite({
     int brightnessLevel = 600,

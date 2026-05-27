@@ -362,40 +362,62 @@ class PrologueScene extends AbstractOutdoorScene {
   }
 
   void _startCrashSequence() {
-    game.windowManager.showDialog(
-      [
-        "[ベテラン調査員]",
-        "「よし、全員乗り込んだな。……母星ともこれでおさらばだ。」",
-        "「……見てみろ。あそこに見えるのが、我々の目的地……『歴史を喰らう惑星』だ。」",
-        "「不気味なほどに美しいだろう？ あれは、犠牲になった数多の文明の輝きなんだ。」",
-        "「……！？ なんだ、この揺れは！？」",
-        "「吸引力が想定を超えている！ 重力スリングショットが効かない！ 墜落するぞ！！」",
-        "（――激しい衝撃と、白い光が視界を覆う――）",
-      ],
-      onClosed: () async {
-        // ステージ1へ遷移
-        final state = game.gameRuntimeState;
-        state.buildingPlacements.remove('outdoor_1');
-        final resetPos = Vector2(
-          -100,
-          game.initialGameCanvasSize.y - game.player.size.y / 2,
-        );
+    final state = game.gameRuntimeState;
 
-        await game.sceneManager.loadScene(
-          'outdoor_1',
-          initialPlayerPosition: resetPos,
-          onAfterLoad: () {
-            game.windowManager.showDialog([
-              "（……意識が戻る。周囲にはロケットの残骸が散らばっている）",
-              "（……ザー……ザー……）",
-              "[ベテラン調査員（通信）]",
-              "「……おい、聞こえるか！？ 無事か！？」",
-              "「ロケットはバラバラだ。私は少し離れた場所に不時着したらしい。……通信は生きているようだな。」",
-              "「いいか、そこはもう星の胃袋の中だ。自分の『意志』をしっかり持て。さもないと……溶けるぞ。」",
-            ]);
-          },
-        );
-      },
-    );
+    Future<void> runCrash() async {
+      game.windowManager.showDialog(
+        [
+          "[ベテラン調査員]",
+          "「よし、全員乗り込んだな。……母星ともこれでおさらばだ。」",
+          "「……見てみろ。あそこに見えるのが、我々の目的地……『歴史を喰らう惑星』だ。」",
+          "「不気味なほどに美しいだろう？ あれは、犠牲になった数多の文明の輝きなんだ。」",
+          "「……！？ なんだ、この揺れは！？」",
+          "「吸引力が想定を超えている！ 重力スリングショットが効かない！ 墜落するぞ！！」",
+          "（――激しい衝撃と、白い光が視界を覆う――）",
+        ],
+        onClosed: () async {
+          // ステージ1へ遷移
+          state.buildingPlacements.remove('outdoor_1');
+          final resetPos = Vector2(
+            -100,
+            game.initialGameCanvasSize.y - game.player.size.y / 2,
+          );
+
+          await game.sceneManager.loadScene(
+            'outdoor_1',
+            initialPlayerPosition: resetPos,
+            onAfterLoad: () {
+              game.windowManager.showDialog([
+                "（……意識が戻る。周囲にはロケットの残骸が散らばっている）",
+                "（……ザー……ザー……）",
+                "[ベテラン調査員（通信）]",
+                "「……おい、聞こえるか！？ 無事か！？」",
+                "「ロケットはバラバラだ。私は少し離れた場所に不時着したらしい。……通信は生きているようだな。」",
+                "「いいか、そこはもう星の胃袋の中だ。自分の『意志』をしっかり持て。さもないと……溶けるぞ。」",
+              ]);
+            },
+          );
+        },
+      );
+    }
+
+    // §11 チュートリアル：搬入経路（表）を接続してから出発する。
+    if (!state.hasConnectedSupplyRoute) {
+      game.windowManager.showDialog(
+        [
+          "[ベテラン調査員]",
+          "「搬入経路を接続しておくよ。」",
+          "「表向きは、お前が生きて帰れるようにする支援だ。」",
+          "「……父も、これで効率的に調査を進め、母星へ反映させてきた。」",
+        ],
+        onClosed: () async {
+          state.connectSupplyRouteIfNeeded();
+          await runCrash();
+        },
+      );
+      return;
+    }
+
+    runCrash();
   }
 }

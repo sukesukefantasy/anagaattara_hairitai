@@ -164,8 +164,6 @@ abstract class AbstractOutdoorScene extends GameScene {
       }
     }
     debugPrint('AbstractOutdoorScene: Backgrounds initialized.');
-    game.cameraController.syncBackgroundParallaxFromCamera();
-    game.cameraController.syncDepthZoom();
 
     // GroundとUnderGroundはonLoadで初期化済みなので、ここではデバッグログとcurrentSceneへの設定のみ
     debugPrint(

@@ -7,6 +7,7 @@ import '../../../game_manager/time_service.dart';
 import '../../../main.dart';
 import '../../../scene/abstract_outdoor_scene.dart';
 import '../../item/lantern_item.dart';
+import '../gamestage_component.dart';
 import 'ambient_lighting_utils.dart';
 import 'day_night_schedule.dart';
 import 'light_emitter.dart';
@@ -53,6 +54,7 @@ final class LightingWorld {
 
   GlobalSunState sunState = GlobalSunState.none;
   List<LightEmitter> localEmitters = const [];
+  List<LightEmitter> transientDynamicEmitters = const [];
 
   void beginFrame() {
     _lanternPulseFrame =
@@ -69,6 +71,7 @@ final class LightingWorld {
     if (!_isOutdoorScene(game)) {
       sunState = GlobalSunState.none;
       localEmitters = const [];
+      transientDynamicEmitters = const [];
       return;
     }
 
@@ -78,6 +81,7 @@ final class LightingWorld {
     if (sky == null) {
       sunState = GlobalSunState.none;
       localEmitters = const [];
+      transientDynamicEmitters = const [];
       return;
     }
 
@@ -115,6 +119,7 @@ final class LightingWorld {
       game,
       lanternRadiusScale: lanternRadiusPulseScale,
     );
+    transientDynamicEmitters = _gatherTransientDynamicEmitters(scene);
   }
 
   /// 環境（太陽）暗さ。viewport オーバーレイと同様に奥行き punch は使わない。
@@ -129,6 +134,16 @@ final class LightingWorld {
 
 bool _isOutdoorScene(MyGame game) =>
     game.sceneManager.currentScene is AbstractOutdoorScene;
+
+List<LightEmitter> _gatherTransientDynamicEmitters(AbstractOutdoorScene scene) {
+  final emitters = <LightEmitter>[];
+  for (final child in scene.children) {
+    if (child is GameStageComponent && child.shootingStarLight.isActive) {
+      emitters.add(child.shootingStarLight);
+    }
+  }
+  return emitters;
+}
 
 List<LightEmitter> gatherLocalEmitters(
   MyGame game, {

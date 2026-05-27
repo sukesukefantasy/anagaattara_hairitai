@@ -1,4 +1,6 @@
-﻿import 'package:flame/components.dart';
+﻿import 'dart:math' as math;
+
+import 'package:flame/components.dart';
 
 /// ゲーム世界の単位＝ソース画像の 1px（[size] は原則 [srcSize] と一致）。
 ///
@@ -46,6 +48,12 @@ abstract final class WorldScale {
   static const double extendedWorldWidth =
       extendedWorldRight - extendedWorldLeft;
 
+  /// ループ遠景タイル列のワールド原点（index 0 タイルの左端）。
+  ///
+  /// 右端 [stageRightX] からマイナス X へ [tileWidth] 単位で並べる。
+  static double loopBackgroundTileOriginWorldX(double tileWidth) =>
+      stageRightX - tileWidth;
+
   // --- Z 奥行き（メートル）---
 
   /// プレイヤー足元のプレイフィールド平面
@@ -59,6 +67,27 @@ abstract final class WorldScale {
 
   /// 空・星空レイヤーの目安
   static const double skyDepthMeters = 500;
+
+  /// referenceZoom（屋外/屋内で設定される基準ズーム）における、カメラの手前距離（m）。
+  ///
+  /// ズームの「距離感」をパララックスに反映するためのチューニング定数。
+  static const double cameraDistanceAtReferenceMeters = 100.0;
+
+  /// 奥行きズーム重み [zoomWeightForDepth] の atan ヒンジ（m）。大きいほど遠景も拡大しやすい。
+  static const double zoomWeightHingeMeters = cameraDistanceAtReferenceMeters;
+
+  /// viewfinder.zoom からカメラ手前距離（m）を近似する。
+  ///
+  /// zoom が大きい（ズームイン）ほど近く、zoom が小さい（ズームアウト）ほど遠くなる。
+  static double cameraDistanceMeters(double cameraZoom, double referenceZoom) {
+    if (cameraZoom <= 1e-6) {
+      return cameraDistanceAtReferenceMeters;
+    }
+    if (referenceZoom <= 1e-6) {
+      return cameraDistanceAtReferenceMeters;
+    }
+    return cameraDistanceAtReferenceMeters * referenceZoom / cameraZoom;
+  }
 
   /// ワールド座標差（ゲーム単位）をメートルに換算。
   static double worldDistanceMeters(Vector2 a, Vector2 b) {
@@ -105,20 +134,17 @@ abstract final class WorldScale {
         .clamp(1, lightingOverlayRenderPriority - 1);
   }
 
-  /// 奥行きからパララックス係数を近似（[BackgroundData.parallaxEffect] の参考値）
-  static double parallaxEffectForDepth(double depthMeters) {
-    if (depthMeters <= playfieldDepthMeters) {
-      return (depthMeters.abs() / 8.0).clamp(0.0, 1.0);
-    }
-    return -((depthMeters / farMountainDepthMeters).clamp(0.0, 1.0));
-  }
-
-  /// カメラズームの奥行き減衰重み（0..1）。プレイ面=1、遠景→0、手前負深度=1。
-  static double zoomInfluenceForDepth(double depthMeters) {
+  /// 奥行きズームの影響重み（0..1）。手前=1、遠いほど小さい（atan で滑らかに減衰）。
+  ///
+  /// 屋内 [DepthZoomVisual] と屋外 [Pseudo3DCamera.depthZoomRenderFactor] で使用。
+  ///
+  /// パララックス scroll とは別。没入感調整は [zoomWeightHingeMeters] を変更する。
+  static double zoomWeightForDepth(double depthMeters) {
     if (depthMeters <= playfieldDepthMeters) {
       return 1.0;
     }
-    return (1.0 - depthMeters / farMountainDepthMeters).clamp(0.0, 1.0);
+    return (2.0 / math.pi * math.atan(zoomWeightHingeMeters / depthMeters))
+        .clamp(0.0, 1.0);
   }
 
   /// 深度 [depthMeters] における見かけのカメラ zoom（[referenceZoom] 基準の線形補間）。
@@ -130,7 +156,7 @@ abstract final class WorldScale {
     if (cameraZoom <= 0 || referenceZoom <= 0) {
       return cameraZoom;
     }
-    final w = zoomInfluenceForDepth(depthMeters);
+    final w = zoomWeightForDepth(depthMeters);
     return referenceZoom + (cameraZoom - referenceZoom) * w;
   }
 
