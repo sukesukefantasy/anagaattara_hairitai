@@ -2,24 +2,31 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flame/components.dart';
 
 import '../main.dart';
 import '../game_manager/time_service.dart';
 import '../system/crafting_system.dart';
 import '../system/storage/game_runtime_state.dart';
+import '../system/farm_role_profile.dart';
+import 'farm_resource_cost_row.dart';
 import 'responsive_ui_font.dart';
 import 'window_manager.dart';
 import 'windows/pause_window.dart';
 import 'windows/message_window.dart';
 import 'windows/item_bag_window.dart';
 import 'widgets/item_sprite_icon.dart';
-import 'windows/automation_shop_window.dart';
+import 'widgets/will_core_pip.dart';
+import 'windows/automation_menu_window.dart';
 import 'windows/codex_window.dart';
 import 'windows/crafting_window.dart';
+import 'windows/tweet_window.dart';
 import '../component/item/item.dart';
 import '../component/player.dart';
+import '../system/item_pickup_feed.dart';
 import 'overlays/dig_shape_editor_overlay.dart';
+import 'widgets/item_pickup_feed_overlay.dart';
 
 class GameUI extends StatefulWidget {
   final Size screenSize;
@@ -77,6 +84,8 @@ class GameUI extends StatefulWidget {
   );
   static final ValueNotifier<String?> _equippedItemNameNotifier =
       ValueNotifier<String?>(null);
+  static final ValueNotifier<double?> _equippedItemUseButtonGaugeNotifier =
+      ValueNotifier<double?>(null);
 
   // Direction button setters
   static void setUpButtonState(DirectionButtonState state) =>
@@ -107,6 +116,10 @@ class GameUI extends StatefulWidget {
       _interactButtonStateNotifier.value = state;
   static void setInteractButtonIcon(IconData? icon) =>
       _interactButtonIconNotifier.value = icon;
+  static void setEquippedItemUseButtonState(ActionButtonState state) =>
+      _equippedItemUseButtonStateNotifier.value = state;
+  static void setEquippedItemUseButtonGauge(double? ratio) =>
+      _equippedItemUseButtonGaugeNotifier.value = ratio;
 
   // for carrying mode
   static void setPlaceButtonState(ActionButtonState state) =>
@@ -333,23 +346,111 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
   final GlobalKey _cargoRatioBarKey = GlobalKey();
   final GlobalKey _statusHudKey = GlobalKey();
   final GlobalKey _placementOverlayKey = GlobalKey();
+  final GlobalKey _itemBagButtonKey = GlobalKey();
 
   StreamSubscription<CargoHudFlyEvent>? _cargoHudFlySub;
+  StreamSubscription<CargoTransferFlyEvent>? _cargoTransferFlySub;
 
   final List<_CargoFlySpec> _cargoFlySpecs = [];
+  final Set<String> _pickupFlyPlayedIds = {};
 
   void _onRuntimeStateForV83() {
     if (!mounted) return;
     final s = widget.game.gameRuntimeState;
-    if (!s.pendingAutomationShopUnlockNotice) return;
-    s.consumeAutomationShopUnlockNoticeUi();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      widget.windowManager.showDialog([
-        '〔星の通知〕',
-        '自動化ショップの端末が、画面右上に現れた。',
-      ], bodyTextColor: Colors.lightBlueAccent);
-    });
+    if (s.pendingTargetStarAutomationIntro) {
+      s.consumeTargetStarAutomationIntroUi();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _runTargetStarAutomationOnboarding();
+      });
+    }
+    if (s.pendingAlertHunterIntroMessage) {
+      s.consumeAlertHunterIntroMessage();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        widget.windowManager.showDialog(
+          [
+            '〔星の声〕',
+            '警戒が高まった。',
+            '…狩人が送り込まれた。気を付けろ。',
+          ],
+          bodyTextColor: Colors.lightBlueAccent,
+        );
+      });
+    }
+    if (s.pendingKitFromHunterNotice) {
+      s.consumeKitFromHunterNotice();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        widget.windowManager.showDialog(
+          [
+            'まだ持っていない自動化装置が手に入った。',
+            'バッグから設置できる。地上に置け。',
+          ],
+          onClosed: () async {
+            if (!mounted) return;
+            final state = widget.game.gameRuntimeState;
+            if (state.hasShownKitBagHint) return;
+            state.hasShownKitBagHint = true;
+            state.saveGame();
+          },
+        );
+      });
+    }
+  }
+
+  void _runTargetStarAutomationOnboarding() {
+    widget.windowManager.showDialog(
+      [
+        '〔星の声〕',
+        'この星では、手を動かすより機械に任せた方が楽だ。',
+        '不安を減らすなら、回収を任せればいい。',
+      ],
+      bodyTextColor: Colors.lightBlueAccent,
+      onClosed: () async {
+        if (!mounted) return;
+        _showTargetStarAutomationGuide();
+      },
+    );
+  }
+
+  /// 対象星初回案内。主軸3択はショップ相性（ROI）用 — 装置の役割とは別。
+  void _showTargetStarAutomationGuide() {
+    final state = widget.game.gameRuntimeState;
+    final lines = <String>[
+      '画面右上の端末から自動化ショップを開ける。',
+      '警戒が高まると、星は「狩人」を送り込む。',
+      '倒せば、自動化装置（収穫・整備・防衛）が順に手に入る。',
+      'ショップで能力を開放し、設置した装置で強化できる。',
+      '…任せておけば、楽になる。',
+    ];
+
+    if (state.farmPrimaryRole != FarmPrimaryRole.none) {
+      widget.windowManager.showDialog(
+        lines,
+        bodyTextColor: Colors.lightBlueAccent,
+      );
+      return;
+    }
+
+    widget.windowManager.showDialog(
+      [
+        ...lines,
+        'ショップで優先するタブを選べ（その分野の購入・強化がややお得）。',
+      ],
+      bodyTextColor: Colors.lightBlueAccent,
+      options: const ['収穫タブ', '防衛タブ', '整備タブ'],
+      onSelect: (index) {
+        final role = switch (index) {
+          0 => FarmPrimaryRole.harvest,
+          1 => FarmPrimaryRole.ward,
+          2 => FarmPrimaryRole.upkeep,
+          _ => FarmPrimaryRole.harvest,
+        };
+        state.setFarmPrimaryRole(role);
+        widget.windowManager.hideWindow();
+      },
+    );
   }
 
   double _startZoomDrag = 1.0;
@@ -374,6 +475,13 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
         (_) => _spawnCargoHudFlyFromEvent(e),
       );
     });
+    _cargoTransferFlySub = widget.game.gameRuntimeState.cargoTransferFlyStream.listen((
+      e,
+    ) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _spawnCargoTransferFlyFromEvent(e),
+      );
+    });
     _initializePlayer();
   }
 
@@ -382,6 +490,7 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
     widget.game.player.stressNotifier.removeListener(_syncHudShakeFromStress);
     _hudShakeController.dispose();
     _cargoHudFlySub?.cancel();
+    _cargoTransferFlySub?.cancel();
     widget.game.gameRuntimeState.removeListener(_syncHudShakeFromStress);
     widget.game.gameRuntimeState.removeListener(_onRuntimeStateForV83);
     if (_isPlayerInitialized) {
@@ -449,9 +558,9 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
   /// 比率バー Row と同じ順序・比率で、種別セグメントの画面上の狙い位置。
   Offset _cargoSegmentTargetGlobal(CargoHudFlyKind kind) {
     final state = widget.game.gameRuntimeState;
-    final life = state.cargoLifeCount;
-    final hist = state.cargoHistoryCount;
-    final ino = state.cargoInorganicCount;
+    final life = state.playerLifeCount;
+    final hist = state.playerHistoryCount;
+    final ino = state.playerInorganicCount;
     final t = life + hist + ino;
 
     double segmentCenterX(double width) {
@@ -496,6 +605,40 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
     );
   }
 
+  Offset _cargoTerminalScreenPosition() {
+    final terminal = widget.game.player.cargoTerminal;
+    if (terminal != null) {
+      final pos = terminal.absolutePosition;
+      return _worldPointToScreenOverlay(pos.x, pos.y);
+    }
+    // 見つからない場合は中央付近（フォールバック）
+    return Offset(widget.screenSize.width * 0.5, widget.screenSize.height * 0.8);
+  }
+
+  void _spawnCargoTransferFlyFromEvent(CargoTransferFlyEvent event) {
+    if (!mounted || !_isPlayerInitialized) return;
+
+    final start = _cargoSegmentTargetGlobal(event.kind);
+    final end = _cargoTerminalScreenPosition();
+
+    // 蓄積量に応じて複数の粒子を飛ばす
+    final particleCount = (event.count / 5).clamp(1, 10).toInt();
+    for (int i = 0; i < particleCount; i++) {
+      final spec = _CargoFlySpec(
+        key: UniqueKey(),
+        start: start,
+        end: end,
+        color: _cargoFlyColor(event.kind),
+      );
+      // 少し遅延させてバラけさせる
+      Future.delayed(Duration(milliseconds: i * 50), () {
+        if (mounted) {
+          setState(() => _cargoFlySpecs.add(spec));
+        }
+      });
+    }
+  }
+
   void _spawnCargoHudFlyFromEvent(CargoHudFlyEvent event) {
     if (!mounted || !_isPlayerInitialized) return;
 
@@ -515,6 +658,51 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
   void _removeCargoFlySpec(_CargoFlySpec spec) {
     if (!mounted) return;
     setState(() => _cargoFlySpecs.remove(spec));
+  }
+
+  Offset _itemBagButtonGlobalCenter() {
+    final ctx = _itemBagButtonKey.currentContext;
+    final box = ctx?.findRenderObject() as RenderBox?;
+    if (box != null && box.hasSize) {
+      return box.localToGlobal(box.size.center(Offset.zero));
+    }
+    return Offset(
+      widget.screenSize.width * 0.88,
+      widget.screenSize.height * 0.05,
+    );
+  }
+
+  void _onPickupFeedEntryShown(ItemPickupFeedEntry entry) {
+    if (!entry.isFirstAcquisition) return;
+    if (_pickupFlyPlayedIds.contains(entry.id)) return;
+    _pickupFlyPlayedIds.add(entry.id);
+
+    Offset? start;
+    if (entry.flyStartWorld != null) {
+      final w = entry.flyStartWorld!;
+      start = _worldPointToScreenOverlay(w.x, w.y);
+    } else if (entry.flyStartGlobal != null) {
+      start = entry.flyStartGlobal;
+    }
+    if (start == null) return;
+
+    final end = _itemBagButtonGlobalCenter();
+    final flyColor = entry.borderColor ?? Colors.amberAccent;
+    final spec = _CargoFlySpec(
+      key: UniqueKey(),
+      start: start,
+      end: end,
+      color: flyColor,
+    );
+    if (!mounted) return;
+    setState(() => _cargoFlySpecs.add(spec));
+  }
+
+  double _pickupFeedTopOffset(double fontSize) {
+    const uiScale = 2.0 / 3.0 * 0.75;
+    final buttonSize = widget.screenSize.width * 0.06 * uiScale +
+        widget.screenSize.width * 0.02 * uiScale;
+    return widget.screenSize.height * 0.02 + buttonSize + 8;
   }
 
   void _syncHudShakeFromStress() {
@@ -639,6 +827,13 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
             },
           ),
           _buildTopRightButtons(fontSize), // ポーズボタンとアイテムバッグボタンをグループ化
+          ItemPickupFeedOverlay(
+            controller: widget.game.itemBag.pickupFeed,
+            fontSize: fontSize,
+            topOffset: _pickupFeedTopOffset(fontSize),
+            rightOffset: widget.screenSize.width * 0.02,
+            onEntryShown: _onPickupFeedEntryShown,
+          ),
           _buildAchievementNotification(fontSize), // アチーブメント通知
           if (_cargoFlySpecs.isNotEmpty)
             Positioned.fill(
@@ -666,6 +861,7 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
             },
           ),
           _buildDirectionalButtons(), // 配置モード時はオーバーレイより手前
+          _buildTweetLayer(fontSize),
           ValueListenableBuilder<bool>(
             valueListenable: widget.game.digShapeEditor.isActive,
             builder: (context, isEditing, child) {
@@ -684,6 +880,29 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
           _buildActionButtons(fontSize), // 配置モード時はオーバーレイより手前
         ],
       ],
+    );
+  }
+
+  Widget _buildTweetLayer(double fontSize) {
+    return AnimatedBuilder(
+      animation: widget.windowManager,
+      builder: (context, _) {
+        final tweets = widget.windowManager.activeTweets;
+        if (tweets.isEmpty) return const SizedBox.shrink();
+
+        return Stack(
+          children:
+              tweets.map((tweet) {
+                return _TweetPositioner(
+                  key: ValueKey(tweet.id),
+                  tweet: tweet,
+                  game: widget.game,
+                  fontSize: fontSize,
+                  worldPointToScreen: _worldPointToScreenOverlay,
+                );
+              }).toList(),
+        );
+      },
     );
   }
 
@@ -811,37 +1030,7 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
   }
 
   Widget _willCorePip(Color shellColor, double w, double h, double fill) {
-    return SizedBox(
-      width: w,
-      height: h,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(4),
-          border: Border.all(color: shellColor, width: 1.1),
-          color: const Color(0xFF120c08).withValues(alpha: 0.9),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(2),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(2),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: FractionallySizedBox(
-                widthFactor: fill,
-                heightFactor: 1,
-                child: const DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [Color(0xFFe65100), Color(0xFFffc947)],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
+    return WillCorePip(width: w, height: h, fill: fill);
   }
 
   /// 意志の核（カウント可能な単位ピップ）。HP ブロックの直上。
@@ -939,13 +1128,6 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
         widget.screenSize.width < 600 || widget.screenSize.height < 500;
     final pad = _statusHudBlockPadding(fontSize);
     final headerGap = pad.left * 0.75;
-    const double btnHeightScale = 1.5;
-    final btnIconSize =
-        (isMobile ? fontSize * 0.72 : fontSize * 0.85) * btnHeightScale;
-    final btnLabelSize = isMobile ? fontSize * 0.56 : fontSize * 0.65;
-    final btnPadH = isMobile ? fontSize * 0.38 : fontSize * 0.5;
-    final btnPadV =
-        (isMobile ? fontSize * 0.16 : fontSize * 0.22) * btnHeightScale;
 
     return Container(
       decoration: BoxDecoration(
@@ -991,62 +1173,14 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
             ),
             SizedBox(height: isMobile ? 3 : 4),
             _buildCargoRatioBar(fontSize),
+            SizedBox(height: isMobile ? 2 : 3),
+            _buildCargoAbsoluteRow(fontSize),
+            SizedBox(height: isMobile ? 3 : 4),
+            _buildStarAlertTierRow(fontSize),
+            _buildFarmRouteRow(fontSize),
             SizedBox(height: isMobile ? 4 : 6),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                AnimatedBuilder(
-                  animation: widget.game.gameRuntimeState,
-                  builder: (context, _) {
-                    final rs = widget.game.gameRuntimeState;
-                    final canLaunch =
-                        !rs.isCargoLaunched && rs.totalCargoCount > 0;
-                    return FittedBox(
-                      fit: BoxFit.scaleDown,
-                      alignment: Alignment.center,
-                      child: ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: canLaunch
-                              ? Colors.cyanAccent
-                              : edge.withValues(alpha: 0.65),
-                          foregroundColor:
-                              canLaunch ? edge : Colors.cyanAccent,
-                          elevation: 2,
-                          shadowColor: Colors.cyanAccent.withValues(alpha: 0.22),
-                          padding: EdgeInsets.symmetric(
-                            horizontal: btnPadH,
-                            vertical: btnPadV,
-                          ),
-                          minimumSize: Size.zero,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          side: BorderSide(
-                            color: canLaunch
-                                ? edge.withValues(alpha: 0.85)
-                                : Colors.cyanAccent.withValues(alpha: 0.45),
-                            width: 1,
-                          ),
-                        ),
-                        onPressed: () {
-                          widget.game.player.cargoTerminal?.showCargoDialog();
-                        },
-                        icon: Icon(Icons.rocket_launch_outlined, size: btnIconSize),
-                        label: Text(
-                          'この星から射出',
-                          style: TextStyle(
-                            fontSize: btnLabelSize,
-                            fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ],
-            ),
+            // 射出ボタンは固定カーゴのUIに統合されたため削除
+            const SizedBox.shrink(),
           ],
         ),
       ),
@@ -1417,28 +1551,32 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
                             final count = widget.game.itemBag.getItemCount(
                               itemName,
                             );
-                            return Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                ActionButton(
-                                  imagePath: item.spritePath,
-                                  itemName: item.name,
-                                  badgeCount: count,
-                                  onPressed: () {
-                                    item.onUse(widget.game.player);
-                                    if (item.type != ItemType.tool) {
-                                      widget.game.itemBag.removeItem(itemName);
-                                    }
-                                  },
-                                  stateNotifier:
-                                      GameUI
-                                          ._equippedItemUseButtonStateNotifier,
-                                  buttonSize: buttonSize,
-                                  iconSize: iconSize,
-                                ),
-                                SizedBox(width: actionHGapW),
-                              ],
-                            );
+                    return Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ActionButton(
+                          imagePath: item.spritePath,
+                          itemName: item.name,
+                          badgeCount: count,
+                          onPressed: (item.type == ItemType.tool && item.onToggleUse != null) ? null : () {
+                            item.onUse(widget.game.player);
+                            if (item.type != ItemType.tool) {
+                              widget.game.itemBag.removeItem(itemName);
+                            }
+                          },
+                          onTogglePressed: (item.type == ItemType.tool && item.onToggleUse != null) ? (isPressed) {
+                            item.onToggleUse?.call(widget.game.player, isPressed);
+                          } : null,
+                          stateNotifier:
+                              GameUI
+                                  ._equippedItemUseButtonStateNotifier,
+                          gaugeNotifier: GameUI._equippedItemUseButtonGaugeNotifier,
+                          buttonSize: buttonSize,
+                          iconSize: iconSize,
+                        ),
+                        SizedBox(width: actionHGapW),
+                      ],
+                    );
                           },
                         );
                       },
@@ -1669,6 +1807,79 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
     );
   }
 
+  /// ファーム主軸 + ROI 倍率のみ（ファーム駆け引き v0.1）。
+  Widget _buildFarmRouteRow(double fontSize) {
+    return AnimatedBuilder(
+      animation: widget.game.gameRuntimeState,
+      builder: (context, _) {
+        final rs = widget.game.gameRuntimeState;
+        if (rs.farmPrimaryRole == FarmPrimaryRole.none) {
+          return const SizedBox.shrink();
+        }
+        return Padding(
+          padding: EdgeInsets.only(top: fontSize * 0.12),
+          child: Text(
+            '${rs.farmPrimaryRoleLabel} ×${rs.farmRoiMultiplier.toStringAsFixed(2)}',
+            style: TextStyle(
+              color: Colors.tealAccent.shade200,
+              fontSize: fontSize * 0.52,
+              fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// 星の警戒ティア（0=静 … 4=奪還激化）。ローグ駆け引き v0.1。
+  Widget _buildStarAlertTierRow(double fontSize) {
+    return AnimatedBuilder(
+      animation: widget.game.gameRuntimeState,
+      builder: (context, _) {
+        final tier = widget.game.gameRuntimeState.starAlertHudTier;
+        final labels = ['静', '脈', '警戒', '高密度', '奪還'];
+        final colors = [
+          Colors.white24,
+          Colors.orangeAccent.withValues(alpha: 0.7),
+          Colors.deepOrangeAccent,
+          Colors.redAccent,
+          Colors.purpleAccent,
+        ];
+        final accent = colors[tier.clamp(0, 4)];
+        return Row(
+          children: [
+            ...List.generate(5, (i) {
+              final active = i <= tier;
+              return Expanded(
+                child: Container(
+                  margin: EdgeInsets.only(right: i < 4 ? 2 : 0),
+                  height: math.max(4.0, fontSize * 0.22),
+                  decoration: BoxDecoration(
+                    color: active
+                        ? accent
+                        : Colors.white.withValues(alpha: 0.06),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              );
+            }),
+            Padding(
+              padding: const EdgeInsets.only(left: 4),
+              child: Text(
+                labels[tier.clamp(0, 4)],
+                style: TextStyle(
+                  color: accent,
+                  fontSize: fontSize * 0.48,
+                  fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   /// §7 — 三種残滓の比率バー（赤＝生命・青＝歴史・灰＝無機）。残滓ゼロ時は空トラック。
   /// ラベルは [_buildCargoHudBlock] 側。
   Widget _buildCargoRatioBar(double fontSize) {
@@ -1676,10 +1887,10 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
       animation: widget.game.gameRuntimeState,
       builder: (context, child) {
         final state = widget.game.gameRuntimeState;
-        final t = state.totalCargoCount;
-        final life = state.cargoLifeCount;
-        final hist = state.cargoHistoryCount;
-        final ino = state.cargoInorganicCount;
+        final t = state.totalPlayerResidueCount;
+        final life = state.playerLifeCount;
+        final hist = state.playerHistoryCount;
+        final ino = state.playerInorganicCount;
 
         final Widget track;
         if (t <= 0) {
@@ -1720,6 +1931,23 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
             width: double.infinity,
             child: track,
           ),
+        );
+      },
+    );
+  }
+
+  Widget _buildCargoAbsoluteRow(double fontSize) {
+    return AnimatedBuilder(
+      animation: widget.game.gameRuntimeState,
+      builder: (context, _) {
+        final state = widget.game.gameRuntimeState;
+        final cap = GameRuntimeState.residueCapacity;
+        return FarmCargoAbsoluteRow(
+          life: state.playerLifeCount,
+          history: state.playerHistoryCount,
+          inorganic: state.playerInorganicCount,
+          cap: cap,
+          fontSize: fontSize * 0.58,
         );
       },
     );
@@ -2112,8 +2340,8 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
         return ElevatedButton(
           onPressed: () {
             widget.windowManager.showWindow(
-              GameWindowType.automationShop,
-              AutomationShopWindow(
+              GameWindowType.automationMenu,
+              AutomationMenuWindow(
                 game: widget.game,
                 windowManager: widget.windowManager,
               ),
@@ -2244,6 +2472,7 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
 
   Widget _buildItemBagButton(double fontSize, {double uiScale = 1.0}) {
     return ElevatedButton(
+      key: _itemBagButtonKey,
       onPressed: () {
         widget.windowManager.showWindow(
           GameWindowType.itemBag,
@@ -2320,6 +2549,114 @@ class _GameUIState extends State<GameUI> with SingleTickerProviderStateMixin {
         Icons.text_fields,
         color: Colors.white,
         size: widget.screenSize.width * 0.06 * uiScale,
+      ),
+    );
+  }
+}
+
+class _TweetPositioner extends StatefulWidget {
+  final TweetRequest tweet;
+  final MyGame game;
+  final double fontSize;
+  final Offset Function(double, double) worldPointToScreen;
+
+  const _TweetPositioner({
+    super.key,
+    required this.tweet,
+    required this.game,
+    required this.fontSize,
+    required this.worldPointToScreen,
+  });
+
+  @override
+  State<_TweetPositioner> createState() => _TweetPositionerState();
+}
+
+class _TweetPositionerState extends State<_TweetPositioner>
+    with SingleTickerProviderStateMixin {
+  late final Ticker _ticker;
+  Offset _screenPos = Offset.zero;
+  bool _isVisible = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker = createTicker(_updatePosition)..start();
+  }
+
+  @override
+  void dispose() {
+    _ticker.dispose();
+    super.dispose();
+  }
+
+  void _updatePosition(Duration elapsed) {
+    if (!mounted) return;
+
+    final tweet = widget.tweet;
+    final target = tweet.target;
+
+    Offset newPos;
+    if (target != null) {
+      // ターゲットのワールド座標を取得（NPC は通常 bottomCenter なので足元）
+      final worldPos = target.absolutePosition;
+      // 頭上に表示するためのデフォルトオフセット（足元からマイナス方向に size.y + 余白）
+      final offset = tweet.offset ?? Vector2(0, -target.size.y - 15);
+
+      // スクリーン座標に変換
+      final screenPos = widget.worldPointToScreen(
+        worldPos.x + offset.x,
+        worldPos.y + offset.y,
+      );
+      newPos = screenPos;
+    } else {
+      // ターゲットがない場合は指定のオフセット（スクリーン座標）または中央
+      newPos =
+          tweet.offset != null
+              ? Offset(tweet.offset!.x, tweet.offset!.y)
+              : Offset(
+                MediaQuery.of(context).size.width / 2,
+                MediaQuery.of(context).size.height / 2,
+              );
+    }
+
+    if (tweet.clampToScreen) {
+      final size = MediaQuery.of(context).size;
+      const margin = 10.0;
+      const approxWidth = 200.0;
+      const approxHeight = 80.0;
+      
+      // FractionalTranslation(-0.5, -1.0) を考慮したクランプ
+      // newPos は吹き出しの下端中央を指す
+      newPos = Offset(
+        newPos.dx.clamp(margin + approxWidth / 2, size.width - margin - approxWidth / 2),
+        newPos.dy.clamp(margin + approxHeight, size.height - margin),
+      );
+    }
+
+    if (_screenPos != newPos || !_isVisible) {
+      setState(() {
+        _screenPos = newPos;
+        _isVisible = true;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_isVisible) return const SizedBox.shrink();
+
+    return Positioned(
+      left: _screenPos.dx,
+      top: _screenPos.dy,
+      child: FractionalTranslation(
+        translation: const Offset(-0.5, -1.0), // 横方向に中央揃え、縦方向に下端を基準点に
+        child: TweetWindow(
+          message: widget.tweet.message,
+          fontSize: widget.fontSize,
+          textColor: widget.tweet.textColor,
+          backgroundColor: widget.tweet.backgroundColor,
+        ),
       ),
     );
   }
@@ -2537,6 +2874,7 @@ class ActionButton extends StatefulWidget {
   final Function(bool)? onTogglePressed; // タップダウン/アップで状態を切り替えるボタン用
   final ValueNotifier<ActionButtonState> stateNotifier;
   final ValueNotifier<IconData?>? iconNotifier;
+  final ValueNotifier<double?>? gaugeNotifier;
   final Color? accentColor;
   final double buttonSize;
   final double iconSize;
@@ -2552,6 +2890,7 @@ class ActionButton extends StatefulWidget {
     this.onTogglePressed,
     required this.stateNotifier,
     this.iconNotifier,
+    this.gaugeNotifier,
     this.accentColor,
     required this.buttonSize, // コンストラクタに追加
     required this.iconSize, // コンストラクタに追加
@@ -2721,6 +3060,36 @@ class _ActionButtonState extends State<ActionButton>
                   },
                 ),
               ),
+              if (widget.gaugeNotifier != null)
+                ValueListenableBuilder<double?>(
+                  valueListenable: widget.gaugeNotifier!,
+                  builder: (context, ratio, _) {
+                    if (ratio == null) return const SizedBox.shrink();
+                    return Positioned(
+                      bottom: widget.buttonSize * 0.15,
+                      child: Container(
+                        width: widget.buttonSize * 0.6,
+                        height: widget.buttonSize * 0.1,
+                        decoration: BoxDecoration(
+                          color: Colors.black45,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: FractionallySizedBox(
+                            widthFactor: ratio.clamp(0.0, 1.0),
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.yellowAccent,
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
               if (noticeBorder != null) noticeBorder,
               if (widget.badgeCount != null && widget.badgeCount! > 0)
                 Positioned(

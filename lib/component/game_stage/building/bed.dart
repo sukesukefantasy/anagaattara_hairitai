@@ -1,14 +1,19 @@
 ﻿import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 import '../../../main.dart';
+import '../../../game/world_scale.dart';
 import '../../common/hitboxes/interact_hitbox.dart';
 
 class Bed extends SpriteComponent with HasGameReference<MyGame> {
+  final double depthMeters;
+
   Bed({
     required super.position,
     required super.size,
+    this.depthMeters = WorldScale.buildingDepthMeters,
   }) {
     anchor = Anchor.bottomCenter;
+    priority = WorldScale.renderPriorityForDepth(depthMeters);
   }
 
   @override

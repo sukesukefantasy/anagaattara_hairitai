@@ -66,6 +66,22 @@ class CraftingSystem {
       miningPointCost: 0,
       resultItemName: 'ランタン',
     ),
+    // --- ローグビルド（§ ローグ駆け引き v0.1）---
+    CraftingRecipe(
+      ingredients: {'棒': 2, '石': 1},
+      miningPointCost: 8,
+      resultItemName: '広刃棒',
+    ),
+    CraftingRecipe(
+      ingredients: {'棒': 1, '石': 2},
+      miningPointCost: 6,
+      resultItemName: '簡易盾',
+    ),
+    CraftingRecipe(
+      ingredients: {'棒': 1},
+      miningPointCost: 4,
+      resultItemName: '軽装の足袋',
+    ),
   ];
 
   /// 指定レシピが現在のバッグと採掘ポイントで合成可能かチェック

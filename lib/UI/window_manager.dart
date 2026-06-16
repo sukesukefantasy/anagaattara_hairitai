@@ -1,8 +1,11 @@
 ﻿import 'package:flutter/material.dart';
+import 'package:flame/components.dart';
 import 'responsive_ui_font.dart';
 import 'windows/message_window.dart';
 import 'windows/true_vault_dial_window.dart';
+import 'windows/cargo_transfer_window.dart';
 import '../main.dart';
+import '../component/player_cargo_terminal.dart';
 
 /// メッセージリクエストのデータ構造
 class MessageRequest {
@@ -21,6 +24,29 @@ class MessageRequest {
   });
 }
 
+/// ツイート（吹き出し）リクエストのデータ構造
+class TweetRequest {
+  final String id;
+  final String message;
+  final PositionComponent? target;
+  final Vector2? offset;
+  final bool clampToScreen;
+  final Duration duration;
+  final Color? textColor;
+  final Color? backgroundColor;
+
+  TweetRequest({
+    required this.id,
+    required this.message,
+    this.target,
+    this.offset,
+    this.clampToScreen = false,
+    this.duration = const Duration(seconds: 4),
+    this.textColor,
+    this.backgroundColor,
+  });
+}
+
 /// ウィンドウの種類を識別するためのEnum
 enum GameWindowType {
   none,
@@ -33,9 +59,11 @@ enum GameWindowType {
   puzzle,
   calibration,
   loading,
-  automationShop,
+  automationMenu,
   codex,
   trueVaultDial,
+  tweet,
+  cargoTransfer,
 }
 
 /// ウィンドウ表示の状態と内容を管理するChangeNotifier
@@ -50,6 +78,10 @@ class WindowManager extends ChangeNotifier {
   // メッセージのキュー
   final List<MessageRequest> _messageQueue = [];
 
+  // アクティブなツイートのリスト
+  final List<TweetRequest> _activeTweets = [];
+  List<TweetRequest> get activeTweets => List.unmodifiable(_activeTweets);
+
   GameWindowType get currentWindowType => _currentWindowType;
   Widget? get currentWindowContent => _currentWindowContent;
   // これらのgetterは直接は不要になるが、互換性のため残すか、使用箇所を修正する
@@ -61,6 +93,38 @@ class WindowManager extends ChangeNotifier {
 
   // コンストラクタで画面サイズを受け取る
   WindowManager({required this.screenWidth, required this.screenHeight});
+
+  /// ツイートを表示する
+  void showTweet(
+    String message, {
+    PositionComponent? target,
+    Vector2? offset,
+    bool clampToScreen = false,
+    Duration duration = const Duration(seconds: 4),
+    Color? textColor,
+    Color? backgroundColor,
+  }) {
+    final id = DateTime.now().microsecondsSinceEpoch.toString();
+    final request = TweetRequest(
+      id: id,
+      message: message,
+      target: target,
+      offset: offset,
+      clampToScreen: clampToScreen,
+      duration: duration,
+      textColor: textColor,
+      backgroundColor: backgroundColor,
+    );
+
+    _activeTweets.add(request);
+    notifyListeners();
+
+    // 指定時間後に削除
+    Future.delayed(duration, () {
+      _activeTweets.removeWhere((t) => t.id == id);
+      notifyListeners();
+    });
+  }
 
   /// メッセージをキューに追加して表示する（推奨される新しい方法）
   void showDialog(
@@ -82,7 +146,7 @@ class WindowManager extends ChangeNotifier {
     
     bool canImmediatelyProcessMessageQueue =
         _currentWindowType == GameWindowType.none ||
-        _currentWindowType == GameWindowType.automationShop ||
+        _currentWindowType == GameWindowType.automationMenu ||
         _currentWindowType == GameWindowType.codex ||
         _currentWindowType == GameWindowType.crafting ||
         _currentWindowType == GameWindowType.trueVaultDial;
@@ -172,6 +236,18 @@ class WindowManager extends ChangeNotifier {
       TrueVaultDialWindow(
         game: game,
         windowManager: this,
+      ),
+    );
+  }
+
+  /// カーゴ資源蓄積UI
+  void showCargoTransfer(MyGame game, PlayerCargoTerminal terminal) {
+    showWindow(
+      GameWindowType.cargoTransfer,
+      CargoTransferWindow(
+        game: game,
+        windowManager: this,
+        terminal: terminal,
       ),
     );
   }

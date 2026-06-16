@@ -2,13 +2,14 @@
 import 'package:flame/components.dart';
 import 'package:flutter/foundation.dart';
 import '../../../main.dart';
+import '../../system/stage_combat_profile.dart';
 import 'car_enemy.dart';
 import 'walking_enemy.dart';
+import 'alert_hunter_enemy.dart';
 import 'enemy_base.dart'; // EnemyBaseをインポート
 
 class EnemyManager {
   final Random _random = Random();
-  final double _spawnInterval = 0.2; // 敵をスポーンさせる間隔（秒）を1.5から0.5に短縮
   double _timeSinceLastSpawn = 0.0;
   final MyGame game; // MyGameインスタンスを注入
 
@@ -23,6 +24,12 @@ class EnemyManager {
 
   /// 歩行者の質量（プレイヤー [Player.mass] 前後のばらつき）。
   double _rollWalkingEnemyMass() => 36 + _random.nextDouble() * 12;
+
+  StageCombatProfile get _stageProfile => StageCombatProfile.forScene(
+        game.gameRuntimeState.currentOutdoorSceneId,
+      );
+
+  double get _spawnInterval => _stageProfile.spawnIntervalSeconds;
 
   // スケジュール定義
   static const Map<int, Map<int, Map<String, dynamic>>> _schedule = {
@@ -237,7 +244,17 @@ class EnemyManager {
         walkingRange[0];
     final maxCar = _random.nextInt(carRange[1] - carRange[0] + 1) + carRange[0];
 
-    return {'walking': maxWalking, 'car': maxCar};
+    final profile = _stageProfile;
+    return {
+      'walking': profile.clipWalkingCap(maxWalking),
+      'car': profile.clipCarCap(maxCar),
+    };
+  }
+
+  /// シーンロード時の初期スポーン数（ステージ上限内）。
+  ({int walking, int car}) initialSpawnCountsForScene(String sceneId) {
+    final p = StageCombatProfile.forScene(sceneId);
+    return (walking: p.initialWalkingSpawn, car: p.initialCarSpawn);
   }
 
   // 新しい敵をスポーンする必要があるかを判断し、インスタンスを返すメソッド
@@ -400,5 +417,35 @@ class EnemyManager {
         direction: finalDirection,
       );
     }
+  }
+
+  /// 警戒ティア上昇時の中ボス（AlertHunter）を生成する。
+  AlertHunterEnemy createAlertHunter({required int alertTier}) {
+    final player = game.player;
+    final currentScene = game.sceneManager.currentScene;
+
+    double spawnX;
+    if (currentScene != null && currentScene.groundComponent != null) {
+      final ground = currentScene.groundComponent!;
+      final groundLeft = ground.position.x;
+      final groundRight = ground.position.x + ground.size.x;
+      const edgeInset = 48.0;
+      if (player.absoluteCenter.x > (groundLeft + groundRight) / 2) {
+        spawnX = groundLeft + edgeInset;
+      } else {
+        spawnX = groundRight - edgeInset;
+      }
+    } else {
+      spawnX = player.absoluteCenter.x +
+          (_random.nextBool() ? 220.0 : -220.0);
+    }
+
+    final direction =
+        player.absoluteCenter.x >= spawnX ? 1.0 : -1.0;
+
+    return AlertHunterEnemy(
+      position: Vector2(spawnX, _feetSpawnY),
+      direction: direction,
+    );
   }
 }

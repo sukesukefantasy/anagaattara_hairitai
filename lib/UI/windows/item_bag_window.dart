@@ -19,6 +19,13 @@ class ItemBagWindow extends StatelessWidget with GameWindowResponsiveMixin {
     required this.game,
   });
 
+  static const _tabs = [
+    _ItemBagTab.all,
+    _ItemBagTab.consumable,
+    _ItemBagTab.equipment,
+    _ItemBagTab.valuable,
+  ];
+
   @override
   Widget build(BuildContext context) {
     final isMobile = getIsMobile(windowManager);
@@ -27,204 +34,235 @@ class ItemBagWindow extends StatelessWidget with GameWindowResponsiveMixin {
       windowManager: windowManager,
       title: 'ITEM BAG',
       backgroundColor: Colors.brown[800],
-      child: Column(
-        children: [
-          Expanded(
-            child: AnimatedBuilder(
-              animation: itemBag, // ItemBagの変更を監視
-              builder: (context, child) {
-                if (itemBag.items.isEmpty) {
-                  return Center(
-                    child: Text(
-                      'No items yet.',
-                      style: TextStyle(
-                        fontSize: isMobile ? 16 : windowManager.screenWidth * 0.025,
-                        color: Colors.white,
-                        fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+      child: DefaultTabController(
+        length: _tabs.length,
+        child: Column(
+          children: [
+            TabBar(
+              isScrollable: isMobile,
+              labelColor: Colors.amberAccent,
+              unselectedLabelColor: Colors.white70,
+              indicatorColor: Colors.amberAccent,
+              labelStyle: TextStyle(
+                fontSize: isMobile ? 12 : windowManager.screenWidth * 0.015,
+                fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+              ),
+              tabs: [
+                for (final tab in _tabs) Tab(text: tab.label),
+              ],
+            ),
+            Expanded(
+              child: TabBarView(
+                children: [
+                  for (final tab in _tabs) _buildItemList(context, tab),
+                ],
+              ),
+            ),
+            // 閉じるボタン
+            Padding(
+              padding: EdgeInsets.all(windowManager.screenWidth * 0.01),
+              child: ElevatedButton(
+                onPressed: () {
+                  windowManager.hideOverlay();
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blueAccent,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isMobile ? 20 : windowManager.screenWidth * 0.02,
+                    vertical: isMobile ? 10 : windowManager.screenHeight * 0.01,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: Text(
+                  'close',
+                  style: TextStyle(
+                    fontSize: isMobile ? 14 : windowManager.screenWidth * 0.02,
+                    color: Colors.white,
+                    fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildItemList(BuildContext context, _ItemBagTab tab) {
+    final isMobile = getIsMobile(windowManager);
+
+    return AnimatedBuilder(
+      animation: itemBag, // ItemBagの変更を監視
+      builder: (context, child) {
+        final filteredItems = itemBag.items.entries.where((e) {
+          return tab.matches(e.value.type);
+        }).toList();
+
+        if (filteredItems.isEmpty) {
+          return Center(
+            child: Text(
+              'No items yet.',
+              style: TextStyle(
+                fontSize: isMobile ? 16 : windowManager.screenWidth * 0.025,
+                color: Colors.white,
+                fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+              ),
+            ),
+          );
+        }
+        return ListView.builder(
+          itemCount: filteredItems.length,
+          itemBuilder: (context, index) {
+            final entry = filteredItems[index];
+            final itemName = entry.key;
+            final item = entry.value;
+            final count = itemBag.getItemCount(itemName);
+            final displayDisplayName = item.displayName;
+            final displayDescription = item.description;
+
+            return Card(
+              margin: EdgeInsets.symmetric(
+                horizontal: windowManager.screenWidth * 0.02,
+                vertical: windowManager.screenHeight * 0.005,
+              ),
+              color: Colors.brown[600],
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: windowManager.screenWidth * 0.02,
+                  vertical: windowManager.screenHeight * 0.01,
+                ),
+                child: Row(
+                  children: [
+                    // アイテム画像
+                    GestureDetector(
+                      onTap: () {
+                        _showItemDetailDialog(context, item);
+                      },
+                      child: Stack(
+                        children: [
+                          ItemSpriteIcon(
+                            itemName: item.name,
+                            spritePath: item.spritePath,
+                            width: isMobile ? 50 : windowManager.screenWidth * 0.08,
+                            height: isMobile ? 50 : windowManager.screenWidth * 0.08,
+                          ),
+                          if (itemBag.equippedItemName == item.name)
+                            Positioned(
+                              right: 0,
+                              bottom: 0,
+                              child: Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  color: Colors.black54,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  'E',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: isMobile ? 10 : windowManager.screenWidth * 0.015,
+                                    fontWeight: FontWeight.bold,
+                                    fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                     ),
-                  );
-                }
-                return ListView.builder(
-                  itemCount: itemBag.items.length,
-                  itemBuilder: (context, index) {
-                    final itemName = itemBag.items.keys.elementAt(index);
-                    final item = itemBag.items[itemName]!;
-                    final count = itemBag.getItemCount(itemName);
-                    final displayDisplayName = item.displayName;
-                    final displayDescription = item.description;
-                    
-                    return Card(
-                      margin: EdgeInsets.symmetric(
-                        horizontal: windowManager.screenWidth * 0.02,
-                        vertical: windowManager.screenHeight * 0.005,
-                      ),
-                      color: Colors.brown[600],
-                      child: Padding(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: windowManager.screenWidth * 0.02,
-                          vertical: windowManager.screenHeight * 0.01,
-                        ),
-                        child: Row(
-                          children: [
-                            // アイテム画像
-                            GestureDetector(
-                              onTap: () {
-                                _showItemDetailDialog(context, item);
-                              },
-                              child: Stack(
-                                children: [
-                                  ItemSpriteIcon(
-                                    itemName: item.name,
-                                    spritePath: item.spritePath,
-                                    width: isMobile ? 50 : windowManager.screenWidth * 0.08,
-                                    height: isMobile ? 50 : windowManager.screenWidth * 0.08,
-                                  ),
-                                  if (itemBag.equippedItemName == item.name)
-                                    Positioned(
-                                      right: 0,
-                                      bottom: 0,
-                                      child: Container(
-                                        padding: const EdgeInsets.all(4),
-                                        decoration: BoxDecoration(
-                                          color: Colors.black54,
-                                          borderRadius: BorderRadius.circular(4),
-                                        ),
-                                        child: Text(
-                                          'E',
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontSize: isMobile ? 10 : windowManager.screenWidth * 0.015,
-                                            fontWeight: FontWeight.bold,
-                                            fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                ],
+                    const SizedBox(width: 12),
+                    // アイテム名、数量、説明
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment:
+                            CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            displayDisplayName,
+                            style: TextStyle(
+                              fontSize: isMobile ? 14 : windowManager.screenHeight * 0.03,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                              fontFamily:
+                                  'Nosutaru-dotMPlusH-10-Regular',
+                            ),
+                          ),
+                          Text(
+                            'x$count',
+                            style: TextStyle(
+                              fontSize: isMobile ? 10 : windowManager.screenHeight * 0.02,
+                              color: Colors.white70,
+                              fontFamily:
+                                  'Nosutaru-dotMPlusH-10-Regular',
+                            ),
+                          ),
+                          if (!isMobile) // スマホでは説明文を省略または詳細ダイアログに任せる
+                            Text(
+                              displayDescription,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: windowManager.screenHeight * 0.025,
+                                color: Colors.white70,
+                                fontFamily:
+                                    'Nosutaru-dotMPlusH-10-Regular',
                               ),
                             ),
-                            const SizedBox(width: 12),
-                            // アイテム名、数量、説明
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment:
-                                    CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    displayDisplayName,
-                                    style: TextStyle(
-                                      fontSize: isMobile ? 14 : windowManager.screenHeight * 0.03,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.white,
-                                      fontFamily:
-                                          'Nosutaru-dotMPlusH-10-Regular',
-                                    ),
-                                  ),
-                                  Text(
-                                    'x$count',
-                                    style: TextStyle(
-                                      fontSize: isMobile ? 10 : windowManager.screenHeight * 0.02,
-                                      color: Colors.white70,
-                                      fontFamily:
-                                          'Nosutaru-dotMPlusH-10-Regular',
-                                    ),
-                                  ),
-                                  if (!isMobile) // スマホでは説明文を省略または詳細ダイアログに任せる
-                                    Text(
-                                      displayDescription,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: windowManager.screenHeight * 0.025,
-                                        color: Colors.white70,
-                                        fontFamily:
-                                            'Nosutaru-dotMPlusH-10-Regular',
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                            // アイテム詳細、使用ボタン
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                _buildPrimaryActionButton(
-                                  context,
-                                  item,
-                                  count,
-                                  isMobile,
-                                ),
-                                if (item.type == ItemType.placeable) ...[
-                                  const SizedBox(width: 4),
-                                  _buildItemActionButton(
-                                    context,
-                                    BagWindowActionType.dispose,
-                                    () => _handleItemAction(
-                                      context,
-                                      item,
-                                      1,
-                                      BagWindowActionType.dispose,
-                                    ),
-                                    Colors.red,
-                                    count > 0,
-                                    isMobile,
-                                  ),
-                                ],
-                                const SizedBox(width: 4),
-                                _buildItemActionButton(
-                                  context,
-                                  BagWindowActionType.carry,
-                                  () => _handleItemAction(
-                                    context,
-                                    item,
-                                    1,
-                                    BagWindowActionType.carry,
-                                  ),
-                                  Colors.blue,
-                                  true,
-                                  isMobile,
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
+                        ],
                       ),
-                    );
-                  },
-                );
-              },
-            ),
-          ),
-          // 閉じるボタン
-          Padding(
-            padding: EdgeInsets.all(windowManager.screenWidth * 0.01),
-            child: ElevatedButton(
-              onPressed: () {
-                windowManager.hideOverlay();
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blueAccent,
-                padding: EdgeInsets.symmetric(
-                  horizontal: isMobile ? 20 : windowManager.screenWidth * 0.02,
-                  vertical: isMobile ? 10 : windowManager.screenHeight * 0.01,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
+                    ),
+                    // アイテム詳細、使用ボタン
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildPrimaryActionButton(
+                          context,
+                          item,
+                          count,
+                          isMobile,
+                        ),
+                        if (item.type == ItemType.placeable) ...[
+                          const SizedBox(width: 4),
+                          _buildItemActionButton(
+                            context,
+                            BagWindowActionType.dispose,
+                            () => _handleItemAction(
+                              context,
+                              item,
+                              1,
+                              BagWindowActionType.dispose,
+                            ),
+                            Colors.red,
+                            count > 0,
+                            isMobile,
+                          ),
+                        ],
+                        const SizedBox(width: 4),
+                        _buildItemActionButton(
+                          context,
+                          BagWindowActionType.carry,
+                          () => _handleItemAction(
+                            context,
+                            item,
+                            1,
+                            BagWindowActionType.carry,
+                          ),
+                          Colors.blue,
+                          true,
+                          isMobile,
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
               ),
-              child: Text(
-                'close',
-                style: TextStyle(
-                  fontSize: isMobile ? 14 : windowManager.screenWidth * 0.02,
-                  color: Colors.white,
-                  fontFamily: 'Nosutaru-dotMPlusH-10-Regular',
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -726,4 +764,39 @@ class ItemBagWindow extends StatelessWidget with GameWindowResponsiveMixin {
       isMobile,
     );
   }
+}
+
+enum _ItemBagTab {
+  all,
+  consumable,
+  equipment,
+  valuable,
+}
+
+extension _ItemBagTabX on _ItemBagTab {
+  String get label => switch (this) {
+        _ItemBagTab.all => '全て',
+        _ItemBagTab.consumable => '消耗品',
+        _ItemBagTab.equipment => '道具・設置',
+        _ItemBagTab.valuable => '貴重品',
+      };
+
+  bool matches(ItemType type) => switch (this) {
+        _ItemBagTab.all => true,
+        _ItemBagTab.consumable => [
+            ItemType.health,
+            ItemType.stress,
+            ItemType.powerUp,
+            ItemType.custom,
+            ItemType.currency,
+          ].contains(type),
+        _ItemBagTab.equipment => [
+            ItemType.tool,
+            ItemType.placeable,
+          ].contains(type),
+        _ItemBagTab.valuable => [
+            ItemType.gem,
+            ItemType.collection,
+          ].contains(type),
+      };
 }

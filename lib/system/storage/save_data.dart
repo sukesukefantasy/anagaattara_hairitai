@@ -72,11 +72,22 @@ class SaveData {
   double homePlanetRealism;
   double starAlertLevel;
 
-  // カーゴに自動蓄積された資源（行動の残滓）
+  /// ガソリン缶の燃料残量
+  double gasolineCanFuel;
+
+  // プレイヤーが現在所持している資源
+  int playerLifeCount;
+  int playerHistoryCount;
+  int playerInorganicCount;
+
+  // カーゴに蓄積された資源（拠点に預けた分）
   int cargoLifeCount;
   int cargoHistoryCount;
   int cargoInorganicCount;
   bool isCargoLaunched;
+
+  /// 次のステージで出現させる支援物資（Toolbox）の予約フラグ
+  bool pendingToolboxReward;
 
   // 送信済み資源カウント（発射後に移動される）
   int sentLifeResourceCount;
@@ -113,11 +124,48 @@ class SaveData {
 
   bool hasShownAutomationShopUnlockMessage;
 
+  /// 対象星初回入場オンボーディング済み
+  bool hasShownTargetStarAutomationIntro;
+
+  /// 警戒狩人から自動化キットを初回取得済み
+  bool hasReceivedAutomationKitFromHunter;
+
+  /// 最後に警戒狩人をスポーンした警戒ティア
+  int lastAlertHunterSpawnTier;
+
+  /// バッグにキットを入れたあと1回だけ表示
+  bool hasShownKitBagHint;
+
+  /// 設置済み自動化キット（1台・グローバル・レガシー）
+  String? automationKitSceneId;
+  double? automationKitPositionX;
+  double? automationKitPositionY;
+
+  List<Map<String, dynamic>> automationToolPlacementsJson;
+  Map<String, dynamic> automationUnlocksJson;
+  Map<String, dynamic> automationUpgradeLevelsJson;
+  Map<String, dynamic> harvestStorageJson;
+  List<String> hunterToolsGranted;
+  int automationUpgradeStageTier;
+  double upkeepToolFuel;
+  double harvestToolFuel;
+  double wardToolFuel;
+  String? harvestTankFuelRank;
+  String? upkeepTankFuelRank;
+  String? wardTankFuelRank;
+  bool automationAutoWillRefuel;
+
   /// 自動化ショップ段階（§5）。既存 `automationKitStage` とは別表現。C-2 はキット挿入とも同期。
   int automationShopTierA;
   int automationShopTierB;
   int automationShopTierC;
   int automationShopTierD;
+
+  int automationShopGradeHarvest;
+  int automationShopGradeUpkeep;
+  int automationShopGradeWard;
+  int automationShopGradeCommon;
+  int automationFuelEfficiencyTier;
 
   /// [CodexSnapshot.toJson] を格納。
   Map<String, dynamic> codexSnapshotJson;
@@ -142,6 +190,22 @@ class SaveData {
 
   /// 現在シナリオ周回開始時点の `sentLifeResourceCount`（Normal 判定用）。
   int sentLifeScenarioBaseline;
+
+  /// ファーム駆け引き（§ ファーム駆け引き v0.1）
+  int farmPrimaryRoleIndex;
+  int farmSubModuleIndex;
+  double farmRoiMultiplier;
+  int farmInterventionBonusCount;
+  int farmCostLife;
+  int farmCostHistory;
+  int farmCostInorganic;
+  double farmCostWillpower;
+  int farmCostCurrency;
+  int farmOutputCurrency;
+  int farmOutputMining;
+  int farmOutputCargoLife;
+  int farmOutputCargoHistory;
+  int farmOutputCargoInorganic;
 
   SaveData({
     this.currency = 0,
@@ -190,10 +254,15 @@ class SaveData {
     this.homePlanetEfficiency = 0.0,
     this.homePlanetRealism = 0.0,
     this.starAlertLevel = 0.0,
+    this.gasolineCanFuel = 0.0,
+    this.playerLifeCount = 0,
+    this.playerHistoryCount = 0,
+    this.playerInorganicCount = 0,
     this.cargoLifeCount = 0,
     this.cargoHistoryCount = 0,
     this.cargoInorganicCount = 0,
     this.isCargoLaunched = false,
+    this.pendingToolboxReward = false,
     this.sentLifeResourceCount = 0,
     this.sentHistoryResourceCount = 0,
     this.sentInorganicResourceCount = 0,
@@ -208,10 +277,35 @@ class SaveData {
     this.totalWillpowerConsumed = 0.0,
     List<Map<String, dynamic>>? stageMicroLogEntries,
     this.hasShownAutomationShopUnlockMessage = false,
+    this.hasShownTargetStarAutomationIntro = false,
+    this.hasReceivedAutomationKitFromHunter = false,
+    this.lastAlertHunterSpawnTier = 0,
+    this.hasShownKitBagHint = false,
+    this.automationKitSceneId,
+    this.automationKitPositionX,
+    this.automationKitPositionY,
+    List<Map<String, dynamic>>? automationToolPlacementsJson,
+    Map<String, dynamic>? automationUnlocksJson,
+    Map<String, dynamic>? automationUpgradeLevelsJson,
+    Map<String, dynamic>? harvestStorageJson,
+    List<String>? hunterToolsGranted,
+    this.automationUpgradeStageTier = 1,
+    this.upkeepToolFuel = 40.0,
+    this.harvestToolFuel = 40.0,
+    this.wardToolFuel = 40.0,
+    this.harvestTankFuelRank,
+    this.upkeepTankFuelRank,
+    this.wardTankFuelRank,
+    this.automationAutoWillRefuel = false,
     this.automationShopTierA = 0,
     this.automationShopTierB = 0,
     this.automationShopTierC = 0,
     this.automationShopTierD = 0,
+    this.automationShopGradeHarvest = 0,
+    this.automationShopGradeUpkeep = 0,
+    this.automationShopGradeWard = 0,
+    this.automationShopGradeCommon = 0,
+    this.automationFuelEfficiencyTier = 0,
     Map<String, dynamic>? codexSnapshotJson,
     this.disclosureTier = 0,
     this.totalCargoLaunches = 0,
@@ -220,6 +314,20 @@ class SaveData {
     this.automationShopWillpowerAutoPay = false,
     this.trueDialSalt,
     this.sentLifeScenarioBaseline = 0,
+    this.farmPrimaryRoleIndex = 0,
+    this.farmSubModuleIndex = 0,
+    this.farmRoiMultiplier = 1.0,
+    this.farmInterventionBonusCount = 0,
+    this.farmCostLife = 0,
+    this.farmCostHistory = 0,
+    this.farmCostInorganic = 0,
+    this.farmCostWillpower = 0,
+    this.farmCostCurrency = 0,
+    this.farmOutputCurrency = 0,
+    this.farmOutputMining = 0,
+    this.farmOutputCargoLife = 0,
+    this.farmOutputCargoHistory = 0,
+    this.farmOutputCargoInorganic = 0,
   }) : itemCounts = itemCounts ?? {},
        dugAreas = dugAreas ?? {},
        carveStamps = carveStamps ?? {},
@@ -233,7 +341,12 @@ class SaveData {
        completedMacroRoutes = completedMacroRoutes ?? [],
        stageMicroLogEntries = stageMicroLogEntries ?? [],
        codexSnapshotJson = codexSnapshotJson ?? {},
-       pendingNarrativeMessages = pendingNarrativeMessages ?? [];
+       pendingNarrativeMessages = pendingNarrativeMessages ?? [],
+       automationToolPlacementsJson = automationToolPlacementsJson ?? [],
+       automationUnlocksJson = automationUnlocksJson ?? {},
+       automationUpgradeLevelsJson = automationUpgradeLevelsJson ?? {},
+       harvestStorageJson = harvestStorageJson ?? {},
+       hunterToolsGranted = hunterToolsGranted ?? [];
 
   // JSONからSaveDataオブジェクトを生成するファクトリコンストラクタ
   factory SaveData.fromJson(Map<String, dynamic> json) {
@@ -304,10 +417,15 @@ class SaveData {
       homePlanetEfficiency: json['homePlanetEfficiency'] as double? ?? 0.0,
       homePlanetRealism: json['homePlanetRealism'] as double? ?? 0.0,
       starAlertLevel: json['starAlertLevel'] as double? ?? 0.0,
+      gasolineCanFuel: (json['gasolineCanFuel'] as num?)?.toDouble() ?? 0.0,
+      playerLifeCount: json['playerLifeCount'] as int? ?? 0,
+      playerHistoryCount: json['playerHistoryCount'] as int? ?? 0,
+      playerInorganicCount: json['playerInorganicCount'] as int? ?? 0,
       cargoLifeCount: json['cargoLifeCount'] as int? ?? 0,
       cargoHistoryCount: json['cargoHistoryCount'] as int? ?? 0,
       cargoInorganicCount: json['cargoInorganicCount'] as int? ?? 0,
       isCargoLaunched: json['isCargoLaunched'] as bool? ?? false,
+      pendingToolboxReward: json['pendingToolboxReward'] as bool? ?? false,
       sentLifeResourceCount: json['sentLifeResourceCount'] as int? ?? 0,
       sentHistoryResourceCount: json['sentHistoryResourceCount'] as int? ?? 0,
       sentInorganicResourceCount: json['sentInorganicResourceCount'] as int? ?? 0,
@@ -330,10 +448,54 @@ class SaveData {
           [],
       hasShownAutomationShopUnlockMessage:
           json['hasShownAutomationShopUnlockMessage'] as bool? ?? false,
+      hasShownTargetStarAutomationIntro:
+          json['hasShownTargetStarAutomationIntro'] as bool? ??
+              (json['hasShownAutomationShopUnlockMessage'] as bool? ?? false),
+      hasReceivedAutomationKitFromHunter:
+          json['hasReceivedAutomationKitFromHunter'] as bool? ?? false,
+      lastAlertHunterSpawnTier:
+          json['lastAlertHunterSpawnTier'] as int? ?? 0,
+      hasShownKitBagHint: json['hasShownKitBagHint'] as bool? ?? false,
+      automationKitSceneId: json['automationKitSceneId'] as String?,
+      automationKitPositionX:
+          (json['automationKitPositionX'] as num?)?.toDouble(),
+      automationKitPositionY:
+          (json['automationKitPositionY'] as num?)?.toDouble(),
+      automationToolPlacementsJson: (json['automationToolPlacements'] as List<dynamic>?)
+              ?.map((e) => Map<String, dynamic>.from(e as Map))
+              .toList() ??
+          [],
+      automationUnlocksJson:
+          Map<String, dynamic>.from(json['automationUnlocks'] as Map? ?? {}),
+      automationUpgradeLevelsJson: Map<String, dynamic>.from(
+          json['automationUpgradeLevels'] as Map? ?? {}),
+      harvestStorageJson:
+          Map<String, dynamic>.from(json['harvestStorage'] as Map? ?? {}),
+      hunterToolsGranted:
+          (json['hunterToolsGranted'] as List<dynamic>?)?.cast<String>() ?? [],
+      automationUpgradeStageTier:
+          json['automationUpgradeStageTier'] as int? ?? 1,
+      upkeepToolFuel: (json['upkeepToolFuel'] as num?)?.toDouble() ?? 40.0,
+      harvestToolFuel: (json['harvestToolFuel'] as num?)?.toDouble() ?? 40.0,
+      wardToolFuel: (json['wardToolFuel'] as num?)?.toDouble() ?? 40.0,
+      harvestTankFuelRank: json['harvestTankFuelRank'] as String?,
+      upkeepTankFuelRank: json['upkeepTankFuelRank'] as String?,
+      wardTankFuelRank: json['wardTankFuelRank'] as String?,
+      automationAutoWillRefuel:
+          json['automationAutoWillRefuel'] as bool? ?? false,
       automationShopTierA: json['automationShopTierA'] as int? ?? 0,
       automationShopTierB: json['automationShopTierB'] as int? ?? 0,
       automationShopTierC: json['automationShopTierC'] as int? ?? 0,
       automationShopTierD: json['automationShopTierD'] as int? ?? 0,
+      automationShopGradeHarvest:
+          json['automationShopGradeHarvest'] as int? ?? 0,
+      automationShopGradeUpkeep:
+          json['automationShopGradeUpkeep'] as int? ?? 0,
+      automationShopGradeWard: json['automationShopGradeWard'] as int? ?? 0,
+      automationShopGradeCommon:
+          json['automationShopGradeCommon'] as int? ?? 0,
+      automationFuelEfficiencyTier:
+          json['automationFuelEfficiencyTier'] as int? ?? 0,
       codexSnapshotJson: (json['codexSnapshotJson'] as Map<String, dynamic>?) ??
           {},
       disclosureTier: json['disclosureTier'] as int? ?? 0,
@@ -347,6 +509,21 @@ class SaveData {
       trueDialSalt: json['trueDialSalt'] as int?,
       sentLifeScenarioBaseline:
           json['sentLifeScenarioBaseline'] as int? ?? 0,
+      farmPrimaryRoleIndex: json['farmPrimaryRoleIndex'] as int? ?? 0,
+      farmSubModuleIndex: json['farmSubModuleIndex'] as int? ?? 0,
+      farmRoiMultiplier: json['farmRoiMultiplier'] as double? ?? 1.0,
+      farmInterventionBonusCount:
+          json['farmInterventionBonusCount'] as int? ?? 0,
+      farmCostLife: json['farmCostLife'] as int? ?? 0,
+      farmCostHistory: json['farmCostHistory'] as int? ?? 0,
+      farmCostInorganic: json['farmCostInorganic'] as int? ?? 0,
+      farmCostWillpower: json['farmCostWillpower'] as double? ?? 0,
+      farmCostCurrency: json['farmCostCurrency'] as int? ?? 0,
+      farmOutputCurrency: json['farmOutputCurrency'] as int? ?? 0,
+      farmOutputMining: json['farmOutputMining'] as int? ?? 0,
+      farmOutputCargoLife: json['farmOutputCargoLife'] as int? ?? 0,
+      farmOutputCargoHistory: json['farmOutputCargoHistory'] as int? ?? 0,
+      farmOutputCargoInorganic: json['farmOutputCargoInorganic'] as int? ?? 0,
     );
   }
 
@@ -399,10 +576,15 @@ class SaveData {
       'homePlanetEfficiency': homePlanetEfficiency,
       'homePlanetRealism': homePlanetRealism,
       'starAlertLevel': starAlertLevel,
+      'gasolineCanFuel': gasolineCanFuel,
+      'playerLifeCount': playerLifeCount,
+      'playerHistoryCount': playerHistoryCount,
+      'playerInorganicCount': playerInorganicCount,
       'cargoLifeCount': cargoLifeCount,
       'cargoHistoryCount': cargoHistoryCount,
       'cargoInorganicCount': cargoInorganicCount,
       'isCargoLaunched': isCargoLaunched,
+      'pendingToolboxReward': pendingToolboxReward,
       'sentLifeResourceCount': sentLifeResourceCount,
       'sentHistoryResourceCount': sentHistoryResourceCount,
       'sentInorganicResourceCount': sentInorganicResourceCount,
@@ -418,10 +600,41 @@ class SaveData {
       'stageMicroLogEntries': stageMicroLogEntries,
       'hasShownAutomationShopUnlockMessage':
           hasShownAutomationShopUnlockMessage,
+      'hasShownTargetStarAutomationIntro': hasShownTargetStarAutomationIntro,
+      'hasReceivedAutomationKitFromHunter': hasReceivedAutomationKitFromHunter,
+      'lastAlertHunterSpawnTier': lastAlertHunterSpawnTier,
+      'hasShownKitBagHint': hasShownKitBagHint,
+      if (automationKitSceneId != null)
+        'automationKitSceneId': automationKitSceneId,
+      if (automationKitPositionX != null)
+        'automationKitPositionX': automationKitPositionX,
+      if (automationKitPositionY != null)
+        'automationKitPositionY': automationKitPositionY,
+      'automationToolPlacements': automationToolPlacementsJson,
+      'automationUnlocks': automationUnlocksJson,
+      'automationUpgradeLevels': automationUpgradeLevelsJson,
+      'harvestStorage': harvestStorageJson,
+      'hunterToolsGranted': hunterToolsGranted,
+      'automationUpgradeStageTier': automationUpgradeStageTier,
+      'upkeepToolFuel': upkeepToolFuel,
+      'harvestToolFuel': harvestToolFuel,
+      'wardToolFuel': wardToolFuel,
+      if (harvestTankFuelRank != null)
+        'harvestTankFuelRank': harvestTankFuelRank,
+      if (upkeepTankFuelRank != null)
+        'upkeepTankFuelRank': upkeepTankFuelRank,
+      if (wardTankFuelRank != null)
+        'wardTankFuelRank': wardTankFuelRank,
+      'automationAutoWillRefuel': automationAutoWillRefuel,
       'automationShopTierA': automationShopTierA,
       'automationShopTierB': automationShopTierB,
       'automationShopTierC': automationShopTierC,
       'automationShopTierD': automationShopTierD,
+      'automationShopGradeHarvest': automationShopGradeHarvest,
+      'automationShopGradeUpkeep': automationShopGradeUpkeep,
+      'automationShopGradeWard': automationShopGradeWard,
+      'automationShopGradeCommon': automationShopGradeCommon,
+      'automationFuelEfficiencyTier': automationFuelEfficiencyTier,
       'codexSnapshotJson': codexSnapshotJson,
       'disclosureTier': disclosureTier,
       'totalCargoLaunches': totalCargoLaunches,
@@ -430,6 +643,20 @@ class SaveData {
       'automationShopWillpowerAutoPay': automationShopWillpowerAutoPay,
       'trueDialSalt': trueDialSalt,
       'sentLifeScenarioBaseline': sentLifeScenarioBaseline,
+      'farmPrimaryRoleIndex': farmPrimaryRoleIndex,
+      'farmSubModuleIndex': farmSubModuleIndex,
+      'farmRoiMultiplier': farmRoiMultiplier,
+      'farmInterventionBonusCount': farmInterventionBonusCount,
+      'farmCostLife': farmCostLife,
+      'farmCostHistory': farmCostHistory,
+      'farmCostInorganic': farmCostInorganic,
+      'farmCostWillpower': farmCostWillpower,
+      'farmCostCurrency': farmCostCurrency,
+      'farmOutputCurrency': farmOutputCurrency,
+      'farmOutputMining': farmOutputMining,
+      'farmOutputCargoLife': farmOutputCargoLife,
+      'farmOutputCargoHistory': farmOutputCargoHistory,
+      'farmOutputCargoInorganic': farmOutputCargoInorganic,
     };
   }
 }

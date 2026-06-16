@@ -27,7 +27,7 @@ abstract final class WorldScale {
   /// [worldWidthMeters] をゲーム単位へ換算した横幅
   static const double worldWidth = worldWidthMeters * pixelsPerMeter;
 
-  /// 論理ステージ右端（ワールド X）。プレイエリアはおおむね `extendedWorldLeft`〜`extendedWorldRight`。
+  /// 論理ステージ右端（ワールド X）。
   static const double stageRightX = 0;
 
   /// 論理ステージ左端（ワールド X）
@@ -48,11 +48,73 @@ abstract final class WorldScale {
   static const double extendedWorldWidth =
       extendedWorldRight - extendedWorldLeft;
 
-  /// ループ遠景タイル列のワールド原点（index 0 タイルの左端）。
+  /// 屋外カメラのクランプ境界（左右）。
   ///
-  /// 右端 [stageRightX] からマイナス X へ [tileWidth] 単位で並べる。
+  /// 地面・空・遠景ループの有効範囲と同じ境界を使うことで、
+  /// 端で黒帯が見えるケースを避ける。
+  static const double cameraBoundLeftX = extendedWorldLeft;
+  static const double cameraBoundRightX = extendedWorldRight;
+
+  /// ループ遠景の横カバレッジ幅（カメラ境界に一致）。
+  static const double loopHorizontalCoverageWidth =
+      cameraBoundRightX - cameraBoundLeftX;
+
+  /// ステージ幅を [tileW] で覆うのに必要なタイル枚数（切り上げ）。
+  static int loopStageTileCount(double tileW) {
+    if (tileW < 1) {
+      return 0;
+    }
+    return (loopHorizontalCoverageWidth / tileW).ceil();
+  }
+
+  /// 1 周期のワールド幅（= [loopStageTileCount] × [tileW]）。
+  static double loopStageTilePeriod(double tileW) =>
+      loopStageTileCount(tileW) * tileW;
+
+  /// 描画スロット [slot] のタイル左端（[srcSize.x] 1 枚ぶんそのまま配置）。
+  ///
+  /// ステージ内 [loopStageTileCount] 枚は [cameraBoundRightX] に右端揃え。
+  /// slot 0 が最左、slot count-1 が右端ぴったり。
+  static double loopStageTileTrueLeft(int slot, double tileW) {
+    final count = loopStageTileCount(tileW);
+    if (count <= 0) {
+      return cameraBoundLeftX;
+    }
+    return cameraBoundRightX - (count - slot) * tileW;
+  }
+
+  /// タイル列のワールド左端と幅（水平ループ [GameStageComponent] の size / position 用）。
+  static ({double left, double width}) loopStageStripBounds(
+    double tileW, {
+    int marginSlots = 0,
+  }) {
+    final count = loopStageTileCount(tileW);
+    if (count <= 0) {
+      return (left: cameraBoundLeftX, width: 0);
+    }
+    final slots = loopStagePaintSlotRange(count, marginSlots: marginSlots);
+    final left = loopStageTileTrueLeft(slots.start, tileW);
+    final right = loopStageTileTrueLeft(slots.endInclusive, tileW) + tileW;
+    return (left: left, width: right - left);
+  }
+
+  /// ループ遠景の描画スロット範囲（ステージ内タイル + 片側 [marginSlots] 余白）。
+  static ({int start, int endInclusive}) loopStagePaintSlotRange(
+    int tileCount, {
+    int marginSlots = 0,
+  }) {
+    if (tileCount <= 0) {
+      return (start: 0, endInclusive: -1);
+    }
+    return (
+      start: -marginSlots,
+      endInclusive: tileCount + marginSlots - 1,
+    );
+  }
+
+  /// ループ遠景タイル列のワールド原点（ステージ最左タイルの左端）。
   static double loopBackgroundTileOriginWorldX(double tileWidth) =>
-      stageRightX - tileWidth;
+      loopStageTileTrueLeft(0, tileWidth);
 
   // --- Z 奥行き（メートル）---
 
@@ -66,7 +128,7 @@ abstract final class WorldScale {
   static const double farMountainDepthMeters = 300;
 
   /// 空・星空レイヤーの目安
-  static const double skyDepthMeters = 500;
+  static const double skyDepthMeters = 1000;
 
   /// referenceZoom（屋外/屋内で設定される基準ズーム）における、カメラの手前距離（m）。
   ///
@@ -108,13 +170,54 @@ abstract final class WorldScale {
   /// ローカルライト relight（full 参加者のスプライト形状・減衰帯）の priority
   static const int localLightOverlayRenderPriority = 56;
 
-  static const double _renderPriorityBaseAtPlayfield = 40;
-  static const double _farDepthPriorityScale = 0.126;
-  static const double _nearDepthPriorityScale = 15.0;
+  /// プレイ面（depth=0）の描画 priority。
+  static const int renderPriorityAtPlayfield = 35;
+
+  /// 最遠（[skyDepthMeters]）の描画 priority。
+  static const int renderPriorityAtSky = 1;
+
+  /// 手前（depth &lt; 0）方向の priority 増分（1m あたり）。
+  static const double renderPriorityNearScalePerMeter = 2.5;
+
+  /// 建物・駅などプレイ面上の立体（地面スプライトよりわずかに手前）。
+  static const double buildingDepthMeters = -0.5;
+
+  /// 自動化キット（建物より手前・プレイヤーより奥）。
+  static const double automationKitDepthMeters = -1.0;
+
+  /// depth ≥ 0 側: 1m 奥行くごとに priority を下げる傾き。
+  static double get renderPriorityFarScalePerMeter =>
+      (renderPriorityAtPlayfield - renderPriorityAtSky) / skyDepthMeters;
+
+  /// [SkyComponent]（= [skyDepthMeters]）。
+  static int get outdoorSkyRenderPriority =>
+      renderPriorityForDepth(skyDepthMeters);
+
+  /// 地面・電車レール（= [playfieldDepthMeters]）。
+  static int get outdoorGroundRenderPriority =>
+      renderPriorityForDepth(playfieldDepthMeters);
+
+  /// 建物・ロケット（= [buildingDepthMeters]）。
+  static int get outdoorBuildingRenderPriority =>
+      renderPriorityForDepth(buildingDepthMeters);
+
+  /// 自動化キット（= [automationKitDepthMeters]）。
+  static int get outdoorAutomationKitRenderPriority =>
+      renderPriorityForDepth(automationKitDepthMeters);
+
+  /// 手前シルエット（= [nearForegroundDepthMeters]）。
+  static int get outdoorNearForegroundRenderPriority =>
+      renderPriorityForDepth(nearForegroundDepthMeters);
 
   /// 奥行き [depthMeters] から Flame の描画 priority を導出する。
   ///
   /// 正 = 奥（小さい priority）、0 = プレイ面、負 = 手前（大きい priority）。
+  ///
+  /// * depth ≥ 0: `renderPriorityAtPlayfield - depth × renderPriorityFarScalePerMeter`
+  /// * depth &lt; 0: `renderPriorityAtPlayfield + (playfield - depth) × renderPriorityNearScalePerMeter`
+  ///
+  /// [skyDepthMeters] で [renderPriorityAtSky]、[playfieldDepthMeters] で
+  /// [renderPriorityAtPlayfield] になるよう傾きは自動で決まる。
   static int renderPriorityForDepth(
     double depthMeters, {
     int? override,
@@ -123,15 +226,16 @@ abstract final class WorldScale {
       return override;
     }
     if (depthMeters < playfieldDepthMeters) {
-      return (_renderPriorityBaseAtPlayfield +
-              (playfieldDepthMeters - depthMeters) * _nearDepthPriorityScale)
+      return (renderPriorityAtPlayfield +
+              (playfieldDepthMeters - depthMeters) *
+                  renderPriorityNearScalePerMeter)
           .round()
-          .clamp(lightingOverlayRenderPriority + 1, 120);
+          .clamp(renderPriorityAtSky, lightingOverlayRenderPriority - 1);
     }
-    return (_renderPriorityBaseAtPlayfield -
-            depthMeters * _farDepthPriorityScale)
+    return (renderPriorityAtPlayfield -
+            depthMeters * renderPriorityFarScalePerMeter)
         .round()
-        .clamp(1, lightingOverlayRenderPriority - 1);
+        .clamp(renderPriorityAtSky, lightingOverlayRenderPriority - 1);
   }
 
   /// 奥行きズームの影響重み（0..1）。手前=1、遠いほど小さい（atan で滑らかに減衰）。

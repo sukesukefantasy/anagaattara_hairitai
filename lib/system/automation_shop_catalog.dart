@@ -2,113 +2,134 @@
 
 import '../component/item/item.dart';
 import '../component/item/item_bag.dart';
+import 'automation_ability_catalog.dart';
+import 'automation_shop_grade.dart';
+import 'automation_shop_unlock.dart';
+import 'farm_role_profile.dart';
 import 'storage/game_runtime_state.dart';
 
-/// §5 自動化ショップ — 数値は実装側TBDの範囲で [GameRuntimeState] を更新する。
+/// 自動化ショップ — 装置別 grade 購入。
 extension AutomationShopCatalog on GameRuntimeState {
-  String? tryPurchaseShopTierA1() {
-    if (automationShopTierA >= 1) return null;
-    if (cargoLifeCount < 40) {
-      return '生命カーゴが不足しています（必要: 40）';
+  String? tryPurchaseShopEntry(String id, ItemBag bag) {
+    final spec = shopSpecById(id);
+    if (spec == null) return '不明な項目です';
+
+    if (shopGrade(spec.tab) >= spec.gradeLevel) return null;
+
+    final prereq = shopGradePrerequisiteHint(spec);
+    if (prereq != null) return prereq;
+
+    if (spec.id == 'common_5' && !isCommon5Unlocked) {
+      return common5LockHint() ?? '終盤条件を満たしていません';
     }
-    cargoLifeCount = GameRuntimeState.clampCargoKindCount(cargoLifeCount - 40);
-    automationShopTierA = 1;
+
+    if (spec.id == 'common_6') {
+      return tryPurchaseCommon6Contract(bag);
+    }
+
+    if (spec.id == 'ward_1') {
+      if (maxWillCoreValue <= GameRuntimeState.willCoreUnit * 1.25) {
+        return '意志の核の余裕がありません（余剰コアが必要）';
+      }
+    }
+
+    final tab = spec.tab;
+    final lifeCost =
+        spec.costLife > 0 ? farmDiscountedCostForTab(spec.costLife, tab) : 0;
+    final histCost = spec.costHistory > 0
+        ? farmDiscountedCostForTab(spec.costHistory, tab)
+        : 0;
+    final inoCost = spec.costInorganic > 0
+        ? farmDiscountedCostForTab(spec.costInorganic, tab)
+        : 0;
+    final currencyCost = spec.costCurrency > 0
+        ? farmDiscountedCostForTab(spec.costCurrency, tab)
+        : 0;
+    final willPay = spec.costWillpower > 0
+        ? spec.costWillpower / shopTabMultiplierFor(tab)
+        : 0.0;
+
+    if (cargoLifeCount < lifeCost) {
+      return '生命カーゴが不足しています（必要: $lifeCost）';
+    }
+    if (cargoHistoryCount < histCost) {
+      return '歴史カーゴが不足しています（必要: $histCost）';
+    }
+    if (cargoInorganicCount < inoCost) {
+      return '無機カーゴが不足しています（必要: $inoCost）';
+    }
+    if (currency < currencyCost) {
+      return '通貨が不足しています（必要: $currencyCost）';
+    }
+    if (willPay > 0 && currentWillpower < willPay) {
+      return '意志力が足りません（${willPay.toStringAsFixed(1)} 支払い）';
+    }
+    if (spec.costWillCore > 0 &&
+        maxWillCoreValue <= GameRuntimeState.willCoreUnit * spec.costWillCore) {
+      return '意志の核が不足しています';
+    }
+
+    if (lifeCost > 0) {
+      cargoLifeCount =
+          GameRuntimeState.clampResidueCount(cargoLifeCount - lifeCost);
+    }
+    if (histCost > 0) {
+      cargoHistoryCount =
+          GameRuntimeState.clampResidueCount(cargoHistoryCount - histCost);
+    }
+    if (inoCost > 0) {
+      cargoInorganicCount =
+          GameRuntimeState.clampResidueCount(cargoInorganicCount - inoCost);
+    }
+    if (currencyCost > 0) currency -= currencyCost;
+    if (willPay > 0) {
+      currentWillpower -= willPay;
+      clampCurrentWillpowerToCapacity();
+    }
+    recordFarmCost(
+      life: lifeCost,
+      history: histCost,
+      inorganic: inoCost,
+      currency: currencyCost,
+      willpower: willPay,
+    );
+
+    if (spec.id == 'ward_1') {
+      maxWillCoreValue -= GameRuntimeState.willCoreUnit;
+      clampCurrentWillpowerToCapacity();
+      recordFarmCost(willpower: GameRuntimeState.willCoreUnit);
+    }
+
+    setShopGrade(spec.tab, spec.gradeLevel);
+    syncUnlocksFromShopGrades();
+
+    switch (spec.id) {
+      case 'common_4':
+        automationFuelEfficiencyTier = 1;
+      case 'common_5':
+        automationShopWillpowerAutoPay = true;
+      case 'upkeep_2':
+        if (automationKitStage < 2) automationKitStage = 2;
+        for (var i = 0; i < 3; i++) {
+          final it = ItemFactory.createItemByName('火炎瓶', Vector2.zero());
+          if (it != null) bag.addItem(it);
+        }
+      default:
+        break;
+    }
+
     codexIncrementAutomationOps();
     saveGame();
     notifyRuntimeChanged();
     return null;
   }
 
-  String? tryPurchaseShopTierA2() {
-    if (automationShopTierA < 1) return '先に A-1 を解放してください';
-    if (automationShopTierA >= 2) return null;
-    if (cargoLifeCount < 25 || cargoHistoryCount < 12) {
-      return '残滓が不足しています（生命25・歴史12）';
-    }
-    cargoLifeCount = GameRuntimeState.clampCargoKindCount(cargoLifeCount - 25);
-    cargoHistoryCount = GameRuntimeState.clampCargoKindCount(cargoHistoryCount - 12);
-    automationShopTierA = 2;
-    saveGame();
-    notifyRuntimeChanged();
-    return null;
-  }
-
-  String? tryPurchaseShopTierA3() {
-    if (automationShopTierA < 2) return '先に A-2 を解放してください';
-    if (automationShopTierA >= 3) return null;
-    if (cargoInorganicCount < 30) {
-      return '無機カーゴが不足しています（必要: 30）';
-    }
-    cargoInorganicCount =
-        GameRuntimeState.clampCargoKindCount(cargoInorganicCount - 30);
-    automationShopTierA = 3;
-    saveGame();
-    notifyRuntimeChanged();
-    return null;
-  }
-
-  String? tryPurchaseShopTierB1() {
-    if (automationShopTierB >= 1) return null;
-    if (currentWillpower < 2.5) {
-      return '意志力が足りません（2.5 支払い）';
-    }
-    currentWillpower -= 2.5;
-    clampCurrentWillpowerToCapacity();
-    automationShopTierB = 1;
-    saveGame();
-    notifyRuntimeChanged();
-    return null;
-  }
-
-  /// B-2: 通貨＋自動意志力支払い基盤（§5 暫定：通貨コストはプレイバランス用）。
-  String? tryPurchaseShopTierB2() {
-    if (automationShopTierB < 1) return '先に B-1 を解放してください';
-    if (automationShopTierB >= 2) return null;
-    if (currency < 60) return '通貨が不足しています（必要: 60）';
-    currency -= 60;
-    automationShopTierB = 2;
-    automationShopWillpowerAutoPay = true;
-    saveGame();
-    notifyRuntimeChanged();
-    return null;
-  }
-
-  /// C-1: 強力シールドとして最大核を一時預け（=max を1単位削る）。
-  String? tryPurchaseShopTierC1Shield() {
-    if (automationShopTierC >= 1) return null;
-    if (maxWillCoreValue <= GameRuntimeState.willCoreUnit * 1.25) {
-      return '意志の核の余裕がありません（C-1 には余剰コアが必要）';
-    }
-    maxWillCoreValue -= GameRuntimeState.willCoreUnit;
-    clampCurrentWillpowerToCapacity();
-    automationShopTierC = 1;
-    saveGame();
-    notifyRuntimeChanged();
-    return null;
-  }
-
-  /// B-3 の一部: 報酬として火炎瓶（ドキュメントの数は10だが開発中は少なめ）。
-  String? tryPurchaseShopTierB3Preview(ItemBag bag) {
-    if (automationShopTierB < 2) return '先に B-2 を解放してください';
-    if (automationShopTierB >= 3) return null;
-    if (currentWillpower < 3.5) return '意志力が足りません';
-    currentWillpower -= 3.5;
-    clampCurrentWillpowerToCapacity();
-    automationShopTierB = 3;
-    for (var i = 0; i < 3; i++) {
-      final it = ItemFactory.createItemByName('火炎瓶', Vector2.zero());
-      if (it != null) {
-        bag.addItem(it);
-      }
-    }
-    saveGame();
-    notifyRuntimeChanged();
-    return null;
-  }
-
-  /// C-2: 意志の核を差し込み Nourishment 確定（キットと同効）。
-  String? tryPurchaseShopTierC2Contract(ItemBag bag) {
-    if (automationContractC2) return 'すでに C-2 契約済みです';
+  String? tryPurchaseCommon6Contract(ItemBag bag) {
+    if (automationContractC2) return null;
+    final spec = shopSpecById('common_6');
+    if (spec == null) return '不明な項目です';
+    final prereq = shopGradePrerequisiteHint(spec);
+    if (prereq != null) return prereq;
     if (maxWillCoreValue <= GameRuntimeState.willCoreUnit + 1e-9) {
       return '意志の核が足りません（余剰コアが必要）';
     }
@@ -119,53 +140,7 @@ extension AutomationShopCatalog on GameRuntimeState {
     if (it != null) bag.addItem(it);
     automationKitStage =
         automationKitStage < 4 ? 4 : automationKitStage;
-    saveGame();
-    notifyRuntimeChanged();
-    return null;
-  }
-
-  /// D-1: 母星人間性を代償に核と意志力（§10 トーン）。
-  String? tryPurchaseShopTierD1() {
-    if (automationShopTierD >= 1) return null;
-    if (homePlanetHumanity < 18.0) {
-      return '母星人間性が足りません（§14 正解なし — 要: 18）';
-    }
-    homePlanetHumanity = (homePlanetHumanity - 18.0).clamp(0.0, 100.0);
-    maxWillCoreValue += GameRuntimeState.willCoreUnit;
-    currentWillpower += GameRuntimeState.willCoreUnit * 0.5;
-    clampCurrentWillpowerToCapacity();
-    automationShopTierD = 1;
-    saveGame();
-    notifyRuntimeChanged();
-    return null;
-  }
-
-  /// D-2: さらに母星の代償（1時間ルールは省略し一回購入で表現）。
-  String? tryPurchaseShopTierD2() {
-    if (automationShopTierD < 1) return '先に D-1 を解放してください';
-    if (automationShopTierD >= 2) return null;
-    if (homePlanetHumanity < 12.0) {
-      return '母星人間性が足りません（要: 12）';
-    }
-    homePlanetHumanity = (homePlanetHumanity - 12.0).clamp(0.0, 100.0);
-    maxWillCoreValue += GameRuntimeState.willCoreUnit;
-    currentWillpower += GameRuntimeState.willCoreUnit;
-    clampCurrentWillpowerToCapacity();
-    automationShopTierD = 2;
-    saveGame();
-    notifyRuntimeChanged();
-    return null;
-  }
-
-  /// D-3: 母星代償の極致＋象徴アイテム。
-  String? tryPurchaseShopTierD3(ItemBag bag) {
-    if (automationShopTierD < 2) return '先に D-2 を解放してください';
-    if (automationShopTierD >= 3) return null;
-    if (homePlanetHumanity < 22.0) return '母星人間性が足りません（要: 22）';
-    homePlanetHumanity = (homePlanetHumanity - 22.0).clamp(0.0, 100.0);
-    automationShopTierD = 3;
-    final it = ItemFactory.createItemByName('高出力電源', Vector2.zero());
-    if (it != null) bag.addItem(it);
+    unlockAutomation(AutomationUnlockIds.upkeepManualCycle);
     saveGame();
     notifyRuntimeChanged();
     return null;

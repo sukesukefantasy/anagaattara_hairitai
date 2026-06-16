@@ -96,19 +96,21 @@ abstract final class LightReceiverRenderer {
     }
 
     var effectiveBandClip = bandClip;
-    if (receiver is DepthZoomVisual) {
+    if (receiver is GameStageComponent && receiver.usesHorizontalLoop) {
+      // ループ遠景は屋外専用の疑似3Dズームで描画されるため、
+      // DepthZoomVisual の係数（屋外では常に 1）を見て判定すると
+      // 帯 clip が残って上端が切れる。常に clip を無効化する。
+      effectiveBandClip = false;
+    } else if (receiver is DepthZoomVisual) {
       final depthFactor = receiver.depthZoomRenderFactor;
-      if ((depthFactor - 1.0).abs() > 1e-6) {
-        if (receiver is GameStageComponent && receiver.loop) {
-          // ループ遠景: タイル側で可視域カリング済み。帯 clip はズームで内側に食い込むため無効化。
-          effectiveBandClip = false;
-        } else if (effectiveBandClip && !paintRect.isEmpty) {
-          paintRect = CameraViewportCoords.inflateBandForDepthZoom(
-            paintRect,
-            depthFactor,
-            receiver.depthZoomPivotLocal,
-          );
-        }
+      if ((depthFactor - 1.0).abs() > 1e-6 &&
+          effectiveBandClip &&
+          !paintRect.isEmpty) {
+        paintRect = CameraViewportCoords.inflateBandForDepthZoom(
+          paintRect,
+          depthFactor,
+          receiver.depthZoomPivotLocal,
+        );
       }
     }
 

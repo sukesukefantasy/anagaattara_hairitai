@@ -5,6 +5,7 @@ import 'package:flame/collisions.dart';
 import 'package:flame/components.dart';
 
 import '../../main.dart';
+import '../../system/stage_combat_profile.dart';
 import '../player.dart';
 import '../common/physics/physics_body_queries.dart';
 import '../game_stage/building/station.dart';
@@ -17,6 +18,13 @@ class WalkingEnemy extends EnemyBase {
   /// 歩行は1・2列目（0-indexed: col 0–1）、キャラは1–5行目（0-indexed: row 0–4）
   static const int _characterRowCount = 5;
 
+  /// 警戒狩人（AlertHunter）用スプライト行（0-indexed 3 = 4行目）。
+  static const int alertHunterSpriteRowIndex = 3;
+
+  final int? _fixedSpriteRowIndex;
+  final bool _offScreenDespawn;
+  final bool _chasePlayer;
+
   double _walkCycleTime = 0.0;
   static const double _bounceHeight = 5.0;
   final double _walkCycleSpeed;
@@ -24,21 +32,37 @@ class WalkingEnemy extends EnemyBase {
   double _footstepSoundCooldown = 0.0;
   static const double _footstepCooldownDuration = 0.2;
 
+  static const double _telegraphRange = 118.0;
+  double _telegraphTimer = 0.0;
+  bool _telegraphPrimed = false;
+
   WalkingEnemy({
     required super.position,
     required super.direction,
     required super.mass,
     double walkCycleSpeed = 5.0,
     super.priority = 45,
-  }) : _walkCycleSpeed = walkCycleSpeed {
+    int? fixedSpriteRowIndex,
+    bool offScreenDespawn = true,
+    bool chasePlayer = false,
+  })  : _walkCycleSpeed = walkCycleSpeed,
+        _fixedSpriteRowIndex = fixedSpriteRowIndex,
+        _offScreenDespawn = offScreenDespawn,
+        _chasePlayer = chasePlayer {
     anchor = Anchor.bottomCenter;
   }
 
   @override
   double get speed => 50.0 + random.nextDouble() * 50.0;
 
+  static const double _baseAttackStress = 5.0;
+
+  /// 接近テレグラフ演出（中ボスは無効化可能）。
+  bool get useAttackTelegraph => true;
+
   @override
-  double get attackStress => 5.0;
+  double get attackStress =>
+      _telegraphPrimed ? _baseAttackStress * 1.35 : _baseAttackStress;
 
   /// sin(_walkCycleTime) の半周期（1歩）に相当するフレーム表示時間
   static double walkStepTimeForCycleSpeed(double walkCycleSpeed) =>
@@ -65,11 +89,12 @@ class WalkingEnemy extends EnemyBase {
   @override
   Future<void> onLoad() async {
     final walkingEnemyImage = await game.images.load('walkingEnemy.png');
-    final randomRow = random.nextInt(_characterRowCount);
+    final rowIndex =
+        _fixedSpriteRowIndex ?? random.nextInt(_characterRowCount);
 
     animation = createWalkAnimation(
       walkingEnemyImage,
-      rowIndex: randomRow,
+      rowIndex: rowIndex,
       walkCycleSpeed: _walkCycleSpeed,
     );
 
@@ -102,17 +127,69 @@ class WalkingEnemy extends EnemyBase {
   @override
   int get stepOverHorizontalIntent => direction.sign.toInt();
 
+  double _telegraphRequiredSeconds() {
+    final profile = StageCombatProfile.forScene(
+      game.gameRuntimeState.currentOutdoorSceneId,
+    );
+    final tier = game.gameRuntimeState.starAlertHudTier;
+    return (profile.telegraphBaseSeconds * (1.0 - tier * 0.06))
+        .clamp(0.22, 0.55);
+  }
+
+  void _updateTelegraph(double dt) {
+    if (!useAttackTelegraph) {
+      _telegraphTimer = 0.0;
+      _telegraphPrimed = false;
+      return;
+    }
+    final player = game.player;
+    final dist = (player.absolutePosition - absolutePosition).length;
+    if (dist > _telegraphRange || player.isHiding) {
+      _telegraphTimer = 0.0;
+      _telegraphPrimed = false;
+      refreshCombatTierVisuals();
+      return;
+    }
+
+    _telegraphTimer += dt;
+    final required = _telegraphRequiredSeconds();
+    final progress = (_telegraphTimer / required).clamp(0.0, 1.0);
+    paint.colorFilter = ColorFilter.mode(
+      Color.lerp(
+        const Color(0xFFFF8888),
+        const Color(0xFFFF2222),
+        progress,
+      )!
+          .withValues(alpha: 0.35 + progress * 0.25),
+      BlendMode.srcATop,
+    );
+    _telegraphPrimed = _telegraphTimer >= required;
+  }
+
   @override
   void preparePhysicsVelocity(double dt) {
+    if (_chasePlayer && !isPhysicsSteppingOver) {
+      final player = game.player;
+      direction = player.absoluteCenter.x >= absoluteCenter.x ? 1.0 : -1.0;
+      scale.x = direction == 1.0 ? 1.0 : -1.0;
+    }
     if (!isPhysicsSteppingOver) {
-      final runScale = 1.0 + game.gameRuntimeState.starAlertLevel * 0.12;
-      velocity.x = speed * runScale * direction;
+      final tier = game.gameRuntimeState.effectiveEnemyCombatTier;
+      final alert = game.gameRuntimeState.starAlertLevel;
+      final runScale = StageCombatProfile.enemyRunScaleForTier(tier, alert);
+      final telegraphSlow = useAttackTelegraph &&
+              _telegraphTimer > 0 &&
+              !_telegraphPrimed
+          ? 0.72
+          : 1.0;
+      velocity.x = speed * runScale * telegraphSlow * direction;
     }
   }
 
   @override
   void update(double dt) {
     super.update(dt);
+    _updateTelegraph(dt);
     _performMovement(dt);
   }
 
@@ -137,13 +214,15 @@ class WalkingEnemy extends EnemyBase {
       position.y -= (newCycleY - oldCycleY);
     }
 
-    if (direction == -1.0) {
-      if (position.x < -MyGame.worldWidth - size.x) {
-        removeFromParent();
-      }
-    } else {
-      if (position.x > game.camera.visibleWorldRect.right + size.x) {
-        removeFromParent();
+    if (_offScreenDespawn) {
+      if (direction == -1.0) {
+        if (position.x < -MyGame.worldWidth - size.x) {
+          removeFromParent();
+        }
+      } else {
+        if (position.x > game.camera.visibleWorldRect.right + size.x) {
+          removeFromParent();
+        }
       }
     }
 

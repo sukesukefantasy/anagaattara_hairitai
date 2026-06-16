@@ -53,12 +53,13 @@ abstract final class CameraViewportCoords {
     );
   }
 
-  /// ループ遠景・中景用: カメラ可視 X ∩ ステージ幅 [stageLeftX, stageRightX]。
+  /// ループ遠景・中景用: カメラ可視 X ∩ 屋外カメラ境界。
   ///
-  /// カメラ可動域（[WorldScale.worldWidth] = stageRightX - stageLeftX）外は描画・暗化の対象外。
+  /// カメラ可動域（[WorldScale.cameraBoundLeftX]〜[WorldScale.cameraBoundRightX]）
+  /// 外は描画・暗化の対象外。
   static Rect loopStageVisibleWorldRect(Rect cameraVisible) {
-    final left = math.max(cameraVisible.left, WorldScale.stageLeftX);
-    final right = math.min(cameraVisible.right, WorldScale.stageRightX);
+    final left = math.max(cameraVisible.left, WorldScale.cameraBoundLeftX);
+    final right = math.min(cameraVisible.right, WorldScale.cameraBoundRightX);
     if (right <= left) {
       return Rect.zero;
     }
@@ -81,8 +82,8 @@ abstract final class CameraViewportCoords {
     }
     final newLeft = pivotWorldX + (rect.left - pivotWorldX) * scale;
     final newRight = pivotWorldX + (rect.right - pivotWorldX) * scale;
-    final left = math.max(newLeft, WorldScale.stageLeftX);
-    final right = math.min(newRight, WorldScale.stageRightX);
+    final left = math.max(newLeft, WorldScale.cameraBoundLeftX);
+    final right = math.min(newRight, WorldScale.cameraBoundRightX);
     if (right <= left) {
       return Rect.zero;
     }

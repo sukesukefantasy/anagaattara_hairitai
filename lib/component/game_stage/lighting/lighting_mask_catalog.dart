@@ -210,7 +210,7 @@ abstract final class LightingMaskCatalog {
       return null;
     }
     for (final child in scene.children) {
-      if (child is GameStageComponent && child.loop) {
+      if (child is GameStageComponent && child.usesHorizontalLoop) {
         return child;
       }
     }

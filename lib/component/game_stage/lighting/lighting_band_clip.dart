@@ -19,5 +19,5 @@ abstract final class LightingBandClip {
 
   /// [GameStageComponent.loop]: パララックスで local が size 外にも及ぶ → 帯を size.x にクランプしない。
   static bool usesLoopWorldWidthBand(PositionComponent participant) =>
-      participant is GameStageComponent && participant.loop;
+      participant is GameStageComponent && participant.usesHorizontalLoop;
 }

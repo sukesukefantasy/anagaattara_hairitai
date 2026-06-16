@@ -9,6 +9,7 @@ import '../component/game_stage/gamestage_component.dart';
 import '../component/game_stage/building/building_definitions.dart'; // BuildingDefinitionsをインポート
 import '../component/common/hitboxes/interact_hitbox.dart';
 import '../component/game_stage/building/destructible_object.dart';
+import '../game/world_scale.dart';
 
 class HealthCenterInteriorScene extends GameScene {
   final Building? _enteredBuilding; // nullableに変更
@@ -95,7 +96,9 @@ class HealthCenterInteriorScene extends GameScene {
             (33 * scale),
       ),
       size: Vector2(64 * scale, 31 * scale),
-    )..priority = 40;
+    )..priority = WorldScale.renderPriorityForDepth(
+      WorldScale.buildingDepthMeters,
+    );
     await add(counterComponent);
 
     counterComponent.add(InteractHitbox(
@@ -126,7 +129,9 @@ class HealthCenterInteriorScene extends GameScene {
         ));
       }
     }
-    game.player!.priority = 10; // 室内シーンでのプレイヤーのpriorityを調整
+    game.player!.priority = WorldScale.renderPriorityForDepth(
+      WorldScale.playfieldDepthMeters,
+    );
     game.player!.unbeatable = false;
     // await add(game.player!); // HealthCenterInteriorSceneの子としてプレイヤーを追加
 

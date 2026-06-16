@@ -11,6 +11,7 @@ import 'game_scene.dart';
 import 'outdoor_scene.dart';
 import 'prologue_scene.dart'; // PrologueSceneをインポート
 import 'abstract_outdoor_scene.dart'; // AbstractOutdoorSceneをインポート
+import '../system/automation_ability_catalog.dart';
 import 'apartment_interior_scene.dart';
 import 'burger_store_interior_scene.dart';
 import 'cafe_interior_scene.dart';
@@ -436,6 +437,8 @@ class SceneManager extends Component with HasGameReference<MyGame> {
       }
       game.gameRuntimeState.currentOutdoorSceneId =
           newScene.sceneId; // GameRuntimeStateを更新
+      game.gameRuntimeState.noteAutomationUpgradeStageTier(newScene.sceneId);
+      game.gameRuntimeState.maybeRaiseTargetStarAutomationIntro();
       debugPrint(
         'Current outdoor scene ID set to: ${game.gameRuntimeState.currentOutdoorSceneId}',
       );

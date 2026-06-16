@@ -9,6 +9,7 @@ import '../component/game_stage/gamestage_component.dart';
 import '../component/game_stage/building/building_definitions.dart'; // BuildingDefinitionsをインポート
 import '../component/common/hitboxes/interact_hitbox.dart';
 import '../component/game_stage/building/destructible_object.dart';
+import '../game/world_scale.dart';
 
 class SushiInteriorScene extends GameScene {
   final Building? _enteredBuilding;
@@ -95,7 +96,9 @@ class SushiInteriorScene extends GameScene {
             (35 * scale),
       ),
       size: Vector2(94 * scale, 29 * scale),
-    )..priority = 40;
+    )..priority = WorldScale.renderPriorityForDepth(
+      WorldScale.buildingDepthMeters,
+    );
     await add(counterComponent);
 
     counterComponent.add(InteractHitbox(
@@ -126,7 +129,9 @@ class SushiInteriorScene extends GameScene {
         ));
       }
     }
-    game.player!.priority = 10; // 室内シーンでのプレイヤーのpriorityを調整
+    game.player!.priority = WorldScale.renderPriorityForDepth(
+      WorldScale.playfieldDepthMeters,
+    );
     game.player!.unbeatable = false;
     // await add(game.player!); // SushiInteriorSceneの子としてプレイヤーを追加
 

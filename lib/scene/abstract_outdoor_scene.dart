@@ -7,6 +7,8 @@ import '../main.dart';
 import '../component/npc/npc.dart';
 import '../component/npc/ghost_echo.dart';
 import '../component/player.dart';
+import '../component/player_cargo_terminal.dart';
+import '../component/item/toolbox.dart';
 import '../component/game_stage/building/building_data.dart';
 import '../component/game_stage/building/building.dart';
 import '../component/game_stage/building/shop.dart';
@@ -18,6 +20,7 @@ import '../component/game_stage/building/apartment.dart';
 import '../component/enemy/enemy_manager.dart';
 import '../component/enemy/walking_enemy.dart';
 import '../component/enemy/car_enemy.dart';
+import '../component/enemy/alert_hunter_enemy.dart';
 import '../component/common/ground/ground.dart';
 import '../component/common/underground/underground.dart';
 import '../component/game_stage/gamestage_component.dart';
@@ -28,6 +31,9 @@ import '../UI/game_ui.dart';
 import '../component/game_stage/lighting/lighting_bake_coordinator.dart';
 import '../component/game_stage/lighting/lighting_world.dart';
 import '../component/game_stage/building/abandoned_rocket.dart';
+import '../component/game_stage/building/automation/automation_tool_factory.dart';
+import '../component/game_stage/building/automation/automation_tool_base.dart';
+import '../system/automation_tool_state.dart';
 import '../component/game_stage/building/building_definitions.dart';
 import '../component/game_stage/building/destructible_object.dart';
 import '../component/vehicle/train.dart';
@@ -54,6 +60,7 @@ abstract class AbstractOutdoorScene extends GameScene {
   final List<DestructibleObject> destructibles = []; // 破壊可能オブジェクト用リストを追加
   Station? station;
   AbandonedRocket? rocket; // ロケットを追加
+  PlayerCargoTerminal? cargoTerminal; // カーゴ端末を追加
   EnemyManager? enemyManager;
   SkyComponent? skyBackgroundComponent;
   late final LightingWorld lightingWorld;
@@ -76,7 +83,7 @@ abstract class AbstractOutdoorScene extends GameScene {
     final train = Train(
       position: Vector2(0, station!.position.y + station!.size.y),
       station: station!,
-    )..priority = 3; // 建物(priority: 5)より奥に描画される
+    )..priority = WorldScale.outdoorGroundRenderPriority;
     add(train);
     debugPrint('Spawned a new train in $sceneId.');
   }
@@ -92,7 +99,7 @@ abstract class AbstractOutdoorScene extends GameScene {
     lightingWorld = LightingWorld(timeService: game.timeService);
 
     skyBackgroundComponent = SkyComponent(timeService: game.timeService)
-      ..priority = 1;
+      ..priority = WorldScale.outdoorSkyRenderPriority;
     await add(skyBackgroundComponent!);
 
     // 環境侵食エフェクトを追加（starAlertLevel >= 6 で自動起動）
@@ -119,7 +126,7 @@ abstract class AbstractOutdoorScene extends GameScene {
       groundSprite: groundSprite,
       loop: true,
       overlayColor: null,
-    )..priority = 3;
+    )..priority = WorldScale.outdoorGroundRenderPriority;
     await add(ground!);
     game.sceneManager.currentScene?.groundComponent = ground; // ! を削除
     debugPrint('AbstractOutdoorScene: Ground initialized and added.');
@@ -154,8 +161,7 @@ abstract class AbstractOutdoorScene extends GameScene {
     final outdoorBackgrounds = backgroundDataMap[sceneId];
     if (outdoorBackgrounds != null) {
       for (final bgData in outdoorBackgrounds) {
-        final background = GameStageComponent(data: bgData, loop: true)
-          ..priority = bgData.resolveRenderPriority();
+        final background = GameStageComponent(data: bgData);
         await add(background);
         background.resetPositions(game.initialGameCanvasSize);
 
@@ -211,7 +217,7 @@ abstract class AbstractOutdoorScene extends GameScene {
             -MyGame.worldWidth,
             game.initialGameCanvasSize.y - definition.defaultSize.y,
           ),
-        )..priority = 5;
+        )..priority = WorldScale.outdoorBuildingRenderPriority;
         buildings.add(station!);
         await add(station!);
         
@@ -242,7 +248,8 @@ abstract class AbstractOutdoorScene extends GameScene {
     }
 
     if (shouldAddRocket) {
-      rocket = AbandonedRocket(position: rocketPos)..priority = 5;
+      rocket = AbandonedRocket(position: rocketPos)
+        ..priority = WorldScale.outdoorBuildingRenderPriority;
       await add(rocket!);
       if (sceneId == 'outdoor_true') {
         rocket!.add(
@@ -399,21 +406,17 @@ abstract class AbstractOutdoorScene extends GameScene {
         default:
           continue; // 未知の建物タイプはスキップ
       }
-      building.priority = 5;
+      building.priority = WorldScale.outdoorBuildingRenderPriority;
       buildings.add(building);
       await add(building);
       debugPrint('AbstractOutdoorScene: Building ${type} added. bottom position: ${building.position.y + building.size.y}');
     }
     debugPrint('AbstractOutdoorScene: All buildings added.');
 
-    // 敵の初期化
-    int walkingEnemyCount = sceneId == 'outdoor_0' ? 0 : 10;
-    int carEnemyCount = sceneId == 'outdoor_0' ? 0 : 1;
-
-    if (sceneId == 'outdoor_2') {
-      walkingEnemyCount = 20; // Violence属性が高い、またはStage 2は敵を増やす
-      carEnemyCount = 3;
-    }
+    // 敵の初期化（ステージ戦闘プロファイル § ローグ駆け引き v0.1）
+    final spawnCounts = enemyManager!.initialSpawnCountsForScene(sceneId);
+    final walkingEnemyCount = spawnCounts.walking;
+    final carEnemyCount = spawnCounts.car;
 
     for (int i = 0; i < walkingEnemyCount; i++) {
       final walkingEnemy = enemyManager!.createEnemyOnLoad(isWalkingEnemy: true);
@@ -479,7 +482,66 @@ abstract class AbstractOutdoorScene extends GameScene {
     // 破壊可能オブジェクトの配置
     _spawnDestructibles();
 
+    await _restoreAutomationToolsIfNeeded(state);
+
+    // カーゴ端末の配置
+    await _spawnCargoTerminal();
+
+    // 支援物資（Toolbox）の配置
+    if (state.pendingToolboxReward) {
+      await _spawnToolbox();
+    }
+
     debugPrint('AbstractOutdoorScene initializeScene complete');
+  }
+
+  Future<void> _spawnToolbox() async {
+    // ステージ開始地点の少し先に配置
+    final y = ground?.position.y ?? game.initialGameCanvasSize.y;
+    final pos = Vector2(-20, y - 16); // 地面に置く
+    final toolbox = Toolbox(position: pos);
+    await add(toolbox);
+    debugPrint('AbstractOutdoorScene: Toolbox spawned at $pos');
+  }
+
+  Future<void> _spawnCargoTerminal() async {
+    // プロローグシーン（outdoor_0）ではカーゴを配置しない
+    if (sceneId == 'outdoor_0') return;
+
+    // ステージ開始地点（x = -50 付近）に配置
+    // 地面（ground.position.y）を基準にする
+    final y = ground?.position.y ?? game.initialGameCanvasSize.y;
+    final pos = Vector2(-50, y - 22); // 46x45 のサイズなので、地面に接する程度に調整
+    cargoTerminal = PlayerCargoTerminal()..position = pos;
+    await add(cargoTerminal!);
+
+    // Player にも参照を持たせる（UI等で使用）
+    game.player.cargoTerminal = cargoTerminal;
+
+    debugPrint('AbstractOutdoorScene: PlayerCargoTerminal spawned at $pos');
+  }
+
+  Future<void> _restoreAutomationToolsIfNeeded(GameRuntimeState state) async {
+    state.migrateLegacyAutomationKitIfNeeded();
+    final ground = groundComponent;
+    if (ground != null) {
+      state.syncAutomationToolsToOutdoorScene(sceneId, ground.position.y + 2);
+    }
+    for (final p in state.placementsInScene(sceneId)) {
+      final existing = children.query<AutomationToolBase>().where(
+        (t) => t.instanceId == p.instanceId,
+      );
+      if (existing.isNotEmpty) continue;
+      final tool = createAutomationTool(
+        kind: p.kind,
+        instanceId: p.instanceId,
+        position: Vector2(p.x, p.y),
+      );
+      await add(tool);
+      debugPrint(
+        'AbstractOutdoorScene: ${p.kind.displayLabel} restored at (${p.x}, ${p.y})',
+      );
+    }
   }
 
   void _spawnDestructibles() async {
@@ -499,10 +561,10 @@ abstract class AbstractOutdoorScene extends GameScene {
           itemName: '石',
           uniqueId: 'outdoor_true_finale_barrier',
           position: Vector2(-500, game.initialGameCanvasSize.y),
-          size: sprite!.srcSize,
+          size: sprite.srcSize,
           sprite: sprite,
         );
-        obj.priority = 4;
+        obj.priority = WorldScale.outdoorNearForegroundRenderPriority;
         destructibles.add(obj);
         add(obj);
         return;
@@ -518,10 +580,10 @@ abstract class AbstractOutdoorScene extends GameScene {
           itemName: '棒',
           uniqueId: '${sceneId}_street_$i', // IDを永続化
           position: Vector2(x, game.initialGameCanvasSize.y),
-          size: sprite!.srcSize,
+          size: sprite.srcSize,
           sprite: sprite,
         );
-        obj.priority = 4;
+        obj.priority = WorldScale.outdoorNearForegroundRenderPriority;
         destructibles.add(obj); // リストに追加
         add(obj);
       }
@@ -652,8 +714,13 @@ abstract class AbstractOutdoorScene extends GameScene {
       GameUI.setDigButtonState(ActionButtonState.normal);
     }
 
-    final currentWalkingEnemies = children.whereType<WalkingEnemy>().length;
+    final currentWalkingEnemies = children
+        .whereType<WalkingEnemy>()
+        .where((e) => e is! AlertHunterEnemy)
+        .length;
     final currentCarEnemies = children.whereType<CarEnemy>().length;
+
+    _trySpawnPendingAlertHunter();
 
     // プロローグ以外で敵をスポーン
     if (sceneId != 'outdoor_0') {
@@ -698,5 +765,29 @@ abstract class AbstractOutdoorScene extends GameScene {
   void _clearAmbientWorldTint() {
     ground?.overlayColor = null;
     game.player.setAmbientColorFilter(null);
+  }
+
+  bool get hasLivingAlertHunter =>
+      children.query<AlertHunterEnemy>().any((e) => e.isMounted);
+
+  void _trySpawnPendingAlertHunter() {
+    if (sceneId == 'outdoor_0') return;
+    final state = game.gameRuntimeState;
+    final tier = state.pendingAlertHunterSpawnTier;
+    if (tier <= 0) return;
+    if (!state.isOnTargetStarOutdoor) {
+      state.pendingAlertHunterSpawnTier = 0;
+      return;
+    }
+    if (hasLivingAlertHunter) {
+      state.pendingAlertHunterSpawnTier = 0;
+      return;
+    }
+    state.pendingAlertHunterSpawnTier = 0;
+    state.lastAlertHunterSpawnTier = tier;
+    state.saveGame();
+    final hunter = enemyManager!.createAlertHunter(alertTier: tier);
+    add(hunter);
+    debugPrint('AbstractOutdoorScene: AlertHunter spawned at alert tier $tier');
   }
 }

@@ -4,6 +4,7 @@ import 'package:flame/components.dart';
 import '../../component/item/item.dart';
 import '../../component/item/item_bag.dart';
 import '../../main.dart';
+import '../../system/storage/game_runtime_state.dart';
 import '../window_manager.dart';
 import 'window_base.dart';
 
@@ -78,6 +79,16 @@ class _ShopWindowContentState extends State<ShopWindow>
       'price': 80,
     },
   ];
+
+  List<Map<String, dynamic>> _visibleShopItems(MyGame game) {
+    final outdoorId = game.gameRuntimeState.currentOutdoorSceneId;
+    if (GameRuntimeState.isTargetStarOutdoorId(outdoorId)) {
+      return _shopItems;
+    }
+    return _shopItems
+        .where((row) => row['name'] != '自動化キット')
+        .toList(growable: false);
+  }
 
   void _showShopItemDetailDialog(
     BuildContext dialogContext,
@@ -238,6 +249,15 @@ class _ShopWindowContentState extends State<ShopWindow>
 
   void _completePurchase(Map<String, dynamic> shopItem, int qty) {
     final factoryKey = resolveFactoryKey(shopItem);
+    if (factoryKey == '自動化キット' &&
+        !GameRuntimeState.isTargetStarOutdoorId(
+          widget.game.gameRuntimeState.currentOutdoorSceneId,
+        )) {
+      widget.windowManager.showDialog([
+        '自動化キットは、調査対象の星でのみ扱える。',
+      ]);
+      return;
+    }
     final int price = shopItem['price'] as int;
 
     final Item? prototype =
@@ -281,6 +301,7 @@ class _ShopWindowContentState extends State<ShopWindow>
     final isMobile = getIsMobile(widget.windowManager);
     final screenWidth = widget.windowManager.screenWidth;
     final screenHeight = widget.windowManager.screenHeight;
+    final visibleItems = _visibleShopItems(widget.game);
 
     return GameWindow(
       windowManager: widget.windowManager,
@@ -318,9 +339,9 @@ class _ShopWindowContentState extends State<ShopWindow>
           ),
           Expanded(
             child: ListView.builder(
-              itemCount: _shopItems.length,
+              itemCount: visibleItems.length,
               itemBuilder: (context, index) {
-                final shopItem = _shopItems[index];
+                final shopItem = visibleItems[index];
                 final title = resolveDisplayTitle(shopItem);
                 final itemPrice = shopItem['price'] as int;
                 final itemSpritePath = shopItem['spritePath'] as String;

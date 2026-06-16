@@ -91,6 +91,12 @@ class BackgroundData {
   /// 非 null のとき burst 中に [BackgroundSheetLightSync] で流れ星ライトを同期する。
   final BackgroundSheetLightSync? sheetLightSync;
 
+  /// true のとき [srcSize.x] 単位でステージ横幅を水平タイルループする。
+  final bool loopHorizontal;
+
+  /// [loopHorizontal] 時、ステージ外側へ追加する余白スロット数（片側）。
+  final int loopMarginSlots;
+
   /// 描画・配置は [srcSize] をそのままワールド単位（px）として使う。
   const BackgroundData({
     required this.imagePath,
@@ -102,6 +108,8 @@ class BackgroundData {
     this.renderPriorityOverride,
     this.sheetAnimation,
     this.sheetLightSync,
+    this.loopHorizontal = false,
+    this.loopMarginSlots = 1,
   });
 
   int resolveRenderPriority() =>
@@ -117,6 +125,7 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
       imagePath: 'outdoor_0.png',
       depthMeters: 500,
       lighting: LightingParticipation.none,
+      loopHorizontal: true,
       srcPosition: Vector2(0, 0),
       srcSize: Vector2(1983, 650),
       sheetAnimation: BackgroundSheetAnimation(
@@ -130,19 +139,27 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
   ],
   'outdoor_1': [
     BackgroundData(
-      imagePath: 'outdoor_1.png',
-      depthMeters: WorldScale.farMountainDepthMeters,
-      lighting: LightingParticipation.none,
-      srcPosition: Vector2(0, 0),
-      srcSize: Vector2(1599, 299),
-    ),
-    BackgroundData(
       imagePath: 'CITY_MEGA.png',
       depthMeters: WorldScale.nearForegroundDepthMeters,
       lighting: LightingParticipation.none,
       srcPosition: Vector2(64, 1905),
       srcSize: Vector2(1599, 110),
-      groundOffset: 40.0,
+    ),
+    BackgroundData(
+      imagePath: 'outdoor_1.png',
+      depthMeters: 500,
+      lighting: LightingParticipation.none,
+      loopHorizontal: true,
+      srcPosition: Vector2(0, 0),
+      srcSize: Vector2(1599, 299),
+    ),
+    BackgroundData(
+      imagePath: 'superdistantview_cumulonimbus.png',
+      depthMeters: 800,
+      lighting: LightingParticipation.none,
+      loopHorizontal: true,
+      srcPosition: Vector2(0, 0),
+      srcSize: Vector2(1776, 592),
     ),
   ],
   'outdoor_2': [
@@ -150,8 +167,25 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
       imagePath: 'outdoor_2.png',
       depthMeters: 100,
       lighting: LightingParticipation.none,
+      loopHorizontal: true,
       srcPosition: Vector2(0, 0),
       srcSize: Vector2(1599, 299),
+    ),
+    BackgroundData(
+      imagePath: 'distantview_buildings.png',
+      depthMeters: 500,
+      lighting: LightingParticipation.none,
+      loopHorizontal: true,
+      srcPosition: Vector2(0, 0),
+      srcSize: Vector2(2048, 290),
+    ),
+    BackgroundData(
+      imagePath: 'superdistantview_cumulonimbus.png',
+      depthMeters: 800,
+      lighting: LightingParticipation.none,
+      loopHorizontal: true,
+      srcPosition: Vector2(0, 0),
+      srcSize: Vector2(1776, 592),
     ),
   ],
   'outdoor_3': [
@@ -159,8 +193,17 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
       imagePath: 'outdoor_3.png',
       depthMeters: 100,
       lighting: LightingParticipation.none,
+      loopHorizontal: true,
       srcPosition: Vector2(0, 0),
       srcSize: Vector2(1599, 299),
+    ),
+    BackgroundData(
+      imagePath: 'superdistantview_cumulonimbus.png',
+      depthMeters: 800,
+      lighting: LightingParticipation.none,
+      loopHorizontal: true,
+      srcPosition: Vector2(0, 0),
+      srcSize: Vector2(1776, 592),
     ),
   ],
   'outdoor_4': [
@@ -168,8 +211,17 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
       imagePath: 'outdoor_4.png',
       depthMeters: 100,
       lighting: LightingParticipation.none,
+      loopHorizontal: true,
       srcPosition: Vector2(0, 0),
       srcSize: Vector2(1599, 299),
+    ),
+    BackgroundData(
+      imagePath: 'superdistantview_cumulonimbus.png',
+      depthMeters: 800,
+      lighting: LightingParticipation.none,
+      loopHorizontal: true,
+      srcPosition: Vector2(0, 0),
+      srcSize: Vector2(1776, 592),
     ),
   ],
   'outdoor_philosophy': [
@@ -177,6 +229,7 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
       imagePath: 'outdoor_philosophy.png',
       depthMeters: 100,
       lighting: LightingParticipation.none,
+      loopHorizontal: true,
       srcPosition: Vector2(0, 0),
       srcSize: Vector2(1599, 299),
     ),
@@ -186,6 +239,7 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
       imagePath: 'outdoor_despair.png',
       depthMeters: 100,
       lighting: LightingParticipation.none,
+      loopHorizontal: true,
       srcPosition: Vector2(0, 0),
       srcSize: Vector2(1599, 299),
     ),
@@ -195,8 +249,17 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
       imagePath: 'outdoor_true.png',
       depthMeters: 100,
       lighting: LightingParticipation.none,
+      loopHorizontal: true,
       srcPosition: Vector2(0, 0),
       srcSize: Vector2(1599, 299),
+    ),
+    BackgroundData(
+      imagePath: 'superdistantview_cumulonimbus.png',
+      depthMeters: 800,
+      lighting: LightingParticipation.none,
+      loopHorizontal: true,
+      srcPosition: Vector2(0, 0),
+      srcSize: Vector2(1776, 592),
     ),
   ],
   'shop_interior': [
@@ -204,7 +267,6 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
       imagePath: 'CITY_MEGA.png',
       depthMeters: WorldScale.playfieldDepthMeters,
       lighting: LightingParticipation.none,
-      renderPriorityOverride: 100,
       srcPosition: Vector2(1504, 624),
       srcSize: Vector2(368, 66),
       groundOffset: 0,
@@ -215,7 +277,6 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
       imagePath: 'CITY_MEGA.png',
       depthMeters: WorldScale.playfieldDepthMeters,
       lighting: LightingParticipation.none,
-      renderPriorityOverride: 100,
       srcPosition: Vector2(64, 720),
       srcSize: Vector2(224, 66),
       groundOffset: 0,
@@ -226,7 +287,6 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
       imagePath: 'CITY_MEGA.png',
       depthMeters: WorldScale.playfieldDepthMeters,
       lighting: LightingParticipation.none,
-      renderPriorityOverride: 100,
       srcPosition: Vector2(336, 719),
       srcSize: Vector2(352, 69),
       groundOffset: 0,
@@ -237,7 +297,6 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
       imagePath: 'CITY_MEGA.png',
       depthMeters: WorldScale.playfieldDepthMeters,
       lighting: LightingParticipation.none,
-      renderPriorityOverride: 100,
       srcPosition: Vector2(992, 720),
       srcSize: Vector2(448, 69),
       groundOffset: 0,
@@ -248,7 +307,6 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
       imagePath: 'CITY_MEGA.png',
       depthMeters: WorldScale.playfieldDepthMeters,
       lighting: LightingParticipation.none,
-      renderPriorityOverride: 100,
       srcPosition: Vector2(736, 736),
       srcSize: Vector2(208, 69),
       groundOffset: 0,
@@ -257,7 +315,6 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
       imagePath: 'CITY_MEGA.png',
       depthMeters: WorldScale.playfieldDepthMeters,
       lighting: LightingParticipation.none,
-      renderPriorityOverride: 100,
       srcPosition: Vector2(736, 656),
       srcSize: Vector2(208, 69),
       groundOffset: 0,
@@ -268,7 +325,6 @@ final Map<String, List<BackgroundData>> backgroundDataMap = {
       imagePath: 'CITY_MEGA.png',
       depthMeters: WorldScale.playfieldDepthMeters,
       lighting: LightingParticipation.none,
-      renderPriorityOverride: 100,
       srcPosition: Vector2(1504, 816),
       srcSize: Vector2(320, 66),
       groundOffset: 0,

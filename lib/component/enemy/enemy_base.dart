@@ -3,6 +3,8 @@ import 'package:flame/collisions.dart';
 import 'package:flame/components.dart';
 import '../../main.dart';
 import '../../UI/window_manager.dart';
+import '../../system/rogue_weapon_profile.dart';
+import '../../system/stage_combat_profile.dart';
 import '../player.dart';
 
 import 'package:flutter/material.dart';
@@ -38,6 +40,12 @@ abstract class EnemyBase extends SpriteAnimationComponent
   double get attackStress;
   final double mass;
 
+  /// 戦闘ティア HP に掛ける倍率（中ボス等）。
+  double get maxHealthMultiplier => 1.0;
+
+  /// ティア0でも HP バーを常時表示する（中ボス等）。
+  bool get alwaysShowHealthBar => false;
+
   // 体力システム
   double maxHealth = 30.0;
   late double currentHealth;
@@ -46,8 +54,7 @@ abstract class EnemyBase extends SpriteAnimationComponent
   RectangleComponent? _healthBarBg;
   RectangleComponent? _healthBarFill;
 
-  // 星の警戒度による見た目変化の最終適用値（毎フレーム更新を避けるためキャッシュ）
-  double _lastAppliedAlertLevel = -1.0;
+  int _lastAppliedCombatTier = -1;
 
   EnemyBase({
     required super.position,
@@ -89,33 +96,38 @@ abstract class EnemyBase extends SpriteAnimationComponent
         Color.fromARGB(255, 255, (g * 255).toInt(), 0);
   }
 
-  /// starAlertLevel に応じた外見変化を適用
-  void _applyAlertLevelVisuals() {
-    final alertLevel = game.gameRuntimeState.starAlertLevel;
-    if ((alertLevel - _lastAppliedAlertLevel).abs() < 0.1) return;
-    _lastAppliedAlertLevel = alertLevel;
+  Color _tintForCombatTier(int tier) {
+    return switch (tier) {
+      3 => const Color(0xFF4a003a),
+      2 => const Color(0xFF2a0040),
+      1 => Colors.grey.shade700,
+      _ => Colors.grey.shade600,
+    };
+  }
 
-    Color tint;
-    if (alertLevel >= 6.0) {
-      tint = const Color(0xFF4a003a);
-      maxHealth = 30.0;
-    } else if (alertLevel >= 4.0) {
-      final t = ((alertLevel - 4.0) / 2.0).clamp(0.0, 1.0);
-      tint = Color.lerp(const Color(0xFF2a0040), const Color(0xFF4a003a), t)!;
-      maxHealth = 20.0;
-    } else if (alertLevel >= 2.0) {
-      final t = ((alertLevel - 2.0) / 2.0).clamp(0.0, 1.0);
-      tint = Color.lerp(Colors.grey.shade700, const Color(0xFF2a0040), t)!;
-      maxHealth = 15.0;
-    } else {
-      tint = Colors.grey.shade700;
-      maxHealth = 10.0;
+  /// テレグラフ演出後など、ティア色を再適用する。
+  void refreshCombatTierVisuals() {
+    _lastAppliedCombatTier = -1;
+    _applyCombatTierVisuals();
+  }
+
+  /// ステージ上限込みの戦闘ティアで外見・HP を適用。
+  void _applyCombatTierVisuals() {
+    final tier = game.gameRuntimeState.effectiveEnemyCombatTier;
+    if (tier == _lastAppliedCombatTier) return;
+    _lastAppliedCombatTier = tier;
+
+    maxHealth =
+        StageCombatProfile.maxHealthForTier(tier) * maxHealthMultiplier;
+    if (currentHealth > maxHealth) {
+      currentHealth = maxHealth;
     }
 
+    final tint = _tintForCombatTier(tier);
     paint.colorFilter =
-        ColorFilter.mode(tint.withOpacity(0.4), BlendMode.srcATop);
+        ColorFilter.mode(tint.withValues(alpha: 0.4), BlendMode.srcATop);
 
-    final showBar = alertLevel >= 2.0;
+    final showBar = alwaysShowHealthBar || tier >= 1;
     _healthBarBg?.opacity = showBar ? 1.0 : 0.0;
     _healthBarFill?.opacity = showBar ? 1.0 : 0.0;
     if (showBar) _updateHealthBar();
@@ -141,20 +153,7 @@ abstract class EnemyBase extends SpriteAnimationComponent
 
     updatePhysics(dt);
 
-    _applyAlertLevelVisuals();
-
-    // Stage 2 でプレイヤーが近くにいる場合にマーカーを表示
-    /* if (game.gameRuntimeState.currentOutdoorSceneId == 'outdoor_2') {
-      final player = game.player;
-      if (!player.isHiding) {
-        final distance = (player.absolutePosition - absolutePosition).length;
-        showTargetMarker(distance < 150);
-      } else {
-        showTargetMarker(false);
-      }
-    } else {
-      showTargetMarker(false);
-    } */
+    _applyCombatTierVisuals();
   }
 
   @override
@@ -174,7 +173,7 @@ abstract class EnemyBase extends SpriteAnimationComponent
     _healthBarBg = RectangleComponent(
       position: Vector2(barX, barY),
       size: Vector2(barWidth, barHeight),
-      paint: Paint()..color = Colors.black.withOpacity(0.6),
+      paint: Paint()..color = Colors.black.withValues(alpha: 0.6),
     );
     _healthBarFill = RectangleComponent(
       position: Vector2(barX, barY),
@@ -186,6 +185,8 @@ abstract class EnemyBase extends SpriteAnimationComponent
     add(_healthBarFill!);
     _healthBarBg!.opacity = 0;
     _healthBarFill!.opacity = 0;
+
+    _applyCombatTierVisuals();
   }
 
   @override
@@ -232,6 +233,12 @@ abstract class EnemyBase extends SpriteAnimationComponent
     }
 
     final deathPos = ResiduePickup.worldEmitOrigin(this);
+    final weapon = RogueWeaponProfile.forEquipped(
+      game.player.itemBag.equippedItemName,
+    );
+    final particleMul = weapon.particleCargoValueMultiplier;
+    final lifeCount = 2 + weapon.bonusParticlesOnKill;
+    final inorganicCount = 1 + (weapon.bonusParticlesOnKill > 1 ? 1 : 0);
 
     game.gameRuntimeState.registerLifetimeEnemyKill();
 
@@ -239,14 +246,30 @@ abstract class EnemyBase extends SpriteAnimationComponent
 
     game.gameRuntimeState.destructionPointsInStage += 1;
 
-    ResiduePickup.spawnBurst(game, deathPos, ResidueType.life,
-        count: 2, valueEach: 1);
-    ResiduePickup.spawnBurst(game, deathPos, ResidueType.inorganic,
-        count: 1, valueEach: 1);
+    for (var i = 0; i < lifeCount; i++) {
+      ResiduePickup.spawnSingle(
+        game,
+        deathPos,
+        ResidueType.life,
+        (1 * particleMul).ceil().clamp(1, 99),
+      );
+    }
+    for (var i = 0; i < inorganicCount; i++) {
+      ResiduePickup.spawnSingle(
+        game,
+        deathPos,
+        ResidueType.inorganic,
+        (1 * particleMul).ceil().clamp(1, 99),
+      );
+    }
 
     if (random.nextDouble() < 0.15) {
-      ResiduePickup.spawnBurst(game, deathPos, ResidueType.history,
-          count: 1, valueEach: 1);
+      ResiduePickup.spawnSingle(
+        game,
+        deathPos,
+        ResidueType.history,
+        (1 * particleMul).ceil().clamp(1, 99),
+      );
 
       if (game.gameRuntimeState.unlockedDiaryEntries.isNotEmpty) {
         Future.delayed(const Duration(milliseconds: 300), () {

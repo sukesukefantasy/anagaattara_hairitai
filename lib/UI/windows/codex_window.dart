@@ -1,6 +1,8 @@
 ﻿import 'package:flutter/material.dart';
 import '../../main.dart';
 import '../../system/codex/codex_snapshot.dart';
+import '../../system/automation_tool_kind.dart';
+import '../../system/automation_tool_state.dart';
 import '../../system/storage/game_runtime_state.dart';
 import '../window_manager.dart';
 
@@ -158,18 +160,28 @@ class CodexWindow extends StatelessWidget {
       padding: const EdgeInsets.only(top: 8),
       children: [
         ListTile(
-          title: const Text('キット段階', style: TextStyle(color: Colors.white)),
+          title: const Text('3種装置', style: TextStyle(color: Colors.white)),
+          subtitle: Text(
+            '収穫:${s.hasToolPlaced(AutomationToolKind.harvest) ? "設置" : "—"} '
+            '整備:${s.hasToolPlaced(AutomationToolKind.upkeep) ? "設置" : "—"} '
+            '防衛:${s.hasToolPlaced(AutomationToolKind.ward) ? "設置" : "—"}',
+            style: const TextStyle(color: Colors.white70),
+          ),
+        ),
+        ListTile(
+          title: const Text('キット段階（整備）', style: TextStyle(color: Colors.white)),
           subtitle: Text(
             '${s.automationKitStage}（0=未設置 … 4=C-2）',
             style: const TextStyle(color: Colors.white70),
           ),
         ),
         ListTile(
-          title:
-              const Text('ショップ Tier', style: TextStyle(color: Colors.white)),
+          title: const Text('ショップ段階', style: TextStyle(color: Colors.white)),
           subtitle: Text(
-            'A${s.automationShopTierA} B${s.automationShopTierB} '
-            'C${s.automationShopTierC} D${s.automationShopTierD}',
+            '収穫${s.automationShopGradeHarvest} '
+            '整備${s.automationShopGradeUpkeep} '
+            '防衛${s.automationShopGradeWard} '
+            '共通${s.automationShopGradeCommon}',
             style: const TextStyle(color: Colors.white70),
           ),
         ),
@@ -178,6 +190,24 @@ class CodexWindow extends StatelessWidget {
           subtitle: Text(
             '稼働 ${s.automationKitTotalRuntime.toStringAsFixed(0)} / '
             '記録オプス ${s.codex.automationDeviceOps} / C-2:${s.automationContractC2}',
+            style: const TextStyle(color: Colors.white70),
+          ),
+        ),
+        ListTile(
+          title: const Text('母星人間性', style: TextStyle(color: Colors.white)),
+          subtitle: Text(
+            '${s.homePlanetHumanity.toStringAsFixed(0)} / 100 '
+            '（効率 ${s.homePlanetEfficiency.toStringAsFixed(0)}・'
+            '現実 ${s.homePlanetRealism.toStringAsFixed(0)}）',
+            style: const TextStyle(color: Colors.white70),
+          ),
+        ),
+        ListTile(
+          title: const Text('警戒狩人', style: TextStyle(color: Colors.white)),
+          subtitle: Text(
+            s.hunterToolsGranted.isEmpty
+                ? '未撃破 — 警戒↑で出現'
+                : '付与: ${s.hunterToolsGranted.join(", ")}',
             style: const TextStyle(color: Colors.white70),
           ),
         ),

@@ -8,6 +8,7 @@ import '../component/game_stage/gamestage_component.dart';
 import '../component/common/hitboxes/interact_hitbox.dart';
 import 'dart:ui' show lerpDouble;
 
+import '../game/world_scale.dart';
 import '../system/storage/game_runtime_state.dart';
 
 /// プロローグ [spawnGhostEchoes]（v8.3 マクロID）
@@ -20,6 +21,9 @@ const Map<String, Color> _prologueGhostEchoPalette = {
 };
 
 class PrologueScene extends AbstractOutdoorScene {
+  Npc? _proximityNpc;
+  bool _hasShownProximityTweet = false;
+
   PrologueScene({required super.sceneId, super.initialPlayerPosition}) {
     gravityMultiplier = 0.33; // 重力を3分の1に設定
   }
@@ -32,17 +36,21 @@ class PrologueScene extends AbstractOutdoorScene {
       Vector2(-50, game.initialGameCanvasSize.y - game.player.size.y / 2),
     );
 
-    // デバッグ用: 棒を最初から所持
-    final stick = ItemFactory.createItemByName('棒', Vector2.zero());
-    if (stick != null) game.player.itemBag.addItem(stick);
-    final earth = ItemFactory.createItemByName('岩盤充填剤', Vector2.zero());
-    if (earth != null) game.player.itemBag.addItem(earth);
+    // デバッグ用: 最初から3つずつ所持
     for (var i = 0; i < 3; i++) {
+      final rock = ItemFactory.createItemByName('石', Vector2.zero());
+      if (rock != null) game.player.itemBag.addItem(rock);
+      final stick = ItemFactory.createItemByName('棒', Vector2.zero());
+      if (stick != null) game.player.itemBag.addItem(stick);
+      final earth = ItemFactory.createItemByName('岩盤充填剤', Vector2.zero());
+      if (earth != null) game.player.itemBag.addItem(earth);
       final floor = ItemFactory.createItemByName('床板', Vector2.zero());
       if (floor != null) game.player.itemBag.addItem(floor);
+      final lantern = ItemFactory.createItemByName('ランタン', Vector2.zero());
+      if (lantern != null) game.player.itemBag.addItem(lantern);
+      final gasolineCan = ItemFactory.createItemByName('ガソリン缶', Vector2.zero());
+      if (gasolineCan != null) game.player.itemBag.addItem(gasolineCan);
     }
-    final lantern = ItemFactory.createItemByName('ランタン', Vector2.zero());
-    if (lantern != null) game.player.itemBag.addItem(lantern);
   }
 
   @override
@@ -102,6 +110,21 @@ class PrologueScene extends AbstractOutdoorScene {
   void update(double dt) {
     super.update(dt);
 
+    // 接近検知ツイート
+    if (!_hasShownProximityTweet && _proximityNpc != null) {
+      final dist =
+          (game.player.absolutePosition - _proximityNpc!.absolutePosition)
+              .length;
+      if (dist < 250) {
+        _hasShownProximityTweet = true;
+        game.windowManager.showTweet(
+          "おい、こっちだ。準備はいいか？",
+          target: _proximityNpc,
+          clampToScreen: true,
+        );
+      }
+    }
+
     // プレイヤーのX座標に基づいて宇宙への遷移率 (0.0 - 1.0) を計算
     // 開始地点 (-50) から ロケット/駅 (-3000) へ向かうにつれて上昇
     final playerX = game.player.position.x;
@@ -148,10 +171,10 @@ class PrologueScene extends AbstractOutdoorScene {
     // 2. 背景の不透明度を調整
     final backgrounds = children.whereType<GameStageComponent>();
     for (final bg in backgrounds) {
-      if (bg.priority == 2) {
+      if (bg.depthMeters < WorldScale.skyDepthMeters) {
         // 母星の背景: 1.0 -> 0.0
         bg.opacity = 1.0 - transitionFactor;
-      } else if (bg.priority == 1) {
+      } else {
         // 宇宙の背景: 0.0 -> 1.0
         bg.opacity = transitionFactor;
       }
@@ -192,33 +215,47 @@ class PrologueScene extends AbstractOutdoorScene {
 
   void _spawnPrologueNpcs() {
     // 1. 子供のNPC
-    add(
-      Npc(
-        name: "子供",
-        talkMessages: ["おじさん、いつ帰ってくるのかなぁ……。", "最近、みんな色んなことをすぐに忘れちゃうんだ。怖いよ。"],
-        giftResponse: "わぁ、ありがとう！ これ、忘れないようにしなきゃ。",
-        uniqueId: "prologue_child",
-        position: Vector2(-350, game.initialGameCanvasSize.y - 32),
-        srcPosition: Vector2(392, 238), // TODO: 子供用スプライト
-        srcSize: Vector2(17, 18),
-      )..priority = 40,
+    late final Npc child;
+    child = Npc(
+      name: "子供",
+      talkMessages: ["おじさん、いつ帰ってくるのかなぁ……。", "最近、みんな色んなことをすぐに忘れちゃうんだ。怖いよ。"],
+      giftResponse: "わぁ、ありがとう！ これ、忘れないようにしなきゃ。",
+      uniqueId: "prologue_child",
+      position: Vector2(-350, game.initialGameCanvasSize.y - 32),
+      srcPosition: Vector2(392, 238), // TODO: 子供用スプライト
+      srcSize: Vector2(17, 18),
+      onTalkOverride: () {
+        game.windowManager.showTweet(
+          "おじさん、いつ帰ってくるのかなぁ……。",
+          target: child,
+          clampToScreen: true,
+        );
+      },
     );
+    add(child..priority = 40);
 
     // 2. 大人のNPC
-    add(
-      Npc(
-        name: "住人",
-        talkMessages: [
-          "あいつは優秀すぎた。だからあの星に『歴史』を気に入られてしまったんだ。",
+    late final Npc adult;
+    adult = Npc(
+      name: "住人",
+      talkMessages: [
+        "あいつは優秀すぎた。だからあの星に『歴史』を気に入られてしまったんだ。",
+        "母星も最近はおかしい。便利になればなるほど、みんな大事なことを手放していく。",
+      ],
+      giftResponse: "……助かる。これは、何に使うものだったかな。",
+      uniqueId: "prologue_adult",
+      position: Vector2(-850, game.initialGameCanvasSize.y - 32),
+      srcPosition: Vector2(104, 108), // TODO: 住人用スプライト
+      srcSize: Vector2(16, 20),
+      onTalkOverride: () {
+        game.windowManager.showTweet(
           "母星も最近はおかしい。便利になればなるほど、みんな大事なことを手放していく。",
-        ],
-        giftResponse: "……助かる。これは、何に使うものだったかな。",
-        uniqueId: "prologue_adult",
-        position: Vector2(-850, game.initialGameCanvasSize.y - 32),
-        srcPosition: Vector2(104, 108), // TODO: 住人用スプライト
-        srcSize: Vector2(16, 20),
-      )..priority = 40,
+          target: adult,
+          clampToScreen: true,
+        );
+      },
     );
+    add(adult..priority = 40);
 
     // 3. 若返ったおじさん (Young Uncle)
     late final Npc youngUncle;
@@ -239,21 +276,29 @@ class PrologueScene extends AbstractOutdoorScene {
     add(youngUncle..priority = 40);
 
     // 4. ベテラン調査員
-    add(
-      Npc(
-        name: "ベテラン調査員",
-        talkMessages: [
-          "準備はいいか？ あの星は、ただの無人惑星じゃない。",
-          "人々の歴史を喰らい、模倣し、家畜化する……巨大な捕食者だ。",
-          "お前の父親も、その『文脈』の濁流に飲まれた。……行くぞ、ロケットへ。",
-        ],
-        giftResponse: "……今はそんな場合じゃない。ロケットへ急げ。",
-        uniqueId: "prologue_veteran",
-        position: Vector2(-2200, game.initialGameCanvasSize.y - 32),
-        srcPosition: Vector2(294, 70), // TODO: 調査員用スプライト
-        srcSize: Vector2(20, 26),
-      )..priority = 40,
+    late final Npc veteran;
+    veteran = Npc(
+      name: "ベテラン調査員",
+      talkMessages: [
+        "準備はいいか？ あの星は、ただの無人惑星じゃない。",
+        "人々の歴史を喰らい、模倣し、家畜化する……巨大な捕食者だ。",
+        "お前の父親も、その『文脈』の濁流に飲まれた。……行くぞ、ロケットへ。",
+      ],
+      giftResponse: "……今はそんな場合じゃない。ロケットへ急げ。",
+      uniqueId: "prologue_veteran",
+      position: Vector2(-2200, game.initialGameCanvasSize.y - 32),
+      srcPosition: Vector2(294, 70), // TODO: 調査員用スプライト
+      srcSize: Vector2(20, 26),
+      onTalkOverride: () {
+        game.windowManager.showTweet(
+          "準備はいいか？ 行くぞ、ロケットへ。",
+          target: veteran,
+          clampToScreen: true,
+        );
+      },
     );
+    add(veteran..priority = 40);
+    _proximityNpc = veteran;
   }
 
   void _handleYoungUncleTalk(Npc npc) {

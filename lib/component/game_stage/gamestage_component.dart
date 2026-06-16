@@ -1,5 +1,3 @@
-﻿import 'dart:math' as math;
-
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 import '../depth_zoom_visual.dart';
@@ -8,7 +6,6 @@ import '../../game/world_scale.dart';
 import '../../main.dart';
 import '../../scene/abstract_outdoor_scene.dart';
 import 'building/building_data.dart';
-import 'lighting/camera_viewport_coords.dart';
 import 'lighting/light_receiver.dart';
 import 'lighting/lighting_participation.dart';
 import 'lighting/lighting_participant.dart';
@@ -31,8 +28,11 @@ class GameStageComponent extends RectangleComponent
   final TransientShootingStarLight shootingStarLight = TransientShootingStarLight();
   final bool isScrollForward;
 
-  /// true の層（遠景・中景など距離別の複数層）は [loopPeriodWorldWidth] 周期でタイルループする。
+  /// コンストラクタでの明示上書き（未指定時は [BackgroundData.loopHorizontal]）。
   final bool loop;
+
+  /// 水平タイルループを使うか（[loop] または [BackgroundData.loopHorizontal]）。
+  bool get usesHorizontalLoop => loop || data.loopHorizontal;
 
   double get depthMeters => data.depthMeters;
 
@@ -57,12 +57,6 @@ class GameStageComponent extends RectangleComponent
   double get groundLineWorldY => position.y + size.y;
 
   double get _tileWidth => data.srcSize.x;
-
-  /// ループ周期（プレイエリア横幅 = カメラ可動域の基準）。
-  static double get loopPeriodWorldWidth => MyGame.worldWidth;
-
-  static int tilesPerPeriod(double tileW) =>
-      (loopPeriodWorldWidth / tileW).ceil();
 
   final overlayPaint =
       Paint()
@@ -102,6 +96,7 @@ class GameStageComponent extends RectangleComponent
         srcSize: data.srcSize,
       );
     }
+    priority = data.resolveRenderPriority();
   }
 
   @override
@@ -159,15 +154,22 @@ class GameStageComponent extends RectangleComponent
 
   void resetPositions(Vector2 gameSize) {
     position.y = (gameSize.y - size.y) + (data.groundOffset ?? 0);
-    if (loop) {
-      position.x = 0;
+    if (usesHorizontalLoop) {
+      final strip = WorldScale.loopStageStripBounds(
+        _tileWidth,
+        marginSlots: data.loopMarginSlots,
+      );
+      position.x = strip.left;
+      size.x = strip.width;
+      size.y = data.srcSize.y;
     } else if (isMounted) {
       game.cameraController.syncDepthZoom();
     }
   }
 
   bool get _useOutdoorPseudo3D =>
-      loop && game.sceneManager.currentScene is AbstractOutdoorScene;
+      usesHorizontalLoop &&
+      game.sceneManager.currentScene is AbstractOutdoorScene;
 
   Pseudo3DCamera get _outdoorPseudo3D => game.cameraController.outdoorPseudo3D;
 
@@ -195,19 +197,12 @@ class GameStageComponent extends RectangleComponent
   @override
   void render(Canvas canvas) {
     renderWithComponentLighting(canvas, (layerCanvas) {
-      if (_useOutdoorPseudo3D || (_isOutdoorScene && !loop)) {
+      if (_useOutdoorPseudo3D || (_isOutdoorScene && !usesHorizontalLoop)) {
         _paintWithOutdoorDepthZoom(layerCanvas, _renderBackground);
       } else {
         paintWithDepthZoom(layerCanvas, _renderBackground);
       }
     });
-  }
-
-  Rect _loopVisibleWorldRect(Pseudo3DCamera pseudo3D) {
-    final vis = CameraViewportCoords.loopStageVisibleWorldRect(
-      game.camera.visibleWorldRect,
-    );
-    return pseudo3D.expandedVisibleWorld(vis, depthMeters);
   }
 
   /// ライティングマスク生成用（[render] と同じ奥行きズーム＋タイル描画）。
@@ -232,18 +227,15 @@ class GameStageComponent extends RectangleComponent
       sprite: _backgroundSprite,
       tileW: _tileWidth,
       tileH: data.srcSize.y,
-      tileGridOriginWorldX:
-          WorldScale.loopBackgroundTileOriginWorldX(_tileWidth),
       componentWorldLeft: absoluteTopLeftPosition.x,
-      visibleWorld: _loopVisibleWorldRect(pseudo3D),
-      isScrollForward: isScrollForward,
+      marginSlots: data.loopMarginSlots,
       overridePaint: overridePaint,
     );
   }
 
   void _renderBackground(Canvas canvas) {
     final sunModulate = _sunModulatePaint();
-    if (loop) {
+    if (usesHorizontalLoop) {
       _paintLoopBackgroundUnscaled(canvas, sunModulate);
     } else if (_isOutdoorScene) {
       final pseudo3D = _outdoorPseudo3D;
@@ -309,7 +301,7 @@ class GameStageComponent extends RectangleComponent
       ..colorFilter = ColorFilter.mode(modulate, BlendMode.modulate);
   }
 
-  /// 全 [loop] 層共通: カメラ可視ワールド X のタイル index のみ描画（画面外は描かない）。
+  /// ステージ固定タイル列を描画（カリングはカメラ任せ）。
   static void paintLoopTiles({
     required Canvas canvas,
     required Pseudo3DCamera pseudo3D,
@@ -317,23 +309,29 @@ class GameStageComponent extends RectangleComponent
     required Sprite sprite,
     required double tileW,
     required double tileH,
-    required double tileGridOriginWorldX,
     required double componentWorldLeft,
-    required Rect visibleWorld,
-    required bool isScrollForward,
+    int marginSlots = 0,
     Paint? overridePaint,
   }) {
-    if (tileW < 1 || visibleWorld.isEmpty) {
+    if (tileW < 1) {
       return;
     }
 
-    final step = isScrollForward ? tileW : -tileW;
-    final i0 = ((visibleWorld.left - tileGridOriginWorldX) / tileW).floor() - 1;
-    final i1 = ((visibleWorld.right - tileGridOriginWorldX) / tileW).ceil() + 1;
-    for (var i = i0; i <= i1; i++) {
-      final trueWorldLeft = tileGridOriginWorldX + i * step;
-      final localX = pseudo3D.projectedWorldX(trueWorldLeft, depthMeters) -
-          componentWorldLeft;
+    final tileCount = WorldScale.loopStageTileCount(tileW);
+    if (tileCount <= 0) {
+      return;
+    }
+
+    final slots =
+        WorldScale.loopStagePaintSlotRange(tileCount, marginSlots: marginSlots);
+    final stripLeft = WorldScale.loopStageTileTrueLeft(slots.start, tileW);
+    // 各スロットを個別射影すると見かけ幅が tileW*s になりフル画像が重なる。
+    // ストリップ左端だけパララックスし、タイル間は常に tileW 刻みで並べる。
+    final baseProjectedX =
+        pseudo3D.projectedWorldX(stripLeft, depthMeters);
+    final tileSpan = slots.endInclusive - slots.start + 1;
+    for (var i = 0; i < tileSpan; i++) {
+      final localX = baseProjectedX + i * tileW - componentWorldLeft;
       sprite.render(
         canvas,
         position: Vector2(localX, 0),
@@ -343,36 +341,39 @@ class GameStageComponent extends RectangleComponent
     }
   }
 
-  /// ライティングマスク用: 射影後タイル群のローカル矩形。
+  /// ライティングマスク用: 射影後タイル群のローカル矩形（[paintLoopTiles] と同じスロット列）。
   static Rect projectedLoopLocalBounds({
     required Pseudo3DCamera pseudo3D,
     required double depthMeters,
-    required double tileGridOriginWorldX,
     required double tileW,
     required double tileH,
     required double componentWorldLeft,
-    required Rect visibleWorld,
-    required bool isScrollForward,
+    int marginSlots = 0,
+    double depthZoomFactor = 1.0,
   }) {
-    if (tileW < 1 || visibleWorld.isEmpty) {
+    if (tileW < 1) {
       return Rect.zero;
     }
 
-    final step = isScrollForward ? tileW : -tileW;
-    final i0 = ((visibleWorld.left - tileGridOriginWorldX) / tileW).floor() - 1;
-    final i1 = ((visibleWorld.right - tileGridOriginWorldX) / tileW).ceil() + 1;
-    var minX = double.infinity;
-    var maxX = double.negativeInfinity;
-    for (var i = i0; i <= i1; i++) {
-      final trueWorldLeft = tileGridOriginWorldX + i * step;
-      final localX = pseudo3D.projectedWorldX(trueWorldLeft, depthMeters) -
-          componentWorldLeft;
-      minX = math.min(minX, localX);
-      maxX = math.max(maxX, localX + tileW);
+    final tileCount = WorldScale.loopStageTileCount(tileW);
+    if (tileCount <= 0) {
+      return Rect.zero;
     }
+
+    final slots =
+        WorldScale.loopStagePaintSlotRange(tileCount, marginSlots: marginSlots);
+    final stripLeft = WorldScale.loopStageTileTrueLeft(slots.start, tileW);
+    final baseProjectedX =
+        pseudo3D.projectedWorldX(stripLeft, depthMeters);
+    final minX = baseProjectedX - componentWorldLeft;
+    final tileSpan = slots.endInclusive - slots.start + 1;
+    final maxX = minX + tileSpan * tileW;
+    final extraTop = tileH * ((depthZoomFactor - 1.0).clamp(0.0, 8.0));
+    final minY = -extraTop;
+    final maxY = tileH;
     if (!minX.isFinite || !maxX.isFinite) {
       return Rect.zero;
     }
-    return Rect.fromLTRB(minX, 0, maxX, tileH);
+    return Rect.fromLTRB(minX, minY, maxX, maxY);
   }
 }

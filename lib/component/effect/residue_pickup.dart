@@ -51,7 +51,11 @@ class ResiduePickup extends PositionComponent
   Vector2 _velocity = Vector2.zero();
   double _age = 0;
   static const double _defaultMaxAge = 18.0;
+  static const double snatchWindowSeconds = 0.4;
+  static const double snatchValueBonus = 1.12;
   static final Random _rng = Random();
+
+  bool _snatchApplied = false;
 
   /// 粉のオフセット（[onLoad] で決定）
   late List<Offset> _dustOffsets;
@@ -127,6 +131,11 @@ class ResiduePickup extends PositionComponent
         ),
         p,
       );
+    }
+    if (_age < snatchWindowSeconds) {
+      final flash = Paint()
+        ..color = Colors.white.withValues(alpha: 0.85 * fade.clamp(0.0, 1.0));
+      canvas.drawCircle(Offset.zero, 3.2, flash);
     }
     if (type == ResidueType.inorganic) {
       final edge = Paint()
@@ -228,19 +237,26 @@ class ResiduePickup extends PositionComponent
     removeFromParent();
   }
 
+  int _resolvedCargoValue() {
+    if (_snatchApplied || _age > snatchWindowSeconds) return cargoValue;
+    _snatchApplied = true;
+    return (cargoValue * snatchValueBonus).ceil().clamp(1, 99);
+  }
+
   void _collectByPlayer() {
     if (!isMounted) return;
     final s = game.gameRuntimeState;
     final origin = absolutePosition.clone();
+    final value = _resolvedCargoValue();
     switch (type) {
       case ResidueType.life:
-        s.accumulateCargo(life: cargoValue, pickupWorldPoint: origin);
+        s.accumulateCargo(life: value, pickupWorldPoint: origin);
         break;
       case ResidueType.history:
-        s.accumulateCargo(history: cargoValue, pickupWorldPoint: origin);
+        s.accumulateCargo(history: value, pickupWorldPoint: origin);
         break;
       case ResidueType.inorganic:
-        s.accumulateCargo(inorganic: cargoValue, pickupWorldPoint: origin);
+        s.accumulateCargo(inorganic: value, pickupWorldPoint: origin);
         break;
     }
     removeFromParent();

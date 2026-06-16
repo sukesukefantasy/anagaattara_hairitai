@@ -3,6 +3,7 @@ import 'package:flame/components.dart';
 import 'package:flame/effects.dart';
 import 'package:flutter/material.dart';
 import '../../../main.dart';
+import '../../../game/world_scale.dart';
 import '../../../system/storage/game_runtime_state.dart';
 import '../../item/item.dart';
 import '../../effect/residue_effect.dart';
@@ -37,6 +38,7 @@ class DestructibleObject extends SpriteComponent
   final DestructibleType type;
   final String itemName; // 破壊時にドロップするアイテム名
   final String uniqueId; // 永続化用のID
+  final double depthMeters;
   int health;
   bool isBroken = false;
 
@@ -44,12 +46,14 @@ class DestructibleObject extends SpriteComponent
     required this.type,
     required this.itemName,
     required this.uniqueId,
+    this.depthMeters = WorldScale.buildingDepthMeters,
     required super.position,
     required super.size,
     required Sprite sprite,
   }) : health = _getInitialHealth(type),
        super(sprite: sprite) {
     anchor = Anchor.bottomCenter;
+    priority = WorldScale.renderPriorityForDepth(depthMeters);
   }
 
   static int _getInitialHealth(DestructibleType type) {

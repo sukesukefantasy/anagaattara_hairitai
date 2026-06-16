@@ -31,6 +31,7 @@ import 'scene/game_scene.dart';
 import 'component/camera_component.dart';
 import 'game/world_scale.dart';
 import 'system/storage/game_runtime_state.dart';
+import 'system/farm_role_profile.dart';
 import 'system/dig_shape_editor_controller.dart';
 import 'system/placeable_placement_controller.dart';
 import 'system/stage_clear_cinematic_controller.dart';
@@ -134,7 +135,8 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
           // ウィンドウの表示状態に応じてゲームを一時停止・再開
           _windowManager!.addListener(() {
             if (game.isTrainTravelTransitioning) return;
-            if (_windowManager!.currentWindowType != GameWindowType.none) {
+            if (_windowManager!.currentWindowType != GameWindowType.none &&
+                _windowManager!.currentWindowType != GameWindowType.tweet) {
               game.pauseEngine();
             } else {
               game.resumeEngine();
@@ -712,6 +714,7 @@ class MyGame extends FlameGame
 
     audioManager.update(dt);
     timeService.update(dt);
+    gameRuntimeState.tickFarmInterventionWindow(dt);
 
     // ステージ内の時間ベースカーゴ射出・自動進行ロジック
     if (sceneManager.currentScene is AbstractOutdoorScene) {

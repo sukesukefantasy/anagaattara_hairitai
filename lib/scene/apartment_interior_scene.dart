@@ -10,6 +10,7 @@ import '../component/game_stage/building/building_definitions.dart'; // Building
 import '../component/common/hitboxes/interact_hitbox.dart';
 import '../component/game_stage/building/destructible_object.dart';
 import '../component/game_stage/building/bed.dart';
+import '../game/world_scale.dart';
 
 class ApartmentInteriorScene extends GameScene {
   final Building? _enteredBuilding; // nullableに変更
@@ -96,7 +97,9 @@ class ApartmentInteriorScene extends GameScene {
             ((667 - 624) * scale), // TODO: 背景画像内の相対位置を調整
       ),
       size: Vector2(32 * scale, 21 * scale), // TODO: 適切なサイズ
-    )..priority = 40;
+    )..priority = WorldScale.renderPriorityForDepth(
+      WorldScale.buildingDepthMeters,
+    );
     await add(counterComponent);
 
     counterComponent.add(InteractHitbox(
@@ -136,7 +139,9 @@ class ApartmentInteriorScene extends GameScene {
 
     // プレイヤーの初期位置を設定
     game.player.position = _initialPlayerPosition!;
-    game.player.priority = 10; // 室内シーンでのプレイヤーのpriorityを調整
+    game.player.priority = WorldScale.renderPriorityForDepth(
+      WorldScale.playfieldDepthMeters,
+    );
     game.player.unbeatable = false;
     // await add(game.player); // ApartmentInteriorSceneの子としてプレイヤーを追加
 

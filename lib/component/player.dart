@@ -24,6 +24,8 @@ import 'enemy/enemy_base.dart';
 import 'common/terrain/terrain_field.dart';
 import '../game_manager/audio_manager.dart'; // Add this line
 import '../system/storage/game_runtime_state.dart'; // GameRuntimeStateをインポート
+import '../system/rogue_weapon_profile.dart';
+import '../system/farm_role_profile.dart';
 import 'npc/npc.dart';
 import '../component/effect/hp_low_effect.dart';
 import '../component/effect/drowsiness_effect.dart';
@@ -33,6 +35,11 @@ import 'game_stage/lighting/lighting_participant.dart';
 import '../component/effect/residue_effect.dart'; // Add this line
 import 'effect/residue_pickup.dart';
 import 'player_cargo_terminal.dart';
+import 'game_stage/building/automation/automation_tool_base.dart';
+import 'effect/gasoline_pour_effect.dart';
+import 'effect/gasoline_stamp.dart';
+import '../system/automation_fuel.dart';
+import '../system/automation_fuel_rank.dart';
 
 enum PlayerState { idle, walking, jumping, digging, falling }
 
@@ -110,11 +117,10 @@ class Player extends SpriteAnimationComponent
 
     double base = speed;
 
-    // 周回ボーナス（キャリブレーション適用）
+    // 周回ボーナス（キャリブレーション適用）＋ローグ装備（警戒とは非連動）
     base *= (1.0 + (state.movementSpeedBonus - 1.0) * state.speedCalibrationScale);
-
-    // 警戒度による「引力体感」への影響：移動速度上昇（1.0 につきおよそ 10%）
-    base *= (1.0 + (state.starAlertLevel * 0.1));
+    base *= RogueWeaponProfile.forEquipped(itemBag.equippedItemName)
+        .movementSpeedMultiplier;
 
     return base;
   }
@@ -127,9 +133,6 @@ class Player extends SpriteAnimationComponent
     // 投擲強化ボーナスを重力軽減に転用（キャリブレーション適用）
     double philosophyEffect = (state.throwPowerBonus - 1.0) * state.powerCalibrationScale;
     base *= (1.0 - (philosophyEffect * 0.5));
-
-    // 警戒度による「引力体感」への影響：重力軽減（1.0 につきおよそ 15%）
-    base *= (1.0 - (state.starAlertLevel * 0.15)).clamp(0.1, 1.0);
 
     // シーンによる重力倍率の適用
     final currentScene = game.sceneManager.currentScene;
@@ -157,6 +160,8 @@ class Player extends SpriteAnimationComponent
 
     // キャリブレーションによる調整（移動ボーナスが溜まっている場合）
     range += (state.movementSpeedBonus - 1.0) * 200 * state.speedCalibrationScale;
+    range += RogueWeaponProfile.forEquipped(itemBag.equippedItemName)
+        .snatchRadiusBonus;
 
     return range;
   }
@@ -294,6 +299,13 @@ class Player extends SpriteAnimationComponent
   Item? carriedItem;
   final ValueNotifier<bool> isCarryingItemNotifier = ValueNotifier<bool>(false);
 
+  // ガソリン注入関連
+  bool isPouringGasoline = false;
+  GasolinePourEffect? _gasolinePourEffect;
+  double _gasolineStampTimer = 0;
+  static const double gasolineStampInterval = 0.5; // 0.5秒ごとに1スタンプ
+  AutomationToolBase? _nearestAutomationTool;
+
   // アニメーション用の変数
   late SpriteAnimation idleFrontAnimation; // 正面向き静止 (フレーム1-2)
   late SpriteAnimation idleLeftAnimation; // 左向き静止 (フレーム3)
@@ -375,9 +387,7 @@ class Player extends SpriteAnimationComponent
       ),
     );
 
-    // カーゴ端末をプレイヤーに追従させる
-    cargoTerminal = PlayerCargoTerminal();
-    add(cargoTerminal!);
+    // カーゴ端末は AbstractOutdoorScene で固定配置されるため、ここでは生成しない
 
     // 画像の読み込み
     final spriteSheet01 = await game.images.load('player01_anim.png');
@@ -706,6 +716,7 @@ class Player extends SpriteAnimationComponent
 
     // エフェクトの更新
     updateEffect();
+    _updateGasolineAction(dt);
 
     // ダメージエフェクトのタイマー更新
     if (_isTintedRed) {
@@ -1297,7 +1308,7 @@ class Player extends SpriteAnimationComponent
     // 1. 攻撃範囲の計算（ワールド座標系）
     final playerCenter = absolutePosition;
     final scale = effectiveMeleeSizeScale;
-    final meleeSize = Vector2(60 * scale, 60 * scale); 
+    final meleeSize = Vector2(60 * scale, 60 * scale);
 
     // 攻撃音
     double playbackRate = 1.1;
@@ -1384,7 +1395,10 @@ class Player extends SpriteAnimationComponent
           }
         }
 
-        final damage = powerOfPlayer * (itemAttackPower + itemMass * 2.0);
+        final weapon = RogueWeaponProfile.forEquipped(equippedItemName);
+        final damage = powerOfPlayer *
+            (itemAttackPower + itemMass * 2.0) *
+            weapon.meleeDamageMultiplier;
         final impulse = KnockbackConfig.meleeImpulse(
           itemMass: itemMass,
           enemyMass: enemy.mass,
@@ -1588,8 +1602,8 @@ class Player extends SpriteAnimationComponent
   // アイテム管理メソッド ==============================================================================
 
   // アイテムを収集するメソッド (Itemクラスから呼び出される)
-  void collectItem(Item item) {
-    itemBag.addItem(item);
+  void collectItem(Item item, {Vector2? worldPosition}) {
+    itemBag.addItem(item, flyStartWorld: worldPosition);
   }
 
   // アイテム運搬メソッド --------------------------------------------------------------------------------
@@ -1807,9 +1821,6 @@ class Player extends SpriteAnimationComponent
   // ToolItemを装備するメソッド (後で実装)
   void equipItem(String itemName) {
     debugPrint('ツール $itemName を装備しました。');
-    game.windowManager.showDialog(
-      ['$itemName を装備しました。'],
-    );
     itemBag.equipItem(itemName);
   }
 
@@ -1918,6 +1929,115 @@ class Player extends SpriteAnimationComponent
       return;
     }
     paint.colorFilter = _ambientColorFilter;
+  }
+
+  void _updateGasolineAction(double dt) {
+    final isGasolineEquipped = itemBag.equippedItemName == 'ガソリン缶';
+    if (!isGasolineEquipped) {
+      if (isPouringGasoline) stopPouringGasoline();
+      return;
+    }
+
+    // ガソリン残量が0かつアイテムを持っている場合、初期化（セーブデータ移行用）
+    if (gameRuntimeState.gasolineCanFuel <= 0 && itemBag.getItemCount('ガソリン缶') > 0) {
+      gameRuntimeState.gasolineCanFuel = GameRuntimeState.maxGasolineCanFuel;
+    }
+
+    // UIゲージの更新
+    GameUI.setEquippedItemUseButtonGauge(
+      gameRuntimeState.gasolineCanFuel / GameRuntimeState.maxGasolineCanFuel,
+    );
+
+    // 近くの装置を検索
+    _nearestAutomationTool = null;
+    double minDistance = 100.0;
+    for (final tool in game.world.children.whereType<AutomationToolBase>()) {
+      final dist = (tool.absolutePosition - absolutePosition).length;
+      if (dist < minDistance) {
+        minDistance = dist;
+        _nearestAutomationTool = tool;
+      }
+    }
+
+    // ボタン状態の更新
+    if (gameRuntimeState.gasolineCanFuel <= 0) {
+      GameUI.setEquippedItemUseButtonState(ActionButtonState.disabled);
+    } else if (_nearestAutomationTool != null) {
+      GameUI.setEquippedItemUseButtonState(ActionButtonState.notice);
+    } else {
+      GameUI.setEquippedItemUseButtonState(ActionButtonState.normal);
+    }
+
+    if (isPouringGasoline) {
+      if (gameRuntimeState.gasolineCanFuel <= 0) {
+        stopPouringGasoline();
+        return;
+      }
+
+      final facingRight = facingDirection.x >= 0;
+      Vector2 effectPos;
+      if (_nearestAutomationTool != null) {
+        effectPos = _nearestAutomationTool!.absolutePosition + Vector2(0, -_nearestAutomationTool!.size.y);
+        
+        // 装置への補充
+        final kind = _nearestAutomationTool!.kind;
+        final max = gameRuntimeState.maxFuelForKind(kind);
+        final current = gameRuntimeState.fuelForKind(kind);
+        if (current < max) {
+          final gain = 2.0 * dt; // 1秒間に2補充
+          gameRuntimeState.setFuelForKind(kind, (current + gain).clamp(0.0, max));
+          gameRuntimeState.setTankFuelRankForKind(kind, AutomationFuelRank.r0Crude);
+          gameRuntimeState.gasolineCanFuel -= gain;
+        }
+      } else {
+        effectPos = absolutePosition + Vector2(facingRight ? 30 : -30, -size.y * 0.8);
+        
+        // 地面への散布
+        gameRuntimeState.gasolineCanFuel -= 2.0 * dt;
+        _gasolineStampTimer += dt;
+        if (_gasolineStampTimer >= gasolineStampInterval) {
+          _gasolineStampTimer = 0;
+          game.world.add(GasolineStamp(
+            position: absolutePosition + Vector2(facingRight ? 40 : -40, size.y / 2),
+          ));
+        }
+      }
+
+      if (_gasolinePourEffect == null) {
+        _gasolinePourEffect = GasolinePourEffect(
+          facingRight: facingRight,
+          position: effectPos,
+        );
+        game.world.add(_gasolinePourEffect!);
+      } else {
+        _gasolinePourEffect!.updateState(
+          position: effectPos,
+          facingRight: facingRight,
+          isVisible: true,
+        );
+      }
+      
+      gameRuntimeState.notifyRuntimeChanged();
+    } else {
+      _gasolinePourEffect?.removeFromParent();
+      _gasolinePourEffect = null;
+    }
+  }
+
+  void startPouringGasoline() {
+    debugPrint('Player: startPouringGasoline called. Fuel: ${gameRuntimeState.gasolineCanFuel}');
+    if (itemBag.equippedItemName != 'ガソリン缶') return;
+    if (gameRuntimeState.gasolineCanFuel <= 0) return;
+    isPouringGasoline = true;
+    _gasolineStampTimer = 0;
+    audioManager.playEffectSound('actions/Pickup9.wav', volume: 0.3);
+  }
+
+  void stopPouringGasoline() {
+    debugPrint('Player: stopPouringGasoline called');
+    isPouringGasoline = false;
+    _gasolinePourEffect?.removeFromParent();
+    _gasolinePourEffect = null;
   }
 
   void updateEffect() {
@@ -2033,12 +2153,21 @@ class Player extends SpriteAnimationComponent
         for (final enemy in _collidingEnemies) {
           totalAttackStress += enemy.attackStress;
         }
-        updateStress(currentStress + totalAttackStress);
+        final guard = RogueWeaponProfile.forEquipped(itemBag.equippedItemName)
+            .guardStressReduction;
+        final ward = game.gameRuntimeState.farmContactStressMultiplier;
+        final stress = totalAttackStress *
+            (1.0 - guard.clamp(0.0, 0.75)) *
+            ward;
+        updateStress(currentStress + stress);
         if (totalAttackStress > 1e-6 && _contactResidueBurstCooldown <= 0) {
+          final alertBoost =
+              game.gameRuntimeState.starAlertHudTier >= 3 ? 0.35 : 0.0;
           ResiduePickup.spawnCaptureResistantBurst(
             game,
             ResiduePickup.worldEmitOrigin(this),
-            intensity: (totalAttackStress / 25).clamp(0.35, 2.5),
+            intensity: ((totalAttackStress / 25).clamp(0.35, 2.5)) *
+                (1.0 + alertBoost),
           );
           _contactResidueBurstCooldown =
               KnockbackConfig.contactResidueBurstCooldown;

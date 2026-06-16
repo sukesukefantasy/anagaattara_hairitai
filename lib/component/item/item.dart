@@ -72,6 +72,7 @@ abstract class Item extends SpriteComponent
   final ItemType type;
   final double attackPower; // 攻撃力（ツール等で使用）
   final double mass; // 質量（ダメージ計算や物理挙動で使用）
+  final bool autoUse; // 取得時に自動使用するかどうか
   ResourceType resourceType;
   bool isCollected = false;
 
@@ -109,6 +110,7 @@ abstract class Item extends SpriteComponent
     required this.type,
     this.attackPower = 0.0,
     this.mass = 1.0,
+    this.autoUse = false,
     this.resourceType = ResourceType.none,
     required super.position,
     required super.size,
@@ -212,11 +214,14 @@ abstract class Item extends SpriteComponent
     debugPrint('Using item: $name');
   }
 
+  /// 押しっぱなし操作に対応する使用動作（ツール等）
+  void Function(Player player, bool isPressed)? get onToggleUse => null;
+
   /// プレイヤーによる収集
   void collectItemByPlayer(Player player) {
     if (isCollected) return;
     isCollected = true;
-    player.collectItem(this);
+    player.collectItem(this, worldPosition: absoluteCenter);
     removeFromParent();
   }
 
@@ -240,6 +245,7 @@ class CurrencyItem extends Item {
     required super.size,
     required this.currencyValue,
     super.mass,
+    super.autoUse = true,
   }) : super(type: ItemType.currency);
 
   @override
@@ -340,6 +346,14 @@ class ToolItem extends Item {
   void onUse(Player player) {
     toolEffect?.call(player.game);
   }
+
+  @override
+  void Function(Player player, bool isPressed)? get onToggleUse {
+    final itemData = ItemFactory._itemDefinitions[name];
+    if (itemData == null) return null;
+    final effectName = itemData['toolEffect'] as String?;
+    return ToolEffectResolver.resolveToggle(effectName);
+  }
 }
 
 /// 設置アイテム
@@ -385,6 +399,7 @@ class CustomItem extends Item {
     required this.customEffect,
     this.customActionType = BagWindowActionType.consume,
     super.mass,
+    super.autoUse = false,
   }) : super(type: ItemType.custom);
 
   @override
@@ -492,14 +507,41 @@ class ItemFactory {
       'customEffect': 'updateMiningPoints5',
       'size': [25.0, 25.0],
       'mass': 1.5,
+      'autoUse': true,
     },
     '自動化キット': {
       'type': ItemType.placeable,
-      'description':
-          '設置して手を動かすと通貨と採掘ポイントが貯まる。強化すると自動化できる。',
-      'spritePath': 'energy_cube.png',
+      'description': '（旧）自動整備ツールへ移行。設置すると整備装置になる。',
+      'spritePath': 'valve.png',
       'value': 80,
-      'placeableEffect': 'automationKit',
+      'placeableEffect': 'automationUpkeep',
+      'size': [25.0, 25.0],
+      'mass': 2.0,
+    },
+    '自動収穫ツール': {
+      'type': ItemType.placeable,
+      'description': '設置すると残滓やドロップを吸引して内蔵ストレージに貯める。',
+      'spritePath': 'nozzle.png',
+      'value': 80,
+      'placeableEffect': 'automationHarvest',
+      'size': [25.0, 25.0],
+      'mass': 2.0,
+    },
+    '自動整備ツール': {
+      'type': ItemType.placeable,
+      'description': '設置すると燃料補給・自動サイクル・他装置の整備を行う。',
+      'spritePath': 'valve.png',
+      'value': 80,
+      'placeableEffect': 'automationUpkeep',
+      'size': [25.0, 25.0],
+      'mass': 2.0,
+    },
+    '自動防衛ツール': {
+      'type': ItemType.placeable,
+      'description': '設置すると近くの敵を自動攻撃する。',
+      'spritePath': 'igniter.png',
+      'value': 80,
+      'placeableEffect': 'automationWard',
       'size': [25.0, 25.0],
       'mass': 2.0,
     },
@@ -552,7 +594,7 @@ class ItemFactory {
     },
     'バルブ': {
       'type': ItemType.collection,
-      'description': 'ロケットの部品。古いバルブです。',
+      'description': 'ロケットの部品。古いバルブだ（設置用の自動化装置とは別物）。',
       'spritePath': 'valve.png',
       'value': 100,
       'size': [30.0, 30.0],
@@ -717,6 +759,93 @@ class ItemFactory {
       'attackPower': 7.0,
       'mass': 1.2,
       'size': [25.0, 25.0],
+    },
+    '広刃棒': {
+      'type': ItemType.tool,
+      'description': '幅のある打撃面。敵を倒すと残滓が多く散る。',
+      'spritePath': 'stick.png',
+      'value': 12,
+      'toolEffect': 'swing',
+      'attackPower': 6.0,
+      'mass': 2.4,
+      'size': [28.0, 25.0],
+    },
+    '簡易盾': {
+      'type': ItemType.tool,
+      'description': '石と棒で組んだ盾。接触ストレスを抑える。',
+      'spritePath': 'stone.png',
+      'value': 10,
+      'toolEffect': 'swing',
+      'attackPower': 3.0,
+      'mass': 3.5,
+      'size': [22.0, 26.0],
+    },
+    '軽装の足袋': {
+      'type': ItemType.tool,
+      'description': '足元を軽くする装備。装備中は移動が僅かに速い。',
+      'spritePath': 'stick.png',
+      'value': 8,
+      'toolEffect': 'swing',
+      'attackPower': 1.0,
+      'mass': 0.5,
+      'size': [18.0, 14.0],
+    },
+
+    'ガソリン缶': {
+      'type': ItemType.tool,
+      'description': '自動化装置に燃料を補充するための携行缶。装置の近くで使用する。',
+      'spritePath': 'gasoline_can.png',
+      'value': 100,
+      'toolEffect': 'gasolinePour',
+      'attackPower': 0.0,
+      'mass': 1.5,
+      'size': [22.0, 22.0],
+    },
+    // --- 装置燃料（残滓／意志の圧縮駆動熱）---
+    '粗製燃料': {
+      'type': ItemType.custom,
+      'description': '残滓を整備装置で圧縮した駆動熱。装置タンクへ入れて使う。',
+      'actionType': BagWindowActionType.none,
+      'spritePath': 'cargo.png',
+      'value': 0,
+      'size': [22.0, 22.0],
+      'mass': 0.4,
+    },
+    '生命馏分': {
+      'type': ItemType.custom,
+      'description': '生命残滓を偏らせて精製した液体燃料。防衛装置と相性が良い。',
+      'actionType': BagWindowActionType.none,
+      'spritePath': 'heart.png',
+      'value': 0,
+      'size': [22.0, 22.0],
+      'mass': 0.35,
+    },
+    '歴史胶质': {
+      'type': ItemType.custom,
+      'description': '歴史残滓を偏らせて精製した粘稠燃料。収穫装置と相性が良い。',
+      'actionType': BagWindowActionType.none,
+      'spritePath': 'warm_memory.png',
+      'value': 0,
+      'size': [22.0, 22.0],
+      'mass': 0.35,
+    },
+    '無機基油': {
+      'type': ItemType.custom,
+      'description': '無機残滓を偏らせて精製した基油。整備装置と相性が良い。',
+      'actionType': BagWindowActionType.none,
+      'spritePath': 'energy_cube.png',
+      'value': 0,
+      'size': [22.0, 22.0],
+      'mass': 0.45,
+    },
+    '意志凝固': {
+      'type': ItemType.custom,
+      'description': '意志力を整備装置で固めた高効率燃料。',
+      'actionType': BagWindowActionType.none,
+      'spritePath': 'initiator_icon.png',
+      'value': 0,
+      'size': [22.0, 22.0],
+      'mass': 0.5,
     },
 
     // 旧アイテム定義
@@ -1004,6 +1133,7 @@ class ItemFactory {
         final customActionType =
             (itemData['actionType'] as BagWindowActionType?) ??
             BagWindowActionType.consume;
+        final customAutoUse = itemData['autoUse'] as bool? ?? false;
         if (resolvedEffect == null) {
           debugPrint('CustomItem: unknown customEffect "$effectName" for $name');
           return null;
@@ -1018,6 +1148,7 @@ class ItemFactory {
           spritePath: spritePath,
           size: size,
           mass: mass,
+          autoUse: customAutoUse,
         );
       case ItemType.collection:
         return CollectionItem(

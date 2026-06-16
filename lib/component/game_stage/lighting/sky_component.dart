@@ -1,4 +1,4 @@
-﻿import 'package:flame/components.dart';
+import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 
 import '../../depth_zoom_visual.dart';
@@ -36,8 +36,7 @@ class SkyComponent extends RectangleComponent
       );
 
   @override
-  LightingParticipation get lightingParticipation =>
-      LightingParticipation.none;
+  LightingParticipation get lightingParticipation => LightingParticipation.none;
 
   @override
   double get worldDepthMeters => WorldScale.skyDepthMeters;
@@ -57,7 +56,7 @@ class SkyComponent extends RectangleComponent
     );
     size = Vector2(
       WorldScale.extendedWorldWidth,
-      game.initialGameCanvasSize.y * 2,
+      game.initialGameCanvasSize.y * 3,
     );
     anchor = Anchor.bottomLeft;
     scale.setValues(1, 1);
@@ -85,8 +84,16 @@ class SkyComponent extends RectangleComponent
           final trueLeft = position.x;
           final projLeft = pseudo3D.projectedWorldX(trueLeft, depth);
           final localLeft = projLeft - absoluteTopLeftPosition.x;
+          final xOverscan = WorldScale.extendedWorldWidth;
+          final drawTop = -size.y;
+          final drawHeight = size.y * 2;
           layerCanvas.drawRect(
-            Rect.fromLTWH(localLeft, -size.y, size.x, size.y),
+            Rect.fromLTWH(
+              localLeft - xOverscan,
+              drawTop,
+              size.x + xOverscan * 2,
+              drawHeight,
+            ),
             paint,
           );
         },
@@ -150,5 +157,4 @@ class SkyComponent extends RectangleComponent
       tintB: rgb.b * tint,
     );
   }
-
 }

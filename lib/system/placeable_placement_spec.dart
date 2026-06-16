@@ -6,6 +6,9 @@ import 'package:flame/components.dart';
 import '../component/common/physics/physics_body_queries.dart';
 import '../component/common/underground/underground.dart';
 import '../component/item/item.dart';
+import '../component/game_stage/building/automation/automation_tool_factory.dart';
+import '../system/automation_tool_kind.dart';
+import '../system/automation_tool_state.dart';
 import '../main.dart';
 import '../scene/abstract_outdoor_scene.dart';
 
@@ -178,5 +181,81 @@ class FurniturePlacementSpec extends PlaceablePlacementSpec {
   static Future<void> _finishFurniturePlacement(MyGame game, Item item) async {
     await ItemFactory.applyPlacedWorldItemWorldDisplay(item);
     await ItemFactory.registerPlacedLanternIfNeeded(item, game);
+  }
+}
+
+/// 対象星の地上に設置する自動化装置（種別ごと max 1）。
+class AutomationToolPlacementSpec extends PlaceablePlacementSpec {
+  static const Size _toolWorldSize = Size(40, 40);
+
+  final AutomationToolKind toolKind;
+
+  @override
+  final String itemName;
+
+  @override
+  final String spritePath;
+
+  AutomationToolPlacementSpec({
+    required this.toolKind,
+    required this.itemName,
+    required this.spritePath,
+  });
+
+  @override
+  Size get previewWorldSize => _toolWorldSize;
+
+  @override
+  bool canStart(MyGame game) {
+    final state = game.gameRuntimeState;
+    if (!state.isOnTargetStarOutdoor) return false;
+    if (game.player.inUnderGround) return false;
+    if (!state.canPlaceTool(toolKind)) return false;
+    return true;
+  }
+
+  @override
+  bool validate(MyGame game, Rect worldRect) {
+    if (game.sceneManager.currentScene is! AbstractOutdoorScene) return false;
+    final playerAabb = PhysicsBodyQueries.physicsAabb(game.player);
+    if (playerAabb.overlaps(worldRect)) return false;
+    return true;
+  }
+
+  double? _groundFeetY(MyGame game) {
+    final scene = game.sceneManager.currentScene;
+    if (scene is! AbstractOutdoorScene) return null;
+    final ground = scene.groundComponent;
+    if (ground == null) return null;
+    return ground.position.y + 2;
+  }
+
+  @override
+  Vector2 snapPreviewCenter(MyGame game, Vector2 raw) {
+    final feetY = _groundFeetY(game);
+    if (feetY == null) return raw;
+    return Vector2(raw.x, feetY - _toolWorldSize.height / 2);
+  }
+
+  @override
+  bool onConfirm(MyGame game, Rect worldRect) {
+    final scene = game.sceneManager.currentScene;
+    if (scene is! AbstractOutdoorScene) return false;
+
+    final feetY = _groundFeetY(game) ?? worldRect.bottom;
+    final pos = Vector2(worldRect.center.dx, feetY);
+    final id = game.gameRuntimeState.recordAutomationToolPlacement(
+      toolKind,
+      scene.sceneId,
+      pos.x,
+      pos.y,
+    );
+    final tool = createAutomationTool(
+      kind: toolKind,
+      instanceId: id,
+      position: pos,
+    );
+    scene.add(tool);
+    return true;
   }
 }

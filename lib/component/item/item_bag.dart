@@ -2,7 +2,9 @@
 import 'package:flame/components.dart';
 import 'item.dart';
 import '../../main.dart' show MyGame;
+import '../../system/item_pickup_feed.dart';
 import '../../system/storage/game_runtime_state.dart';
+import '../../UI/widgets/item_pickup_feed_overlay.dart';
 
 /// 収集したアイテムを管理するクラス
 class ItemBag extends ChangeNotifier {
@@ -14,8 +16,13 @@ class ItemBag extends ChangeNotifier {
 
   final GameRuntimeState _gameRuntimeState;
 
+  /// 入手ログ（HUD）用。
+  final ItemPickupFeedController pickupFeed = ItemPickupFeedController();
+
   /// バッグ内 [Item] はワールドに乗らないため [HasGameReference.game] を明示設定する。
   MyGame? _boundGame;
+
+  bool _suppressPickupFeed = false;
 
   ItemBag({required GameRuntimeState gameRuntimeState})
     : _gameRuntimeState = gameRuntimeState {
@@ -26,6 +33,14 @@ class ItemBag extends ChangeNotifier {
   void bindToGame(MyGame game) {
     _boundGame = game;
     _attachGameToAllDetails();
+  }
+
+  /// アイテムを自動使用すべきかどうかを判定する。
+  /// 将来的に「財布」などのストック用アイテムがある場合は、ここで false を返すロジックを追加できる。
+  bool _shouldAutoUse(Item item) {
+    if (!item.autoUse) return false;
+    // 例: if (item.type == ItemType.currency && hasWallet) return false;
+    return true;
   }
 
   void _attachGameToAllDetails() {
@@ -49,6 +64,7 @@ class ItemBag extends ChangeNotifier {
 
   /// セーブデータからアイテムバッグをロードする
   void _loadFromSaveData() {
+    _suppressPickupFeed = true;
     _itemCounts.clear();
     _itemDetails.clear();
     _gameRuntimeState.itemCounts.forEach((name, count) {
@@ -63,16 +79,61 @@ class ItemBag extends ChangeNotifier {
       }
     });
     _attachGameToAllDetails();
+    _suppressPickupFeed = false;
     notifyListeners();
   }
 
   /// アイテムを取得し、バッグに追加するメソッド
-  void addItem(Item item) {
+  void addItem(
+    Item item, {
+    bool silent = false,
+    Offset? flyStartGlobal,
+    Vector2? flyStartWorld,
+  }) {
     if (_boundGame != null) {
+      // サウンドを再生
+      _boundGame!.audioManager.playEffectSound(
+        'actions/Pickup9.wav',
+        volume: 0.35,
+      );
       item.game = _boundGame;
     }
+    final isFirstAcquisition =
+        !(_itemCounts[item.name] != null && _itemCounts[item.name]! > 0);
+
+    // 自動使用の判定
+    if (_shouldAutoUse(item)) {
+      if (_boundGame != null) {
+        item.onUse(_boundGame!.player);
+        _boundGame!.gameRuntimeState.codexIncrementItemUsed(item.name);
+      }
+      
+      // 自動使用された場合でも、取得ログは出す（必要なら）
+      if (!silent && !_suppressPickupFeed) {
+        pickupFeed.enqueue(
+          ItemPickupFeedEvent(
+            itemName: item.name,
+            displayName: '${item.displayName} (自動使用)',
+            spritePath: item.spritePath,
+            stackCount: 1,
+            isFirstAcquisition: isFirstAcquisition,
+            borderColor: pickupFeedBorderForItemName(item.name),
+            flyStartGlobal: flyStartGlobal,
+            flyStartWorld: flyStartWorld,
+          ),
+        );
+      }
+      return; // バッグには追加しない
+    }
+
     // 名前をキーとしてカウントを増やす
     _itemCounts.update(item.name, (value) => value + 1, ifAbsent: () => 1);
+
+    // ガソリン缶を取得した際、燃料をフルにする（v8.5 アクション用）
+    if (item.name == 'ガソリン缶') {
+      _gameRuntimeState.gasolineCanFuel = GameRuntimeState.maxGasolineCanFuel;
+    }
+
     // 詳細は定義からのプロトタイプを優先（ワールド拾得の LanternItem 等を正規化）
     final prototype = ItemFactory.createItemByName(item.name, Vector2.zero());
     if (prototype != null) {
@@ -85,6 +146,22 @@ class ItemBag extends ChangeNotifier {
     }
     _saveItemBagData(); // データ変更後に保存
     notifyListeners(); // UIの更新を通知
+
+    if (!silent && !_suppressPickupFeed) {
+      final detail = _itemDetails[item.name] ?? item;
+      pickupFeed.enqueue(
+        ItemPickupFeedEvent(
+          itemName: item.name,
+          displayName: pickupFeedDisplayName(detail),
+          spritePath: detail.spritePath,
+          stackCount: _itemCounts[item.name] ?? 1,
+          isFirstAcquisition: isFirstAcquisition,
+          borderColor: pickupFeedBorderForItemName(item.name),
+          flyStartGlobal: flyStartGlobal,
+          flyStartWorld: flyStartWorld,
+        ),
+      );
+    }
   }
 
   /// アイテムを削除するメソッド

@@ -138,7 +138,7 @@ class CameraController extends Component with HasGameReference<MyGame> {
     return focus + Vector2(cx, cy);
   }
 
-  /// 可視範囲がプレイステージ [stageLeftX]〜[stageRightX]（= [worldWidth]）を
+  /// 可視範囲が屋外カメラ境界 [cameraBoundLeftX]〜[cameraBoundRightX] を
   /// はみ出さないようフォーカス X を補正する。
   ///
   /// 地面・空の描画は [extendedWorldLeft] まで広いが、カメラ可動域はステージ幅に合わせる。
@@ -149,8 +149,8 @@ class CameraController extends Component with HasGameReference<MyGame> {
     game.camera.viewfinder.position = vf;
 
     final margin = _clampMarginScreenPx / game.camera.viewfinder.zoom;
-    final minLeft = WorldScale.stageLeftX - margin;
-    final maxRight = WorldScale.stageRightX + margin;
+    final minLeft = WorldScale.cameraBoundLeftX - margin;
+    final maxRight = WorldScale.cameraBoundRightX + margin;
 
     double dx = 0;
     if (vis.left < minLeft) {
@@ -216,7 +216,7 @@ class CameraController extends Component with HasGameReference<MyGame> {
     }
 
     for (final bg in scene.children.whereType<GameStageComponent>()) {
-      if (bg.isMounted && !bg.loop) {
+      if (bg.isMounted && !bg.usesHorizontalLoop) {
         bg.applyDepthZoom(cameraZoom, referenceZoom);
       }
     }

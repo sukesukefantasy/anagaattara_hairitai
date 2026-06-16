@@ -4,12 +4,11 @@ import 'dart:ui' as ui;
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 
-import '../../../game/world_scale.dart';
 import '../../../main.dart';
 import '../../common/ground/ground.dart';
 import '../../common/underground/underground.dart';
+import '../../player_cargo_terminal.dart';
 import '../gamestage_component.dart';
-import 'camera_viewport_coords.dart';
 import 'lighting_mask_handle.dart';
 
 /// カバレッジのみ（白 RGB + スプライト α）。暗さ・時間帯は含めない。
@@ -196,7 +195,7 @@ abstract final class LightingMaskBuilder {
     GameStageComponent stage,
     MyGame game,
   ) async {
-    if (!stage.isLoaded || !stage.loop) {
+    if (!stage.isLoaded || !stage.usesHorizontalLoop) {
       return null;
     }
     final sprite = stage.backgroundSprite;
@@ -208,33 +207,20 @@ abstract final class LightingMaskBuilder {
       return null;
     }
 
-    final camera = game.camera;
-    final visWorld = Rect.fromLTRB(
-      WorldScale.stageLeftX,
-      camera.visibleWorldRect.top,
-      WorldScale.stageRightX,
-      camera.visibleWorldRect.bottom,
-    );
     final origin = stage.absoluteTopLeftPosition;
     final tileW = stage.data.srcSize.x;
     final tileH = stage.data.srcSize.y;
 
-    final tileGridOriginWorldX =
-        WorldScale.loopBackgroundTileOriginWorldX(tileW);
     final pseudo3D = game.cameraController.outdoorPseudo3D;
-    final visibleWorld = pseudo3D.expandedVisibleWorld(
-      CameraViewportCoords.loopStageVisibleWorldRect(visWorld),
-      stage.depthMeters,
-    );
+    final depthZoomFactor = pseudo3D.depthZoomRenderFactor(stage.depthMeters);
     final localBounds = GameStageComponent.projectedLoopLocalBounds(
       pseudo3D: pseudo3D,
       depthMeters: stage.depthMeters,
-      tileGridOriginWorldX: tileGridOriginWorldX,
       tileW: tileW,
       tileH: tileH,
       componentWorldLeft: origin.x,
-      visibleWorld: visibleWorld,
-      isScrollForward: stage.isScrollForward,
+      marginSlots: stage.data.loopMarginSlots,
+      depthZoomFactor: depthZoomFactor,
     );
     if (localBounds.isEmpty) {
       return null;
@@ -269,7 +255,7 @@ abstract final class LightingMaskBuilder {
       return null;
     }
 
-    if (stage.loop) {
+    if (stage.usesHorizontalLoop) {
       return null;
     }
 
@@ -349,7 +335,8 @@ abstract final class LightingMaskBuilder {
 
   /// ルートが SAC/Sprite の Receiver（Player 等）。子 [PlayerCargoTerminal] は含めない。
   static bool _isRootSpriteReceiver(PositionComponent root) =>
-      root is SpriteComponent || root is SpriteAnimationComponent;
+      (root is SpriteComponent || root is SpriteAnimationComponent) &&
+      root is! PlayerCargoTerminal;
 
   /// マスクはワールド表示サイズに合わせる。ソースと同寸付近のみ srcSize（プレイヤー bleed）。
   static Vector2 _maskRenderSize(PositionComponent node, Sprite sprite) {

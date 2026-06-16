@@ -3,7 +3,15 @@ import 'package:anagaattara_hairitai/component/common/terrain/terrain_field.dart
 import 'package:anagaattara_hairitai/component/common/underground/placed_floor.dart';
 import 'package:anagaattara_hairitai/system/storage/save_data.dart';
 import 'package:anagaattara_hairitai/system/stage_micro_log.dart';
+import 'package:anagaattara_hairitai/system/stage_combat_profile.dart';
+import 'package:anagaattara_hairitai/system/farm_role_profile.dart';
 import 'package:anagaattara_hairitai/system/codex/codex_snapshot.dart';
+import 'package:anagaattara_hairitai/system/automation_tool_kind.dart';
+import 'package:anagaattara_hairitai/system/automation_harvest_storage.dart';
+import 'package:anagaattara_hairitai/system/automation_tool_placement.dart';
+import 'package:anagaattara_hairitai/system/automation_ability_catalog.dart';
+import 'package:anagaattara_hairitai/system/automation_shop_grade.dart';
+import 'package:anagaattara_hairitai/system/automation_tool_state.dart';
 import 'package:flutter/foundation.dart'; // debugPrintのためにインポート
 import 'dart:async'; // Add this line
 import 'package:flame/extensions.dart';
@@ -16,7 +24,7 @@ class CargoHudFlyEvent {
   final CargoHudFlyKind kind;
   final Vector2 worldPosition;
 
-  /// 該当種のゲージ充足率（`count / cargoPerKindCapacity`）の変化。HUD で飛行に同期して補間する。
+  /// 該当種のゲージ充足率（`count / residueCapacity`）の変化。HUD で飛行に同期して補間する。
   final double fillBefore;
   final double fillAfter;
 
@@ -28,6 +36,12 @@ class CargoHudFlyEvent {
   });
 }
 
+class CargoTransferFlyEvent {
+  final CargoHudFlyKind kind;
+  final int count;
+  CargoTransferFlyEvent({required this.kind, required this.count});
+}
+
 class GameRuntimeState extends ChangeNotifier {
   // 資源蓄積イベント用のストリーム
   final _cargoAccumulatedController = StreamController<(int life, int history, int inorganic)>.broadcast();
@@ -37,11 +51,20 @@ class GameRuntimeState extends ChangeNotifier {
   final _cargoHudFlyController = StreamController<CargoHudFlyEvent>.broadcast();
   Stream<CargoHudFlyEvent> get cargoHudFlyStream => _cargoHudFlyController.stream;
 
+  /// 資源蓄積時（HUD からワールド内のカーゴへ飛ばす演出用）
+  final _cargoTransferFlyController = StreamController<CargoTransferFlyEvent>.broadcast();
+  Stream<CargoTransferFlyEvent> get cargoTransferFlyStream => _cargoTransferFlyController.stream;
+
   @override
   void dispose() {
     _cargoAccumulatedController.close();
     _cargoHudFlyController.close();
+    _cargoTransferFlyController.close();
     super.dispose();
+  }
+
+  void triggerTransferFly(CargoHudFlyKind kind, int count) {
+    _cargoTransferFlyController.add(CargoTransferFlyEvent(kind: kind, count: count));
   }
 
   /// [ChangeNotifier.notifyListeners] の公開ラッパー（extension からの更新通知用）。
@@ -211,17 +234,24 @@ class GameRuntimeState extends ChangeNotifier {
   double homePlanetRealism = 0.0;
   double starAlertLevel = 0.0;
 
-  // カーゴに自動蓄積された資源（行動の残滓）
-  // プレイヤーが「何をして生きたか」が自動的にここに反映される
-  int cargoLifeCount = 0;       // 生命資源: 助けた／消耗した意志の痕跡
-  int cargoHistoryCount = 0;    // 歴史資源: 日記・遺品・父の記憶
-  int cargoInorganicCount = 0;  // 無機資源: 破壊・採掘の破片
+  // プレイヤーが現在所持している資源（HUDに表示される）
+  int playerLifeCount = 0;
+  int playerHistoryCount = 0;
+  int playerInorganicCount = 0;
 
-  /// 各カーゴ種別の最大蓄積数（従来目安 100 相当の 10 倍）。
-  static const int cargoPerKindCapacity = 1000;
+  // カーゴに蓄積された資源（拠点に預けた分）
+  int cargoLifeCount = 0;
+  int cargoHistoryCount = 0;
+  int cargoInorganicCount = 0;
 
-  static int clampCargoKindCount(int value) =>
-      value.clamp(0, cargoPerKindCapacity);
+  /// 次のステージで出現させる支援物資（Toolbox）の予約フラグ
+  bool pendingToolboxReward = false;
+
+  /// 各資源の最大蓄積数
+  static const int residueCapacity = 1000;
+
+  static int clampResidueCount(int value) =>
+      value.clamp(0, residueCapacity);
 
   // カーゴ射出フラグ（射出後に電車が来る。ステージリセット時にfalseに戻る）
   bool isCargoLaunched = false;
@@ -254,11 +284,88 @@ class GameRuntimeState extends ChangeNotifier {
 
   bool hasShownAutomationShopUnlockMessage = false;
 
+  /// 対象星初回入場オンボーディング（§ ファーム統合）
+  bool hasShownTargetStarAutomationIntro = false;
+
+  /// 警戒狩人から自動化キットを初回取得済み
+  bool hasReceivedAutomationKitFromHunter = false;
+
+  /// 最後に警戒狩人をスポーンした警戒ティア
+  int lastAlertHunterSpawnTier = 0;
+
+  /// バッグにキットを入れたあと1回だけ表示
+  bool hasShownKitBagHint = false;
+
+  /// 設置済み自動化キットの屋外シーン ID（1台のみ）
+  String? automationKitSceneId;
+
+  double? automationKitPositionX;
+  double? automationKitPositionY;
+
+  /// 3種自動化装置の設置（各種 max 1 から拡張可）
+  List<AutomationToolPlacement> automationToolPlacements = [];
+
+  /// ショップで開放した能力
+  Map<String, bool> automationUnlocks = {};
+
+  /// 装置インタラクトで上げた強化レベル
+  Map<String, int> automationUpgradeLevels = {};
+
+  /// 収穫ツール内蔵ストレージ
+  AutomationHarvestStorage harvestStorage = AutomationHarvestStorage();
+
+  /// 警戒狩人から付与済みの装置タイプ（harvest/upkeep/ward）
+  List<String> hunterToolsGranted = [];
+
+  /// 強化上限用：到達した最高調査ステージ tier（1=outdoor_1 …）。[AutomationAbilityCatalog] と同期。
+  int automationUpgradeStageTier = 1;
+
+  /// 整備ツール共有燃料
+  double upkeepToolFuel = 40.0;
+
+  double harvestToolFuel = 40.0;
+  double wardToolFuel = 40.0;
+
+  /// タンク内燃料ランク（`AutomationFuelRank.toJson()`）
+  String? harvestTankFuelRank;
+  String? upkeepTankFuelRank;
+  String? wardTankFuelRank;
+
+  /// 燃料切れ時に意志力で自動補給する
+  bool automationAutoWillRefuel = false;
+
+  /// GameUI が1回だけ対象星オンボーディングを出すためのフラグ（セーブしない）
+  bool pendingTargetStarAutomationIntro = false;
+
+  /// 警戒ティア上昇で狩人スポーン待ち（セーブしない）
+  int pendingAlertHunterSpawnTier = 0;
+
+  /// 狩人初登場メッセージ（セーブしない）
+  bool pendingAlertHunterIntroMessage = false;
+
+  /// 狩人撃破でキット取得後の通知（セーブしない）
+  bool pendingKitFromHunterNotice = false;
+
   /// 自動化ショップツリー §5（キット本体の `automationKitStage` と併用）
   int automationShopTierA = 0;
   int automationShopTierB = 0;
   int automationShopTierC = 0;
   int automationShopTierD = 0;
+
+  int automationShopGradeHarvest = 0;
+  int automationShopGradeUpkeep = 0;
+  int automationShopGradeWard = 0;
+  int automationShopGradeCommon = 0;
+
+  /// 共通タブ：燃費改善段階（common_4 購入で 1）。
+  int automationFuelEfficiencyTier = 0;
+
+  /// 意志自動補給のクールダウン（ランタイムのみ・非セーブ）。
+  double automationAutoRefuelCooldownRemaining = 0;
+
+  /// ガソリン缶の燃料残量（0.0 - 40.0）
+  double gasolineCanFuel = 0.0;
+  static const double maxGasolineCanFuel = 40.0;
 
   CodexSnapshot codex = CodexSnapshot.empty();
 
@@ -288,6 +395,24 @@ class GameRuntimeState extends ChangeNotifier {
 
   /// B-2：意志力自動支払い基盤
   bool automationShopWillpowerAutoPay = false;
+
+  // --- ファーム駆け引き（§ ファーム駆け引き v0.1）---
+  int farmPrimaryRoleIndex = 0;
+  int farmSubModuleIndex = 0;
+  double farmRoiMultiplier = 1.0;
+  double farmInterventionWindowSeconds = 0.0;
+  double farmDoubleCycleRemaining = 0.0;
+  int farmInterventionBonusCount = 0;
+  int farmCostLife = 0;
+  int farmCostHistory = 0;
+  int farmCostInorganic = 0;
+  double farmCostWillpower = 0;
+  int farmCostCurrency = 0;
+  int farmOutputCurrency = 0;
+  int farmOutputMining = 0;
+  int farmOutputCargoLife = 0;
+  int farmOutputCargoHistory = 0;
+  int farmOutputCargoInorganic = 0;
 
   /// 6桁ダイヤル用シード（セーブ毎）
   int? trueDialSalt;
@@ -445,7 +570,20 @@ class GameRuntimeState extends ChangeNotifier {
 
   // 星の警戒度を増減する（負値で低下）
   void addStarAlertLevel(double amount) {
+    final prevTier = starAlertHudTier;
     starAlertLevel = (starAlertLevel + amount).clamp(0.0, 10.0);
+    if (amount > 0) {
+      final newTier = starAlertHudTier;
+      if (newTier > prevTier &&
+          isOnTargetStarOutdoor &&
+          newTier > lastAlertHunterSpawnTier) {
+        pendingAlertHunterSpawnTier = newTier;
+        if (!hasReceivedAutomationKitFromHunter &&
+            hunterToolsGranted.length < AutomationToolKind.values.length) {
+          pendingAlertHunterIntroMessage = true;
+        }
+      }
+    }
     notifyListeners();
   }
 
@@ -457,11 +595,11 @@ class GameRuntimeState extends ChangeNotifier {
     int inorganic = 0,
     Vector2? pickupWorldPoint,
   }) {
-    final int ol = cargoLifeCount;
-    final int oh = cargoHistoryCount;
-    final int oi = cargoInorganicCount;
+    final int ol = playerLifeCount;
+    final int oh = playerHistoryCount;
+    final int oi = playerInorganicCount;
 
-    final double cap = cargoPerKindCapacity.toDouble();
+    final double cap = residueCapacity.toDouble();
 
     double fillBeforeForKind(CargoHudFlyKind k) {
       if (cap <= 0) return 0;
@@ -473,16 +611,16 @@ class GameRuntimeState extends ChangeNotifier {
       return (c / cap).clamp(0.0, 1.0);
     }
 
-    cargoLifeCount = clampCargoKindCount(cargoLifeCount + life);
-    cargoHistoryCount = clampCargoKindCount(cargoHistoryCount + history);
-    cargoInorganicCount = clampCargoKindCount(cargoInorganicCount + inorganic);
+    playerLifeCount = clampResidueCount(playerLifeCount + life);
+    playerHistoryCount = clampResidueCount(playerHistoryCount + history);
+    playerInorganicCount = clampResidueCount(playerInorganicCount + inorganic);
 
     double fillAfterForKind(CargoHudFlyKind k) {
       if (cap <= 0) return 0;
       final c = switch (k) {
-        CargoHudFlyKind.life => cargoLifeCount,
-        CargoHudFlyKind.history => cargoHistoryCount,
-        CargoHudFlyKind.inorganic => cargoInorganicCount,
+        CargoHudFlyKind.life => playerLifeCount,
+        CargoHudFlyKind.history => playerHistoryCount,
+        CargoHudFlyKind.inorganic => playerInorganicCount,
       };
       return (c / cap).clamp(0.0, 1.0);
     }
@@ -558,7 +696,8 @@ class GameRuntimeState extends ChangeNotifier {
   void registerAutomationContractC2() {
     automationContractC2 = true;
     destroyMacroPathQualified = false;
-    automationShopTierC = automationShopTierC < 2 ? 2 : automationShopTierC;
+    if (automationShopGradeCommon < 6) automationShopGradeCommon = 6;
+    syncLegacyShopTiersFromGrades();
     _refreshDisclosureTierFromWorldProgress();
     if (hasConnectedSupplyRoute) {
       pendingNarrativeMessages.add('〔星の通知〕接続済みの経路が、勝手に「全開」された。');
@@ -717,7 +856,7 @@ class GameRuntimeState extends ChangeNotifier {
   }
 
   void tryStartAutomationAutoPickupWindow() {
-    if (automationShopTierA < 1) return;
+    if (automationShopGradeHarvest < 1) return;
     automationAutoPickupSecondsRemaining =
         automationAutoPickupSecondsRemaining < 8.0
             ? 8.0
@@ -726,7 +865,7 @@ class GameRuntimeState extends ChangeNotifier {
 
   /// A-2 相当：自動サイクル中も短い吸引を付与
   void tryBoostAutomationAutoPickupFromAutoCycle() {
-    if (automationShopTierA >= 2) {
+    if (automationShopGradeHarvest >= 2) {
       automationAutoPickupSecondsRemaining = 8.0;
     }
   }
@@ -734,8 +873,9 @@ class GameRuntimeState extends ChangeNotifier {
   double get automationAutoPickupVacuumRange {
     if (automationAutoPickupSecondsRemaining <= 0) return 0;
     var range = 0.0;
-    if (automationShopTierA >= 1) range = 100;
-    if (automationShopTierA >= 3) range = 140;
+    if (automationShopGradeHarvest >= 1) range = 100;
+    if (automationShopGradeHarvest >= 3) range = 140;
+    range += farmAutoPickupRangeBonus;
     return range;
   }
 
@@ -743,8 +883,8 @@ class GameRuntimeState extends ChangeNotifier {
   void reconcileAutomationContractWithKitStage() {
     if (automationKitStage >= 4) {
       automationContractC2 = true;
-      automationShopTierC =
-          automationShopTierC < 2 ? 2 : automationShopTierC;
+      if (automationShopGradeCommon < 6) automationShopGradeCommon = 6;
+      syncLegacyShopTiersFromGrades();
     }
   }
 
@@ -754,15 +894,22 @@ class GameRuntimeState extends ChangeNotifier {
   bool get isDependencyOverloadForUi =>
       willpowerSpentInStage >= 10.0;
 
-  /// 自動化ショップHUD表示（意志力累計またはキット／購入済みTier）
-  bool get showAutomationShopEntryInHud =>
-      totalWillpowerConsumed >= 10.0 ||
-      automationKitStage > 0 ||
-      automationShopTierA > 0 ||
-      automationShopTierB > 0 ||
-      automationShopTierC > 0 ||
-      automationShopTierD > 0 ||
-      automationContractC2;
+  /// 調査対象星（outdoor_1〜4 等）。プロローグ・True・偏りデモは除外。
+  static bool isTargetStarOutdoorId(String? sceneId) {
+    if (sceneId == null) return false;
+    if (!sceneId.startsWith('outdoor_')) return false;
+    if (sceneId == 'outdoor_0') return false;
+    if (sceneId.contains('philosophy')) return false;
+    if (sceneId.contains('despair')) return false;
+    if (sceneId.contains('true')) return false;
+    return true;
+  }
+
+  bool get isOnTargetStarOutdoor =>
+      isTargetStarOutdoorId(currentOutdoorSceneId);
+
+  /// 自動化ショップHUD表示 — 対象星にいるときのみ（§ ファーム統合）
+  bool get showAutomationShopEntryInHud => isOnTargetStarOutdoor;
 
   String outdoorIdAfterPhilosophy() {
     // §6.2: Nourishment（C-2）確定はトゥルー側屋外へ。Destroy 資格は絶望へ。旧30回サブルート分岐は廃止。
@@ -844,16 +991,61 @@ class GameRuntimeState extends ChangeNotifier {
   }
 
   void _maybeRaiseAutomationShopUnlockNotice() {
-    if (hasShownAutomationShopUnlockMessage) return;
     if (totalWillpowerConsumed < 10.0) return;
+    if (hasShownAutomationShopUnlockMessage) return;
     hasShownAutomationShopUnlockMessage = true;
-    pendingAutomationShopUnlockNotice = true;
-    notifyListeners();
     noteMicroCategorySpecial(1);
+    notifyListeners();
   }
 
-  // カーゴの総量
-  int get totalCargoCount => cargoLifeCount + cargoHistoryCount + cargoInorganicCount;
+  void maybeRaiseTargetStarAutomationIntro() {
+    if (hasShownTargetStarAutomationIntro) return;
+    if (!isOnTargetStarOutdoor) return;
+    hasShownTargetStarAutomationIntro = true;
+    pendingTargetStarAutomationIntro = true;
+    saveGame();
+    notifyListeners();
+  }
+
+  void consumeTargetStarAutomationIntroUi() {
+    pendingTargetStarAutomationIntro = false;
+    notifyListeners();
+  }
+
+  void consumeAlertHunterIntroMessage() {
+    pendingAlertHunterIntroMessage = false;
+    notifyListeners();
+  }
+
+  void consumeKitFromHunterNotice() {
+    pendingKitFromHunterNotice = false;
+    notifyListeners();
+  }
+
+  void recordAutomationKitPlacement(String sceneId, double x, double y) {
+    recordAutomationToolPlacement(
+      AutomationToolKind.upkeep,
+      sceneId,
+      x,
+      y,
+    );
+  }
+
+  // プレイヤー所持の総量
+  int get totalPlayerResidueCount => playerLifeCount + playerHistoryCount + playerInorganicCount;
+
+  // カーゴ蓄積の総量
+  int get totalCargoResidueCount => cargoLifeCount + cargoHistoryCount + cargoInorganicCount;
+
+  /// プレイヤー所持残滓の調和加重。
+  double get harmonyWeightedPlayerTotal =>
+      playerLifeCount * residueHarmonyLife +
+      playerInorganicCount * residueHarmonyInorganic +
+      playerHistoryCount * residueHarmonyHistory;
+
+  /// プレイヤー所持残滓の意志力換算（HUD表示用）。
+  double get playerWillCompositeApprox =>
+      harmonyWeightedPlayerTotal / residueUnitsPerWillComposite;
 
   /// カーゴ内残滓の調和加重（§1 の 4:6:1）。
   double get harmonyWeightedCargoTotal =>
@@ -866,11 +1058,79 @@ class GameRuntimeState extends ChangeNotifier {
       harmonyWeightedCargoTotal / residueUnitsPerWillComposite;
 
   /// 微粒子が星へ引き寄せられる加速度（大略 px/s²）。核・警戒が大きいほど強い（接続点C）。
+  /// プレイヤーの物理重力とは無関係（ローグ駆け引き仕様 v0.1）。
   double get starResiduePullAcceleration {
     final coreRatio =
         (maxWillCoreValue / defaultMaxWillCoreValue).clamp(0.4, 4.0);
     final alert = (starAlertLevel / 10.0).clamp(0.0, 1.0);
-    return 55.0 + coreRatio * 95.0 + alert * 260.0;
+    final stageMul = StageCombatProfile.forScene(currentOutdoorSceneId)
+        .residuePullMultiplier;
+    final willLow =
+        (1.0 - (currentWillpower / maxWillCoreValue.clamp(0.01, 1e9)))
+            .clamp(0.0, 1.0);
+    return (55.0 + coreRatio * 95.0 + alert * 260.0 + willLow * 40.0) *
+        stageMul;
+  }
+
+  /// 屋外ステージと警戒から決まる敵戦闘ティア（0–3）。
+  int get effectiveEnemyCombatTier => StageCombatProfile.forScene(
+        currentOutdoorSceneId,
+      ).effectiveCombatTier(starAlertLevel);
+
+  /// HUD 用警戒ティア（0–4）。
+  int get starAlertHudTier =>
+      StageCombatProfile.starAlertHudTier(starAlertLevel);
+
+  /// セッション内 cargo discharge（§5）。母星射出とは別。
+  ///
+  /// 合計カーゴの 8% を各種から消費（種ごと最低1）。成功時は意志力を回復。
+  bool tryCargoDischarge() {
+    final total = totalCargoResidueCount;
+    if (total < 5) return false;
+
+    final chunk = (total * 0.08).ceil().clamp(3, total);
+    var payLife = 0;
+    var payHist = 0;
+    var payIno = 0;
+    if (cargoLifeCount > 0) {
+      payLife = (chunk * cargoLifeCount / total).round().clamp(1, cargoLifeCount);
+    }
+    if (cargoHistoryCount > 0) {
+      payHist =
+          (chunk * cargoHistoryCount / total).round().clamp(1, cargoHistoryCount);
+    }
+    if (cargoInorganicCount > 0) {
+      payIno = (chunk * cargoInorganicCount / total)
+          .round()
+          .clamp(1, cargoInorganicCount);
+    }
+    var paid = payLife + payHist + payIno;
+    while (paid > chunk) {
+      if (payIno > 1) {
+        payIno--;
+      } else if (payHist > 1) {
+        payHist--;
+      } else if (payLife > 1) {
+        payLife--;
+      } else {
+        break;
+      }
+      paid = payLife + payHist + payIno;
+    }
+    if (paid <= 0) return false;
+
+    cargoLifeCount = clampResidueCount(cargoLifeCount - payLife);
+    cargoHistoryCount = clampResidueCount(cargoHistoryCount - payHist);
+    cargoInorganicCount =
+        clampResidueCount(cargoInorganicCount - payIno);
+
+    final recover = maxWillCoreValue * 0.35;
+    currentWillpower = (currentWillpower + recover).clamp(0.0, maxWillCoreValue);
+    clampCurrentWillpowerToCapacity();
+
+    notifyListeners();
+    saveGame();
+    return true;
   }
 
   /// §13 開示段階をプレイ傾向で引き上げる（閾値は TBD 集約）。
@@ -900,12 +1160,13 @@ class GameRuntimeState extends ChangeNotifier {
       inorganic: launchedInorganic,
     );
     debugPrint(
-      'Cargo launched: life=$cargoLifeCount, history=$cargoHistoryCount, inorganic=$cargoInorganicCount',
+      'Cargo launched: life=$launchedLife, history=$launchedHistory, inorganic=$launchedInorganic',
     );
     cargoLifeCount = 0;
     cargoHistoryCount = 0;
     cargoInorganicCount = 0;
     isCargoLaunched = true;
+    pendingToolboxReward = true; // 次ステージで支援物資を出す
 
     // カーゴ後の通信（HUD 用・最小実装）。
     // 本格的な台詞テーブルは後続タスクで差し替える前提。
@@ -1066,10 +1327,14 @@ class GameRuntimeState extends ChangeNotifier {
     homePlanetEfficiency = data.homePlanetEfficiency;
     homePlanetRealism = data.homePlanetRealism;
     starAlertLevel = data.starAlertLevel;
-    cargoLifeCount = clampCargoKindCount(data.cargoLifeCount);
-    cargoHistoryCount = clampCargoKindCount(data.cargoHistoryCount);
-    cargoInorganicCount = clampCargoKindCount(data.cargoInorganicCount);
+    playerLifeCount = clampResidueCount(data.playerLifeCount);
+    playerHistoryCount = clampResidueCount(data.playerHistoryCount);
+    playerInorganicCount = clampResidueCount(data.playerInorganicCount);
+    cargoLifeCount = clampResidueCount(data.cargoLifeCount);
+    cargoHistoryCount = clampResidueCount(data.cargoHistoryCount);
+    cargoInorganicCount = clampResidueCount(data.cargoInorganicCount);
     isCargoLaunched = data.isCargoLaunched;
+    pendingToolboxReward = data.pendingToolboxReward;
     sentLifeResourceCount = data.sentLifeResourceCount;
     sentHistoryResourceCount = data.sentHistoryResourceCount;
     sentInorganicResourceCount = data.sentInorganicResourceCount;
@@ -1088,10 +1353,49 @@ class GameRuntimeState extends ChangeNotifier {
         .toList();
     hasShownAutomationShopUnlockMessage =
         data.hasShownAutomationShopUnlockMessage;
+    hasShownTargetStarAutomationIntro =
+        data.hasShownTargetStarAutomationIntro ||
+            data.hasShownAutomationShopUnlockMessage;
+    hasReceivedAutomationKitFromHunter =
+        data.hasReceivedAutomationKitFromHunter;
+    lastAlertHunterSpawnTier = data.lastAlertHunterSpawnTier;
+    hasShownKitBagHint = data.hasShownKitBagHint;
+    automationKitSceneId = data.automationKitSceneId;
+    automationKitPositionX = data.automationKitPositionX;
+    automationKitPositionY = data.automationKitPositionY;
+    automationToolPlacements = data.automationToolPlacementsJson
+        .map(AutomationToolPlacement.fromJson)
+        .toList();
+    automationUnlocks = data.automationUnlocksJson.map(
+      (k, v) => MapEntry(k, v == true),
+    );
+    automationUpgradeLevels = data.automationUpgradeLevelsJson.map(
+      (k, v) => MapEntry(k, (v as num).toInt()),
+    );
+    harvestStorage = AutomationHarvestStorage.fromJson(data.harvestStorageJson);
+    hunterToolsGranted = List<String>.from(data.hunterToolsGranted);
+    automationUpgradeStageTier = data.automationUpgradeStageTier;
+    noteAutomationUpgradeStageTier(currentOutdoorSceneId);
+    upkeepToolFuel = data.upkeepToolFuel;
+    harvestToolFuel = data.harvestToolFuel;
+    wardToolFuel = data.wardToolFuel;
+    harvestTankFuelRank = data.harvestTankFuelRank;
+    upkeepTankFuelRank = data.upkeepTankFuelRank;
+    wardTankFuelRank = data.wardTankFuelRank;
+    automationAutoWillRefuel = data.automationAutoWillRefuel;
+    migrateLegacyAutomationKitIfNeeded();
+    migrateHunterGrantsFromLegacy();
     automationShopTierA = data.automationShopTierA.clamp(0, 3);
     automationShopTierB = data.automationShopTierB.clamp(0, 3);
     automationShopTierC = data.automationShopTierC.clamp(0, 3);
     automationShopTierD = data.automationShopTierD.clamp(0, 3);
+    automationShopGradeHarvest = data.automationShopGradeHarvest.clamp(0, 99);
+    automationShopGradeUpkeep = data.automationShopGradeUpkeep.clamp(0, 99);
+    automationShopGradeWard = data.automationShopGradeWard.clamp(0, 99);
+    automationShopGradeCommon = data.automationShopGradeCommon.clamp(0, 99);
+    automationFuelEfficiencyTier = data.automationFuelEfficiencyTier.clamp(0, 9);
+    gasolineCanFuel = data.gasolineCanFuel.clamp(0.0, maxGasolineCanFuel);
+    migrateLegacyShopTiersToGrades();
     codex = CodexSnapshot.fromJson(data.codexSnapshotJson);
 
     disclosureTier = data.disclosureTier.clamp(0, 2);
@@ -1102,12 +1406,30 @@ class GameRuntimeState extends ChangeNotifier {
     trueDialSalt = data.trueDialSalt;
     sentLifeScenarioBaseline = data.sentLifeScenarioBaseline;
 
+    farmPrimaryRoleIndex = data.farmPrimaryRoleIndex.clamp(0, 3);
+    farmSubModuleIndex = data.farmSubModuleIndex.clamp(0, 6);
+    farmRoiMultiplier = data.farmRoiMultiplier;
+    farmInterventionBonusCount = data.farmInterventionBonusCount;
+    farmCostLife = data.farmCostLife;
+    farmCostHistory = data.farmCostHistory;
+    farmCostInorganic = data.farmCostInorganic;
+    farmCostWillpower = data.farmCostWillpower;
+    farmCostCurrency = data.farmCostCurrency;
+    farmOutputCurrency = data.farmOutputCurrency;
+    farmOutputMining = data.farmOutputMining;
+    farmOutputCargoLife = data.farmOutputCargoLife;
+    farmOutputCargoHistory = data.farmOutputCargoHistory;
+    farmOutputCargoInorganic = data.farmOutputCargoInorganic;
+    farmInterventionWindowSeconds = 0;
+    farmDoubleCycleRemaining = 0;
+
     microPendingRogue = 0;
     microPendingFarm = 0;
     microPendingExplore = 0;
     microPendingSpecial = 0;
     automationAutoPickupSecondsRemaining = 0;
     pendingAutomationShopUnlockNotice = false;
+    pendingTargetStarAutomationIntro = false;
 
     reconcileAutomationContractWithKitStage();
 
@@ -1196,10 +1518,14 @@ class GameRuntimeState extends ChangeNotifier {
       homePlanetEfficiency: homePlanetEfficiency,
       homePlanetRealism: homePlanetRealism,
       starAlertLevel: starAlertLevel,
+      playerLifeCount: playerLifeCount,
+      playerHistoryCount: playerHistoryCount,
+      playerInorganicCount: playerInorganicCount,
       cargoLifeCount: cargoLifeCount,
       cargoHistoryCount: cargoHistoryCount,
       cargoInorganicCount: cargoInorganicCount,
       isCargoLaunched: isCargoLaunched,
+      pendingToolboxReward: pendingToolboxReward,
       sentLifeResourceCount: sentLifeResourceCount,
       sentHistoryResourceCount: sentHistoryResourceCount,
       sentInorganicResourceCount: sentInorganicResourceCount,
@@ -1216,10 +1542,37 @@ class GameRuntimeState extends ChangeNotifier {
           stageMicroLogEntries.map((e) => e.toJson()).toList(),
       hasShownAutomationShopUnlockMessage:
           hasShownAutomationShopUnlockMessage,
+      hasShownTargetStarAutomationIntro: hasShownTargetStarAutomationIntro,
+      hasReceivedAutomationKitFromHunter: hasReceivedAutomationKitFromHunter,
+      lastAlertHunterSpawnTier: lastAlertHunterSpawnTier,
+      hasShownKitBagHint: hasShownKitBagHint,
+      automationKitSceneId: automationKitSceneId,
+      automationKitPositionX: automationKitPositionX,
+      automationKitPositionY: automationKitPositionY,
+      automationToolPlacementsJson:
+          automationToolPlacements.map((e) => e.toJson()).toList(),
+      automationUnlocksJson: automationUnlocks,
+      automationUpgradeLevelsJson: automationUpgradeLevels,
+      harvestStorageJson: harvestStorage.toJson(),
+      hunterToolsGranted: hunterToolsGranted,
+      automationUpgradeStageTier: automationUpgradeStageTier,
+      upkeepToolFuel: upkeepToolFuel,
+      harvestToolFuel: harvestToolFuel,
+      wardToolFuel: wardToolFuel,
+      harvestTankFuelRank: harvestTankFuelRank,
+      upkeepTankFuelRank: upkeepTankFuelRank,
+      wardTankFuelRank: wardTankFuelRank,
+      automationAutoWillRefuel: automationAutoWillRefuel,
       automationShopTierA: automationShopTierA,
       automationShopTierB: automationShopTierB,
       automationShopTierC: automationShopTierC,
       automationShopTierD: automationShopTierD,
+      automationShopGradeHarvest: automationShopGradeHarvest,
+      automationShopGradeUpkeep: automationShopGradeUpkeep,
+      automationShopGradeWard: automationShopGradeWard,
+      automationShopGradeCommon: automationShopGradeCommon,
+      automationFuelEfficiencyTier: automationFuelEfficiencyTier,
+      gasolineCanFuel: gasolineCanFuel,
       codexSnapshotJson: codex.toJson(),
       disclosureTier: disclosureTier,
       totalCargoLaunches: totalCargoLaunches,
@@ -1228,6 +1581,20 @@ class GameRuntimeState extends ChangeNotifier {
       automationShopWillpowerAutoPay: automationShopWillpowerAutoPay,
       trueDialSalt: trueDialSalt,
       sentLifeScenarioBaseline: sentLifeScenarioBaseline,
+      farmPrimaryRoleIndex: farmPrimaryRoleIndex,
+      farmSubModuleIndex: farmSubModuleIndex,
+      farmRoiMultiplier: farmRoiMultiplier,
+      farmInterventionBonusCount: farmInterventionBonusCount,
+      farmCostLife: farmCostLife,
+      farmCostHistory: farmCostHistory,
+      farmCostInorganic: farmCostInorganic,
+      farmCostWillpower: farmCostWillpower,
+      farmCostCurrency: farmCostCurrency,
+      farmOutputCurrency: farmOutputCurrency,
+      farmOutputMining: farmOutputMining,
+      farmOutputCargoLife: farmOutputCargoLife,
+      farmOutputCargoHistory: farmOutputCargoHistory,
+      farmOutputCargoInorganic: farmOutputCargoInorganic,
     );
   }
 
